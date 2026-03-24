@@ -1,2 +1,2 @@
 # nudge-app
-iOS app for executive disfunction and time management
+iOS app for executive dysfunction and time management
