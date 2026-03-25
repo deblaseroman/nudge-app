@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#111008;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:32px 16px;font-family:'Lexend',sans-serif;}
+.phone{width:300px;height:650px;background:#0c0c0c;border-radius:48px;padding:11px;box-shadow:0 0 0 1px rgba(255,255,255,0.06),0 40px 80px rgba(0,0,0,0.7);position:relative;}
+.phone-inner{width:100%;height:100%;border-radius:38px;overflow:hidden;background:#FAFAF8;display:flex;flex-direction:column;position:relative;}
+.dynamic-island{position:absolute;top:13px;left:50%;transform:translateX(-50%);width:118px;height:34px;background:#0c0c0c;border-radius:18px;z-index:10;}
+.status-bar{height:56px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 24px 8px;flex-shrink:0;z-index:5;position:relative;}
+.status-time{font-size:14px;font-weight:600;color:#1a1a18;opacity:0.6;}
+.status-icons{display:flex;align-items:center;gap:4px;opacity:0.4;}
+.header{display:flex;align-items:center;gap:10px;padding:4px 20px 14px;border-bottom:1px solid rgba(26,26,24,0.06);flex-shrink:0;}
+.mascot-avatar{width:34px;height:34px;background:rgba(255,96,64,0.08);border-radius:50%;border:1.5px solid rgba(255,96,64,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+.header-name{font-size:14px;font-weight:700;color:#1a1a18;}
+.header-sub{font-size:10px;font-weight:400;color:#a09880;display:flex;align-items:center;gap:4px;}
+.h-dot{width:5px;height:5px;background:#4CAF50;border-radius:50%;}
+.progress-wrap{padding:10px 20px 8px;flex-shrink:0;}
+.progress-top{display:flex;justify-content:space-between;margin-bottom:6px;}
+.progress-step{font-size:10px;font-weight:600;color:#a09880;letter-spacing:0.5px;}
+.progress-pct{font-size:10px;font-weight:700;color:#FF6040;}
+.progress-track{height:3px;background:rgba(26,26,24,0.08);border-radius:2px;}
+.progress-fill{height:3px;background:#FF6040;border-radius:2px;width:85%;}
+.chat-area{flex:1;overflow-y:auto;padding:10px 16px 6px;display:flex;flex-direction:column;gap:10px;}
+.timestamp{font-size:10px;color:#c4b8a0;text-align:center;}
+.msg-row{display:flex;align-items:flex-end;gap:7px;}
+.msg-avatar{width:24px;height:24px;border-radius:50%;background:rgba(255,96,64,0.08);border:1px solid rgba(255,96,64,0.18);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;}
+.bubble{max-width:84%;padding:10px 13px;border-radius:16px 16px 16px 4px;font-size:12px;line-height:1.65;color:#1a1a18;background:white;box-shadow:0 1px 4px rgba(26,26,24,0.06),0 0 0 1px rgba(26,26,24,0.04);}
+.bubble strong{font-weight:700;}
+.bubble .light{color:#6b6860;}
+.goals-card{background:white;border-radius:16px;box-shadow:0 1px 4px rgba(26,26,24,0.06),0 0 0 1px rgba(26,26,24,0.05);overflow:hidden;}
+.card-label{font-size:9px;font-weight:700;color:#c4b8a0;letter-spacing:1.2px;text-transform:uppercase;padding:12px 14px 8px;}
+.goals-list{padding:0 10px 6px;display:flex;flex-direction:column;gap:1px;}
+.goal-row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:10px;}
+.goal-icon{font-size:15px;width:24px;text-align:center;}
+.goal-name{flex:1;font-size:12px;font-weight:500;color:#1a1a18;}
+.goal-badge{font-size:10px;font-weight:600;color:#FF6040;background:rgba(255,96,64,0.08);padding:2px 8px;border-radius:10px;border:1px solid rgba(255,96,64,0.15);}
+.goal-remove{font-size:11px;color:#c4b8a0;}
+.add-row{display:flex;align-items:center;gap:8px;padding:8px 14px 12px;border-top:1px solid rgba(26,26,24,0.05);}
+.add-input{flex:1;font-size:11.5px;color:#c4b8a0;background:none;border:none;outline:none;font-family:'Lexend',sans-serif;}
+.add-btn{font-size:11px;font-weight:600;color:#FF6040;background:none;border:none;cursor:pointer;}
+.cta-wrap{padding:8px 16px 10px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;}
+.cta-btn{width:100%;height:46px;border-radius:14px;background:#FF6040;color:white;font-family:'Lexend',sans-serif;font-size:14px;font-weight:600;border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(255,96,64,0.25);}
+.skip-btn{height:28px;background:none;border:none;font-family:'Lexend',sans-serif;font-size:11px;color:#c4b8a0;width:100%;display:flex;align-items:center;justify-content:center;}
+.input-bar{padding:8px 14px 18px;border-top:1px solid rgba(26,26,24,0.06);display:flex;align-items:center;gap:8px;flex-shrink:0;background:#FAFAF8;}
+.input-wrap{flex:1;display:flex;align-items:center;background:white;border-radius:22px;border:1px solid rgba(26,26,24,0.1);padding:0 14px;height:38px;}
+.input-field{flex:1;font-family:'Lexend',sans-serif;font-size:11.5px;color:#c4b8a0;background:none;border:none;outline:none;}
+.send-btn{width:38px;height:38px;background:#FF6040;border-radius:50%;border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(255,96,64,0.25);flex-shrink:0;}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="phone-inner">
+    <div class="dynamic-island"></div>
+    <div class="status-bar">
+      <div class="status-time">9:41</div>
+      <div class="status-icons">
+        <svg width="17" height="12" viewBox="0 0 17 12"><rect x="0" y="4" width="3" height="8" rx="1" fill="#1a1a18"/><rect x="4.5" y="2" width="3" height="10" rx="1" fill="#1a1a18"/><rect x="9" y="0" width="3" height="12" rx="1" fill="#1a1a18"/><rect x="13.5" y="0" width="3" height="12" rx="1" fill="#1a1a18"/></svg>
+        <svg width="26" height="12" viewBox="0 0 26 12"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#1a1a18" stroke-opacity="0.3" fill="none"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#1a1a18" opacity="0.5"/></svg>
+      </div>
+    </div>
+    <div class="header">
+      <div class="mascot-avatar">😊</div>
+      <div>
+        <div class="header-name">Nudge</div>
+        <div class="header-sub"><div class="h-dot"></div> almost done</div>
+      </div>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-top">
+        <div class="progress-step">Step 6 of 7</div>
+        <div class="progress-pct">85%</div>
+      </div>
+      <div class="progress-track"><div class="progress-fill"></div></div>
+    </div>
+    <div class="chat-area">
+      <div class="timestamp">Step 6 · Goals</div>
+      <div class="msg-row">
+        <div class="msg-avatar">😊</div>
+        <div class="bubble">
+          What are you actually trying to work on in life right now? <strong>Big or small</strong> — I want to know.<br><br>
+          <span class="light">This can be anything from going to the gym consistently to building a side project. Just let me know and I can incorporate it. 🎯</span>
+        </div>
+      </div>
+      <div class="goals-card">
+        <div class="card-label">Your goals</div>
+        <div class="goals-list">
+          <div class="goal-row">
+            <div class="goal-icon">💪</div>
+            <div class="goal-name">Gym consistency</div>
+            <div class="goal-badge">3× / week</div>
+            <div class="goal-remove">✕</div>
+          </div>
+          <div class="goal-row">
+            <div class="goal-icon">🌍</div>
+            <div class="goal-name">Learn Spanish</div>
+            <div class="goal-badge">Daily</div>
+            <div class="goal-remove">✕</div>
+          </div>
+          <div class="goal-row">
+            <div class="goal-icon">💻</div>
+            <div class="goal-name">Build my side project</div>
+            <div class="goal-badge">Weekly</div>
+            <div class="goal-remove">✕</div>
+          </div>
+        </div>
+        <div class="add-row">
+          <input class="add-input" placeholder="Add another goal..." readonly/>
+          <div class="add-btn">+ Add</div>
+        </div>
+      </div>
+    </div>
+    <div class="cta-wrap">
+      <div class="cta-btn">These look right →</div>
+      <div class="skip-btn">Skip for now</div>
+    </div>
+    <div class="input-bar">
+      <div class="input-wrap">
+        <input class="input-field" placeholder="Tell me about a goal..." readonly/>
+      </div>
+      <button class="send-btn">
+        <svg width="15" height="15" viewBox="0 0 18 18" fill="none"><path d="M2 9L16 9M16 9L10 3M16 9L10 15" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
