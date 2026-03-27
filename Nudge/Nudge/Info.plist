@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Lexend-Light.ttf</string>
+		<string>Lexend-Regular.ttf</string>
+		<string>Lexend-Medium.ttf</string>
+		<string>Lexend-SemiBold.ttf</string>
+		<string>Lexend-Bold.ttf</string>
+	</array>
+</dict>
+</plist>
