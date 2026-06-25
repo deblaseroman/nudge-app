@@ -1,0 +1,282 @@
+//
+//  NudgeNotificationService.swift
+//  Nudge
+//
+//  Notification permissions + delegate. Owns the OS authorization state and
+//  the foreground-presentation / response-handling delegate. Every scheduled
+//  notification is built by `NudgeArbiter`; this file is the inbound seam
+//  for what the user does with them (tap, dismiss, action buttons).
+//
+
+import Foundation
+import SwiftData
+import UserNotifications
+
+extension Notification.Name {
+    /// Posted from the UN delegate when a notification tap should drop the
+    /// user on a specific tab. `userInfo["tab"]` carries the tab's raw value
+    /// (matches a `case` in `AppTab`). ContentView observes this and updates
+    /// its `deepLinkTab` state, which MainTabView reads.
+    static let nudgeNotificationOpenTab = Notification.Name("nudge.notification.openTab")
+
+    /// Posted when the user taps "Not yet" on the idle nudge. `userInfo`
+    /// carries `taskID: String` (UUID string) of the highest-priority open
+    /// task. TasksTabView observes this and shows a confirmation sheet
+    /// offering that task as a starting point. If the user dismisses the
+    /// sheet they can pick a different task — the goal is to break the
+    /// decision paralysis the idle nudge itself was suffering from.
+    static let nudgeIdleNotYetTapped = Notification.Name("nudge.notification.idleNotYet")
+}
+
+@MainActor
+final class NudgeNotificationService: NSObject {
+
+    static let shared = NudgeNotificationService()
+
+    enum AuthorizationState {
+        case notDetermined
+        case denied
+        case authorized
+    }
+
+    private let center = UNUserNotificationCenter.current()
+
+    override private init() {
+        super.init()
+    }
+
+    /// Called at app launch from NudgeApp.didFinishLaunchingWithOptions.
+    func configure() async {
+        // Nothing to schedule yet. The new notification system will populate
+        // this once it's built.
+    }
+
+    func authorizationState() async -> AuthorizationState {
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .notDetermined:
+            return .notDetermined
+        case .denied:
+            return .denied
+        case .authorized, .provisional, .ephemeral:
+            return .authorized
+        @unknown default:
+            return .notDetermined
+        }
+    }
+
+    @discardableResult
+    func requestAuthorizationIfNeeded() async -> AuthorizationState {
+        let current = await authorizationState()
+        guard current == .notDetermined else { return current }
+
+        do {
+            // `.providesAppNotificationSettings` advertises that we expose
+            // our own per-category settings UI, so iOS adds a "Settings"
+            // link inside our notification settings page that deep-links
+            // back into the app's Settings tab.
+            _ = try await center.requestAuthorization(
+                options: [.alert, .badge, .sound, .providesAppNotificationSettings]
+            )
+        } catch {
+            return .denied
+        }
+        return await authorizationState()
+    }
+
+    /// No-op while the notification system is being rebuilt. Kept so callers
+    /// (e.g. ContentView, SessionCoordinator) compile without changes.
+    func scheduleAllNotifications(for profile: UserProfile, modelContext: ModelContext) async {
+        // Intentionally empty.
+    }
+
+    /// Temporary debug helper. Sends a single notification 5 seconds later so
+    /// you can verify the permission grant works on device.
+    func sendTestNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Test"
+        content.body = "Notifications are enabled — new system not yet built."
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "nudge.test.\(UUID().uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        center.add(request)
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate
+
+extension NudgeNotificationService: UNUserNotificationCenterDelegate {
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let request = response.notification.request
+        let actionID = response.actionIdentifier
+        let userInfo = request.content.userInfo
+        let notificationID = request.identifier
+        let taskIDString = userInfo[NudgeNotificationUserInfoKey.taskID] as? String
+        let taskID = taskIDString.flatMap(UUID.init(uuidString:))
+
+        await MainActor.run {
+            handleResponse(
+                actionID: actionID,
+                notificationID: notificationID,
+                taskID: taskID,
+                requestContent: request.content
+            )
+        }
+    }
+
+    @MainActor
+    private func handleResponse(
+        actionID: String,
+        notificationID: String,
+        taskID: UUID?,
+        requestContent: UNNotificationContent
+    ) {
+        let context = ModelContext(SharedModelContainer.container)
+
+        // Resolve outcome row up-front so every branch can update it.
+        let outcomeDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> { $0.notificationID == notificationID }
+        )
+        let outcome = (try? context.fetch(outcomeDescriptor))?.first
+
+        switch actionID {
+        case UNNotificationDismissActionIdentifier:
+            outcome?.result = .dismissed
+            outcome?.actedAt = Date()
+
+        case NudgeNotificationActionID.startSession.rawValue:
+            outcome?.result = .tappedStart
+            outcome?.actedAt = Date()
+            startSession(for: taskID, context: context)
+            NotificationCenter.default.post(
+                name: .nudgeNotificationOpenTab,
+                object: nil,
+                userInfo: ["tab": "tasks"]
+            )
+
+        case NudgeNotificationActionID.snooze30.rawValue:
+            outcome?.result = .tappedSnooze
+            outcome?.actedAt = Date()
+            rescheduleSnoozed(requestContent: requestContent, originalID: notificationID)
+
+        case NudgeNotificationActionID.breakItDown.rawValue:
+            outcome?.result = .tappedBreakDown
+            outcome?.actedAt = Date()
+            NotificationCenter.default.post(
+                name: .nudgeNotificationOpenTab,
+                object: nil,
+                userInfo: ["tab": "tasks"]
+            )
+
+        case NudgeNotificationActionID.idleYesGood.rawValue:
+            // User said they're already on it. Leave them alone for the
+            // rest of today — write a per-day marker the arbiter checks
+            // before re-scheduling. Record as snooze (best existing match).
+            outcome?.result = .tappedSnooze
+            outcome?.actedAt = Date()
+            let key = NudgeArbiter.idleDismissedKey(for: Date())
+            SharedModelContainer.appGroupDefaults.set(true, forKey: key)
+
+        case NudgeNotificationActionID.idleNotYet.rawValue:
+            // User hasn't started yet. Pick the top task for them so they
+            // don't have to choose, drop them on the Tasks tab, and let
+            // TasksTabView surface a confirmation sheet.
+            outcome?.result = .tappedStart
+            outcome?.actedAt = Date()
+            let topTask = pickTopOpenTask(context: context)
+            NotificationCenter.default.post(
+                name: .nudgeNotificationOpenTab,
+                object: nil,
+                userInfo: ["tab": "tasks"]
+            )
+            if let topTask {
+                NotificationCenter.default.post(
+                    name: .nudgeIdleNotYetTapped,
+                    object: nil,
+                    userInfo: ["taskID": topTask.id.uuidString]
+                )
+            }
+
+        case UNNotificationDefaultActionIdentifier:
+            // User tapped the notification body itself (not a button).
+            outcome?.result = .tappedStart
+            outcome?.actedAt = Date()
+            NotificationCenter.default.post(
+                name: .nudgeNotificationOpenTab,
+                object: nil,
+                userInfo: ["tab": "tasks"]
+            )
+
+        default:
+            // Unknown action — log no result so the row stays pending and
+            // can be re-evaluated on the next pass.
+            break
+        }
+
+        try? context.save()
+    }
+
+    /// Returns the highest-priority open task per `TaskSortComparator`.
+    /// Used by the idle "Not yet" handler to pre-select a task so the user
+    /// doesn't have to scan the full list to pick something.
+    @MainActor
+    private func pickTopOpenTask(context: ModelContext) -> NudgeTask? {
+        let allTasks = (try? context.fetch(FetchDescriptor<NudgeTask>())) ?? []
+        let open = allTasks.filter { !$0.isInformationalEvent && !$0.isComplete }
+        return open.sorted(by: { TaskSortComparator().compare($0, $1) }).first
+    }
+
+    @MainActor
+    private func startSession(for taskID: UUID?, context: ModelContext) {
+        guard let taskID else { return }
+        guard !SessionCoordinator.shared.isSessionActive else { return }
+        let taskDescriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { $0.id == taskID }
+        )
+        guard let task = (try? context.fetch(taskDescriptor))?.first else { return }
+        let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first
+        SessionCoordinator.shared.startSession(
+            task: task,
+            userName: profile?.name ?? ""
+        )
+    }
+
+    /// Re-fires the same notification copy 30 minutes later. We can't
+    /// rebuild the original `NudgeCandidate` here (no full arbiter context),
+    /// so we just clone the delivered content and schedule a one-shot with
+    /// a derived ID.
+    @MainActor
+    private func rescheduleSnoozed(requestContent: UNNotificationContent, originalID: String) {
+        let copy = UNMutableNotificationContent()
+        copy.title = requestContent.title
+        copy.body = requestContent.body
+        copy.sound = requestContent.sound
+        copy.userInfo = requestContent.userInfo
+        copy.categoryIdentifier = requestContent.categoryIdentifier
+        copy.interruptionLevel = requestContent.interruptionLevel
+        copy.relevanceScore = requestContent.relevanceScore
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 30 * 60, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "\(originalID).snoozed",
+            content: copy,
+            trigger: trigger
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+}
