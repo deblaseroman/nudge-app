@@ -62,14 +62,14 @@ struct HomeTabView: View {
                 ChatComposerStore.shared.sendAction = { sendMessage() }
                 ChatComposerStore.shared.updateHasSendableText(from: composerText)
                 ChatComposerStore.shared.isWaitingForAI = isWaitingForAI
-                Task { await refreshNotificationAuthState() }
+                Task { @MainActor in await refreshNotificationAuthState() }
             }
             .onChange(of: scenePhase) { _, newPhase in
                 // The user may have flipped the OS permission while we were
                 // backgrounded. Re-read the system state on every return so
                 // the banner appears / disappears immediately.
                 if newPhase == .active {
-                    Task { await refreshNotificationAuthState() }
+                    Task { @MainActor in await refreshNotificationAuthState() }
                 }
             }
             .onDisappear {
@@ -427,7 +427,7 @@ struct HomeTabView: View {
                     // Kick off intelligence analysis for each new task so
                     // get-ahead nudges fire at recommendedStartBy.
                     for task in newlyCreatedTasks {
-                        NudgeIntelligence.shared.refreshSoon(for: task, modelContext: modelContext)
+                        NudgeIntelligence.shared.refreshSoon(for: task)
                     }
                     // Single arbiter call replaces every per-feature scheduler.
                     NudgeArbiter.shared.reevaluate(

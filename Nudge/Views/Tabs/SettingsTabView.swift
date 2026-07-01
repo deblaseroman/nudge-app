@@ -119,7 +119,13 @@ struct SettingsTabView: View {
                 onConfirm: { newValue in
                     switch destination {
                     case .morningCheckIn:
+                        // Keep wakeTime in sync — the arbiter reads
+                        // `wakeTime ?? morningCheckInTime`, so writing only
+                        // morningCheckInTime here would leave a stale
+                        // wakeTime (set during onboarding) winning the
+                        // coalesce and scheduling nudges off the old value.
                         profile.morningCheckInTime = newValue
+                        profile.wakeTime = newValue
                     case .eveningCheckIn:
                         profile.eveningCheckInTime = newValue
                     case .bedtime:

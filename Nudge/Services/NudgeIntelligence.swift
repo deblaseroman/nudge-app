@@ -34,42 +34,77 @@ final class NudgeIntelligence {
     static let shared = NudgeIntelligence()
     private init() {}
 
-    // MARK: - Public API
+    /// TaskIDs with an in-flight LLM refresh. Prevents repeated callers
+    /// (e.g. NudgeArbiter.reevaluate, called many times per minute under
+    /// rapid foreground/background cycling) from stacking up concurrent
+    /// `Task { await refresh(...) }` blocks for the same task. Each such
+    /// Task strongly captured a NudgeTask + ModelContext + an in-flight
+    /// URLSession request while awaiting Claude — a confirmed contributor
+    /// to the rapid-cycling memory jetsam.
+    private var inFlightRefreshTaskIDs: Set<UUID> = []
 
-    /// Returns the (cached or freshly computed) signals row for a task. If
-    /// a cached row exists and is fresh, returns it immediately. Otherwise
-    /// triggers an async refresh and returns the heuristic fallback so
-    /// callers (UI + scoring) have something to use right away.
-    func intelligence(for task: NudgeTask, modelContext: ModelContext) -> TaskIntelligence {
+    // MARK: - Public API — READ (synchronous, side-effect-free)
+
+    /// READ-ONLY signal lookup. Returns the cached `TaskIntelligence` row if
+    /// one exists and is still fresh; otherwise returns the deterministic
+    /// keyword-based fallback.
+    ///
+    /// This method NEVER spawns a Task and NEVER writes to SwiftData, so it
+    /// is safe to call from hot synchronous paths - notably every candidate
+    /// builder inside `NudgeArbiter.reevaluate`, which runs on every
+    /// foreground and every wake-time change. Keeping the read pure is what
+    /// makes `reevaluate` provably free of off-main async work.
+    ///
+    /// LLM enrichment is triggered SEPARATELY and explicitly by
+    /// `refreshSoon(for:)` at the only moments new signals can appear: task
+    /// creation and task-title edits. The arbiter never triggers it.
+    func cachedIntelligence(for task: NudgeTask, modelContext: ModelContext) -> TaskIntelligence {
         if let cached = fetchCached(taskID: task.id, modelContext: modelContext),
            isFresh(cached) {
             return cached
         }
-
-        Task { [weak self] in
-            await self?.refresh(task: task, modelContext: modelContext)
-        }
-
         return fallback(for: task)
     }
 
-    /// Force a re-analysis (e.g. user edited the title).
-    func refreshSoon(for task: NudgeTask, modelContext: ModelContext) {
-        Task { [weak self] in
-            await self?.refresh(task: task, modelContext: modelContext)
+    // MARK: - Public API — ENRICH (async, user-triggered only)
+
+    /// Triggers an LLM re-analysis for a task. Call this ONCE when a task is
+    /// created or its title changes — NOT on every read. Single-flight per
+    /// taskID (via `inFlightRefreshTaskIDs`) so overlapping calls collapse to
+    /// one network request instead of stacking up detached Tasks.
+    ///
+    /// Note there is no `modelContext` parameter: the refresh owns its own
+    /// main-actor `ModelContext` built from the shared container, so it never
+    /// captures — or outlives — a SwiftUI view's environment context. That
+    /// removes the fragile "pass a thread-affined ModelContext into a
+    /// fire-and-forget Task" pattern that caused the off-main SwiftData
+    /// saves behind the "Call must be made on main thread" crashes.
+    func refreshSoon(for task: NudgeTask) {
+        let taskID = task.id
+        guard inFlightRefreshTaskIDs.insert(taskID).inserted else { return }
+
+        Task { @MainActor [weak self] in
+            await self?.refresh(task: task)
+            self?.inFlightRefreshTaskIDs.remove(taskID)
         }
     }
 
     // MARK: - Refresh path
 
-    private func refresh(task: NudgeTask, modelContext: ModelContext) async {
+    private func refresh(task: NudgeTask) async {
+        // buildPrompt reads the task's fields BEFORE the suspension point —
+        // done on the main actor, before we hand off to the network.
         let prompt = buildPrompt(for: task)
+        let taskID = task.id
         let parsed: TaskSignalsJSON? = try? await callAI(prompt: prompt)
 
+        // Resumes on the main actor (this func is @MainActor), so everything
+        // below — the SwiftData write and its @Query-invalidation commit —
+        // happens on the main thread.
         let row: TaskIntelligence
         if let parsed {
             row = TaskIntelligence(
-                taskID: task.id,
+                taskID: taskID,
                 statedUrgency: parsed.statedUrgencyEnum,
                 suggestedFirstStep: parsed.suggestedFirstStep,
                 analyzedAt: Date()
@@ -78,7 +113,10 @@ final class NudgeIntelligence {
             row = fallback(for: task)
         }
 
-        upsert(row, modelContext: modelContext)
+        // Own context from the shared container — created and used entirely
+        // within this @MainActor body, never escaping.
+        let context = ModelContext(SharedModelContainer.container)
+        upsert(row, modelContext: context)
     }
 
     // MARK: - AI call

@@ -111,32 +111,34 @@ final class NudgeNotificationService: NSObject {
 // MARK: - UNUserNotificationCenterDelegate
 
 extension NudgeNotificationService: UNUserNotificationCenterDelegate {
-    nonisolated func userNotificationCenter(
+    // These delegate methods are @MainActor-isolated (inherited from the
+    // @MainActor class — note: NO `nonisolated`). The system delivers the
+    // callbacks and Swift guarantees the bodies run on the main actor. This
+    // replaces the old `nonisolated ... async` + manual `MainActor.run`
+    // pattern, which ran the body on the cooperative thread pool and then
+    // hopped — leaving a window where UI-driving work (tab switch, sheet
+    // presentation, SwiftData save → @Query invalidation) could be committed
+    // off the main thread, tripping UIKit's
+    // `_performBlockAfterCATransactionCommitSynchronizes` main-thread assert.
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
     }
 
-    nonisolated func userNotificationCenter(
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
         let request = response.notification.request
-        let actionID = response.actionIdentifier
-        let userInfo = request.content.userInfo
-        let notificationID = request.identifier
-        let taskIDString = userInfo[NudgeNotificationUserInfoKey.taskID] as? String
-        let taskID = taskIDString.flatMap(UUID.init(uuidString:))
-
-        await MainActor.run {
-            handleResponse(
-                actionID: actionID,
-                notificationID: notificationID,
-                taskID: taskID,
-                requestContent: request.content
-            )
-        }
+        let taskIDString = request.content.userInfo[NudgeNotificationUserInfoKey.taskID] as? String
+        handleResponse(
+            actionID: response.actionIdentifier,
+            notificationID: request.identifier,
+            taskID: taskIDString.flatMap(UUID.init(uuidString:)),
+            requestContent: request.content
+        )
     }
 
     @MainActor
@@ -163,11 +165,18 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             outcome?.result = .tappedStart
             outcome?.actedAt = Date()
             startSession(for: taskID, context: context)
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
+            // Defer the UI-driving post to a clean main runloop tick. Posting
+            // synchronously from inside the UN delegate's MainActor.run runs
+            // observers (deepLinkTab mutation, withAnimation tab switch) on
+            // the same dispatch pass as the foregrounding handoff, which
+            // triggered a "Call must be made on main thread" assertion.
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .nudgeNotificationOpenTab,
+                    object: nil,
+                    userInfo: ["tab": "tasks"]
+                )
+            }
 
         case NudgeNotificationActionID.snooze30.rawValue:
             outcome?.result = .tappedSnooze
@@ -177,11 +186,13 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
         case NudgeNotificationActionID.breakItDown.rawValue:
             outcome?.result = .tappedBreakDown
             outcome?.actedAt = Date()
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .nudgeNotificationOpenTab,
+                    object: nil,
+                    userInfo: ["tab": "tasks"]
+                )
+            }
 
         case NudgeNotificationActionID.idleYesGood.rawValue:
             // User said they're already on it. Leave them alone for the
@@ -199,28 +210,47 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             outcome?.result = .tappedStart
             outcome?.actedAt = Date()
             let topTask = pickTopOpenTask(context: context)
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
-            if let topTask {
+            // Capture as a sendable value — must not access the SwiftData
+            // model from inside the deferred closures (different runloop
+            // tick, potentially stale faulted reference).
+            let topTaskIDString = topTask?.id.uuidString
+            // Two-step async hop: the tab-open post fires first on the next
+            // main runloop tick so SwiftUI can commit deepLinkTab → MainTabView
+            // selectedTab → TasksTabView mounts → .onReceive subscription
+            // becomes live. THEN the idleNotYet post fires on the tick after,
+            // by which time TasksTabView is in the hierarchy and its
+            // subscription will actually catch the notification. Posting both
+            // synchronously inside MainActor.run was both crashing during
+            // the foregrounding handoff AND missing the sheet observer
+            // because TasksTabView wasn't mounted yet.
+            DispatchQueue.main.async {
                 NotificationCenter.default.post(
-                    name: .nudgeIdleNotYetTapped,
+                    name: .nudgeNotificationOpenTab,
                     object: nil,
-                    userInfo: ["taskID": topTask.id.uuidString]
+                    userInfo: ["tab": "tasks"]
                 )
+                if let topTaskIDString {
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(
+                            name: .nudgeIdleNotYetTapped,
+                            object: nil,
+                            userInfo: ["taskID": topTaskIDString]
+                        )
+                    }
+                }
             }
 
         case UNNotificationDefaultActionIdentifier:
             // User tapped the notification body itself (not a button).
             outcome?.result = .tappedStart
             outcome?.actedAt = Date()
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .nudgeNotificationOpenTab,
+                    object: nil,
+                    userInfo: ["tab": "tasks"]
+                )
+            }
 
         default:
             // Unknown action — log no result so the row stays pending and

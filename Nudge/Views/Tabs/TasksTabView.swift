@@ -5,6 +5,7 @@
 //  Task list with sorting, editing, and completion animations.
 //
 
+import Combine
 import SwiftUI
 import SwiftData
 import WidgetKit
@@ -99,6 +100,9 @@ struct TasksTabView: View {
                         modelContext.insert(newTask)
                         try? modelContext.save()
                         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                        // Enrich the new task's signals once, explicitly, at
+                        // creation — not on every arbiter read.
+                        NudgeIntelligence.shared.refreshSoon(for: newTask)
                         refreshNotifications()
                     }
                 )
@@ -115,6 +119,8 @@ struct TasksTabView: View {
                             task.specificTime = draft.specificTime
                             try? modelContext.save()
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                            // Title may have changed — re-enrich once.
+                            NudgeIntelligence.shared.refreshSoon(for: task)
                             refreshNotifications()
                         },
                         onDelete: {
@@ -158,7 +164,20 @@ struct TasksTabView: View {
                 .presentationDetents([.height(280), .medium])
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .nudgeIdleNotYetTapped)) { note in
+        .onReceive(
+            // Same Combine main-hop as ContentView's openTab observer.
+            // This is the @State write that flips the sheet binding — if
+            // it lands off-main, SwiftUI's sheet presentation invokes
+            // `_performBlockAfterCATransactionCommitSynchronizes` on the
+            // wrong thread and UIKit asserts "Call must be made on main
+            // thread". `.receive(on: DispatchQueue.main)` makes the
+            // publisher itself responsible for delivering on main, so
+            // every subsequent step (state mutation → SwiftUI invalidation
+            // → CATransaction commit → sheet present) is main-bound.
+            NotificationCenter.default
+                .publisher(for: .nudgeIdleNotYetTapped)
+                .receive(on: DispatchQueue.main)
+        ) { note in
             // Posted from the idle "Not yet" delegate handler with the
             // top open task's UUID. The sheet appears the next time this
             // view is on screen (the delegate also requests the Tasks
@@ -693,11 +712,13 @@ struct TaskEditorSheet: View {
 
     @State private var draft = TaskDraft()
 
-    /// In edit mode, look up (or kick off) the AI-derived first step for
-    /// this task so the under-3-hour CountdownLabel can suggest it.
+    /// In edit mode, the AI-derived first step for this task so the
+    /// under-3-hour CountdownLabel can suggest it. Pure READ — enrichment
+    /// (if the cache is stale/missing) is kicked off separately from the
+    /// editor's `.task` below, never as a side effect of this getter.
     private var suggestedFirstStep: String? {
         guard case .edit(let task) = mode else { return nil }
-        let intel = NudgeIntelligence.shared.intelligence(
+        let intel = NudgeIntelligence.shared.cachedIntelligence(
             for: task,
             modelContext: modelContext
         )
@@ -887,6 +908,13 @@ struct TaskEditorSheet: View {
             dueDate: task.dueDate,
             specificTime: task.specificTime
         )
+        // Explicit enrichment trigger. The `suggestedFirstStep` getter is
+        // now a pure read (it used to kick off a refresh on cache miss);
+        // opening the editor is the moment to (re)analyze so the suggestion
+        // populates. refreshSoon is single-flight, so this is a no-op if a
+        // refresh is already running or the cache is fresh enough that no
+        // caller has invalidated it.
+        NudgeIntelligence.shared.refreshSoon(for: task)
     }
 }
 

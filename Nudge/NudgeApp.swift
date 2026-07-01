@@ -29,7 +29,10 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in
             NudgeNotificationCategories.registerAll()
         }
-        Task {
+        Task { @MainActor in
+            // NudgeNotificationService is @MainActor — explicit isolation
+            // here because UIApplicationDelegate's methods aren't
+            // @MainActor-isolated, so this Task wouldn't inherit it.
             await NudgeNotificationService.shared.configure()
         }
 

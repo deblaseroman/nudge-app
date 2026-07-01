@@ -279,7 +279,59 @@ final class NudgeArbiter: NudgeArbitering {
         for cand in scheduled {
             schedule(cand, modelContext: modelContext)
         }
+
+        #if DEBUG
+        // Dump the actual pending queue the OS holds, so we can see what
+        // truly got scheduled (vs. built/gated/suppressed) and when each
+        // will fire. `pendingNotificationRequests()` is async; the Task is
+        // pinned to @MainActor since the arbiter is main-isolated.
+        debugDumpPendingRequests()
+        #endif
     }
+
+    #if DEBUG
+    /// Prints every pending UNNotificationRequest (arbiter + daily), sorted
+    /// by fire time, with a countdown from now. DEBUG-only diagnostic.
+    private func debugDumpPendingRequests() {
+        Task { @MainActor in
+            let requests = await center.pendingNotificationRequests()
+            let now = Date()
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MMM d, h:mm:ss a"
+
+            func nextFireDate(_ req: UNNotificationRequest) -> Date? {
+                if let cal = req.trigger as? UNCalendarNotificationTrigger {
+                    return cal.nextTriggerDate()
+                }
+                if let interval = req.trigger as? UNTimeIntervalNotificationTrigger {
+                    return interval.nextTriggerDate()
+                }
+                return nil
+            }
+
+            let rows = requests
+                .map { (req: $0, date: nextFireDate($0)) }
+                .sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
+
+            print("──────── [NudgeArbiter] PENDING NOTIFICATIONS (\(requests.count)) ────────")
+            if rows.isEmpty {
+                print("  (none scheduled — check permission, task existence, and fire-time-in-future)")
+            }
+            for row in rows {
+                let when: String
+                if let d = row.date {
+                    let mins = Int(d.timeIntervalSince(now) / 60)
+                    when = "\(fmt.string(from: d))  (in \(mins) min)"
+                } else {
+                    when = "no trigger date"
+                }
+                print("  • \(row.req.identifier)")
+                print("      \(when) — \(row.req.content.title): \(row.req.content.body.prefix(60))")
+            }
+            print("─────────────────────────────────────────────────────────────")
+        }
+    }
+    #endif
 
     // MARK: - Cancel
 
@@ -312,6 +364,36 @@ final class NudgeArbiter: NudgeArbitering {
             for row in pending { modelContext.delete(row) }
             try? modelContext.save()
         }
+
+        // Prune ACTED-UPON outcomes older than the 14-day fatigue window.
+        // Without this, every `.tappedStart` / `.tappedSnooze` /
+        // `.tappedBreakDown` / `.ignored` / `.dismissed` row persisted
+        // forever (only `.pending` was cleaned above), so the database
+        // grew monotonically and `buildBreakItDownCandidates` /
+        // `taskFatigueCount` reloaded ever-larger result sets into the
+        // shared SwiftData identity map on every reevaluate. This was
+        // a confirmed contributor to the rapid-cycling memory jetsam.
+        //
+        // Cleanup rule (chosen to keep fatigue tracking correct):
+        //   - Cutoff: 14 days ago (same window the fatigue fetch uses).
+        //   - Delete: any non-pending outcome with `scheduledFor` older
+        //     than the cutoff.
+        //   - Keep: ALL outcomes within the last 14 days (so the
+        //     per-task ignored/dismissed counters in
+        //     `buildBreakItDownCandidates` see complete recent history)
+        //     AND all `pending` rows regardless of age (those are
+        //     managed by the block above).
+        //
+        // Uses `delete(model:where:)` so rows are removed by predicate
+        // without first loading them into the context.
+        let staleCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
+        try? modelContext.delete(
+            model: NudgeOutcome.self,
+            where: #Predicate<NudgeOutcome> {
+                $0.scheduledFor < staleCutoff && $0.resultRaw != "pending"
+            }
+        )
+        try? modelContext.save()
 
         #if DEBUG
         print("[NudgeArbiter] cancelAll removed \(ids.count) pending notification(s).")
@@ -475,7 +557,12 @@ final class NudgeArbiter: NudgeArbitering {
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
-        guard profile.sessionStarterNotificationsEnabled else { return [] }
+        guard profile.sessionStarterNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — sessionStarterNotificationsEnabled is off.")
+            #endif
+            return []
+        }
         let calendar = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
         let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
@@ -488,18 +575,41 @@ final class NudgeArbiter: NudgeArbitering {
         if fireDate <= Date() {
             fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
         }
+        #if DEBUG
+        print("[NudgeArbiter] idle: wake=\(wake) → fireDate=\(fireDate) (wake + \(NudgeConfig.idleThresholdHours)h).")
+        #endif
 
         // Suppress if user already said "Yes, I'm good" earlier today.
-        if idleDismissedToday(for: fireDate) { return [] }
+        if idleDismissedToday(for: fireDate) {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — user already tapped 'Yes, I'm good' today.")
+            #endif
+            return []
+        }
 
         // Three-condition window check — if the user has clearly been
         // active in the 3 hours leading up to the fire time, don't ask
         // the question at all.
         let windowStart = fireDate.addingTimeInterval(-NudgeConfig.idleThresholdHours * 60 * 60)
         let windowEnd = fireDate
-        if hadSessionStarted(in: windowStart...windowEnd) { return [] }
-        if hadTaskCompletion(in: windowStart...windowEnd, modelContext: modelContext) { return [] }
-        if hadCalendarEvent(in: windowStart...windowEnd, modelContext: modelContext) { return [] }
+        if hadSessionStarted(in: windowStart...windowEnd) {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — a focus session started in the pre-fire window.")
+            #endif
+            return []
+        }
+        if hadTaskCompletion(in: windowStart...windowEnd, modelContext: modelContext) {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — a task was completed in the pre-fire window.")
+            #endif
+            return []
+        }
+        if hadCalendarEvent(in: windowStart...windowEnd, modelContext: modelContext) {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — a calendar event falls in the pre-fire window.")
+            #endif
+            return []
+        }
 
         // Find the highest-priority unstarted task to attach to the
         // outcome row. The notification copy itself doesn't name the task
@@ -514,15 +624,21 @@ final class NudgeArbiter: NudgeArbitering {
         unstartedDescriptor.fetchLimit = 50
         let unstarted = (try? modelContext.fetch(unstartedDescriptor)) ?? []
         guard let target = unstarted.sorted(by: { TaskSortComparator().compare($0, $1) }).first else {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — no incomplete non-event task to attach to (add a task first).")
+            #endif
             return []
         }
+        #if DEBUG
+        print("[NudgeArbiter] idle: OK — will schedule idle nudge for '\(target.title)' at \(fireDate).")
+        #endif
 
         let estimatedMinutes = DurationModel.shared.estimate(for: target, modelContext: modelContext)
         let isDeepWork = StartByPlanner.isDeepWork(
             category: target.taskCategory,
             effortMinutes: estimatedMinutes
         )
-        let signals = NudgeIntelligence.shared.intelligence(for: target, modelContext: modelContext)
+        let signals = NudgeIntelligence.shared.cachedIntelligence(for: target, modelContext: modelContext)
 
         // Idle nudge urgency is evaluated AT the fire date, not now —
         // otherwise the score swings as the user opens the app earlier in
@@ -651,7 +767,7 @@ final class NudgeArbiter: NudgeArbitering {
             guard let due = task.dueDate else { continue }
 
             let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
-            let signals = NudgeIntelligence.shared.intelligence(for: task, modelContext: modelContext)
+            let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
 
             // Urgency is evaluated AT the fire date — i.e., "how urgent will
             // this be when we ask the user to start?" Picking `now` would
@@ -748,7 +864,7 @@ final class NudgeArbiter: NudgeArbitering {
                 category: task.taskCategory,
                 effortMinutes: estimatedMinutes
             )
-            let signals = NudgeIntelligence.shared.intelligence(for: task, modelContext: modelContext)
+            let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
             let importance = EisenhowerScorer.importance(
                 category: task.taskCategory,
                 isDeepWork: isDeepWork,
@@ -788,7 +904,18 @@ final class NudgeArbiter: NudgeArbitering {
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
         guard profile.deadlinePrepNotificationsEnabled else { return [] }
-        let descriptor = FetchDescriptor<NudgeOutcome>()
+        // Scope to the fatigue window — fetching every NudgeOutcome ever
+        // recorded grew the shared SwiftData identity map unboundedly on
+        // every reevaluate (this path was a confirmed contributor to the
+        // "Terminated due to memory issue" jetsam under rapid scene
+        // cycling). The fatigue counter only needs recent ignored/
+        // dismissed events per task; older history doesn't affect the
+        // perTaskMaxNudges decision.
+        let fatigueCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
+        var descriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> { $0.scheduledFor >= fatigueCutoff }
+        )
+        descriptor.fetchLimit = 500
         let outcomes = (try? modelContext.fetch(descriptor)) ?? []
 
         var ignoredCountByTask: [UUID: Int] = [:]
@@ -830,7 +957,7 @@ final class NudgeArbiter: NudgeArbitering {
                 // task's category/dependency/statedUrgency signals so a
                 // stuck exam-prep task outranks a stuck errand at the
                 // same urgency.
-                let signals = NudgeIntelligence.shared.intelligence(for: task, modelContext: modelContext)
+                let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
                 let importance = EisenhowerScorer.importance(
                     category: task.taskCategory,
                     isDeepWork: false,
@@ -942,11 +1069,19 @@ final class NudgeArbiter: NudgeArbitering {
     }
 
     private func taskFatigueCount(taskID: UUID, context: GateContext) -> Int {
-        let descriptor = FetchDescriptor<NudgeOutcome>(
+        // Scoped to the fatigue window for the same reason as
+        // buildBreakItDownCandidates — without the date bound, this
+        // returns more rows over time forever, and is called once per
+        // gate-evaluated candidate per reevaluate.
+        let fatigueCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
+        var descriptor = FetchDescriptor<NudgeOutcome>(
             predicate: #Predicate<NudgeOutcome> {
-                $0.taskID == taskID && ($0.resultRaw == "ignored" || $0.resultRaw == "dismissed")
+                $0.taskID == taskID
+                    && $0.scheduledFor >= fatigueCutoff
+                    && ($0.resultRaw == "ignored" || $0.resultRaw == "dismissed")
             }
         )
+        descriptor.fetchLimit = NudgeConfig.perTaskMaxNudges + 1
         return (try? context.modelContext.fetch(descriptor))?.count ?? 0
     }
 

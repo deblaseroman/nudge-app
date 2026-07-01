@@ -216,7 +216,12 @@ final class SessionCoordinator {
         guard isSessionActive else { return }
         cancelAllTimers()
 
-        Task {
+        // ActivityKit (`Activity<...>.end` etc.) asserts main thread.
+        // LiveActivityManager is @MainActor, and @_inheritActorContext on
+        // Task.init SHOULD carry it in from here — but being explicit
+        // removes any ambiguity if the surrounding actor context is ever
+        // lost (e.g., called from a non-isolated callback in the future).
+        Task { @MainActor in
             await activityManager.endActivity()
         }
 
@@ -240,7 +245,7 @@ final class SessionCoordinator {
         sessionState = .complete
         playAlarmSound()
 
-        Task {
+        Task { @MainActor in
             await activityManager.endActivity()
         }
 
@@ -262,7 +267,7 @@ final class SessionCoordinator {
     private func triggerFocusAlert() {
         guard isSessionActive, sessionState == .active, let task = currentTask else { return }
         let ends = sessionEnd
-        Task {
+        Task { @MainActor in
             await activityManager.showStayFocusedAlert(taskTitle: task.title, taskEnds: ends)
         }
         focusAlertRevertTimer = scheduleWork(after: focusAlertDuration) { [weak self] in
@@ -273,7 +278,7 @@ final class SessionCoordinator {
     private func revertFocusAlert() {
         guard isSessionActive, let task = currentTask else { return }
         let ends = sessionEnd
-        Task {
+        Task { @MainActor in
             await activityManager.revertToActive(taskTitle: task.title, taskEnds: ends)
         }
     }

@@ -5,6 +5,7 @@
 //  Root view — routes to onboarding or home based on user profile state.
 //
 
+import Combine
 import SwiftUI
 import SwiftData
 
@@ -33,7 +34,21 @@ struct ContentView: View {
             EngagementTracker.shared.recordAppOpen(modelContext: modelContext)
             EngagementTracker.shared.updateInactivityState(modelContext: modelContext)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .nudgeNotificationOpenTab)) { note in
+        .onReceive(
+            // `.receive(on: DispatchQueue.main)` is the canonical Combine
+            // main-hop. NotificationCenter.Publisher emits SYNCHRONOUSLY on
+            // the post()-thread; without this operator, the @State mutation
+            // below runs on whatever thread called post(). When that thread
+            // wasn't main, SwiftUI's sheet/tab presentation eventually hit
+            // `_performBlockAfterCATransactionCommitSynchronizes` off-main
+            // and the app crashed with "Call must be made on main thread".
+            // Forcing delivery onto the main queue at the publisher level
+            // means the .onReceive closure (and the @State write inside)
+            // are guaranteed to run on main no matter who posted.
+            NotificationCenter.default
+                .publisher(for: .nudgeNotificationOpenTab)
+                .receive(on: DispatchQueue.main)
+        ) { note in
             // Notification tap / action button told us which tab to land on.
             // The userInfo "tab" string maps to AppTab cases — keep the keys
             // in lockstep with the switch below.
@@ -138,8 +153,16 @@ struct ContentView: View {
 
             // Extend the rolling calendar window when a week has passed.
             // No-op if the user hasn't connected a calendar yet.
+            //
+            // Explicit @MainActor on the Task. `CalendarService` is
+            // @MainActor and `modelContext` is bound to the main context;
+            // touching either from a cooperative-pool Task body raises
+            // "Call must be made on main thread". @_inheritActorContext
+            // *should* carry main isolation in from this SwiftUI closure
+            // automatically, but being explicit removes any ambiguity
+            // across Swift compiler versions / concurrency modes.
             if profile.calendarSource == "Apple Calendar" {
-                Task {
+                Task { @MainActor in
                     _ = await CalendarService.shared.refreshRollingWindow(
                         modelContext: modelContext
                     )

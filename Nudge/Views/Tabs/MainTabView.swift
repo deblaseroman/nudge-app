@@ -44,10 +44,19 @@ struct MainTabView: View {
         .preferredColorScheme(.light)
         .onChange(of: deepLinkTab) { _, newTab in
             guard let tab = newTab else { return }
-            withAnimation(NudgeAnimation.standard) {
-                selectedTab = tab
+            // Defensive main hop. `.onChange` should already be main, but
+            // when this fires during the notification-driven foregrounding
+            // handoff (Not yet → cold/warm launch → scene becomes active →
+            // deepLinkTab assigned), `withAnimation` + @State mutation +
+            // re-render are happening inside an unstable transition window.
+            // Deferring to the next runloop tick lets the scene settle on
+            // main before SwiftUI commits the tab switch.
+            DispatchQueue.main.async {
+                withAnimation(NudgeAnimation.standard) {
+                    selectedTab = tab
+                }
+                deepLinkTab = nil
             }
-            deepLinkTab = nil
         }
     }
 }
