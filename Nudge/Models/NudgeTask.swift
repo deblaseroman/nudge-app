@@ -29,6 +29,24 @@ final class NudgeTask {
     var dependsOnTaskId: UUID?      // optional dependency — this task blocked by another
     var isInformationalEvent: Bool
 
+    /// Where the user has PLACED this task on today's horizontal timeline.
+    /// Independent of `dueDate`/`specificTime` (which represent the deadline
+    /// and must not change when a task is placed). Nil = unscheduled.
+    var plannedStartDate: Date?
+    /// How long the placed block should span on the timeline, in minutes.
+    /// Nil falls back to `estimatedMinutes`, then a default.
+    var plannedDurationMinutes: Int?
+    /// True when the placement was created by "Plan my day" (auto), false
+    /// when the user placed it manually. Lets "Clear plan" remove only the
+    /// auto placements and keep manual ones.
+    var plannedIsAuto: Bool = false
+
+    /// Position (1-based) in an ordered "Today's plan" captured from the
+    /// brain dump ("first X, then Y…"). Nil means the task is NOT part of an
+    /// ordered plan. Independent of the timeline — a plan is a numbered,
+    /// reorderable list, not a placement.
+    var sequenceIndex: Int?
+
     init(
         id: UUID = UUID(),
         title: String,
@@ -47,7 +65,11 @@ final class NudgeTask {
         recurrence: String? = nil,
         linkedEventId: String? = nil,
         dependsOnTaskId: UUID? = nil,
-        isInformationalEvent: Bool = false
+        isInformationalEvent: Bool = false,
+        plannedStartDate: Date? = nil,
+        plannedDurationMinutes: Int? = nil,
+        plannedIsAuto: Bool = false,
+        sequenceIndex: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -67,6 +89,10 @@ final class NudgeTask {
         self.linkedEventId = linkedEventId
         self.dependsOnTaskId = dependsOnTaskId
         self.isInformationalEvent = isInformationalEvent
+        self.plannedStartDate = plannedStartDate
+        self.plannedDurationMinutes = plannedDurationMinutes
+        self.plannedIsAuto = plannedIsAuto
+        self.sequenceIndex = sequenceIndex
     }
 
     /// Typed view of `category` for scoring code. Reads the underlying

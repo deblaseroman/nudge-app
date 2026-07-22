@@ -279,59 +279,7 @@ final class NudgeArbiter: NudgeArbitering {
         for cand in scheduled {
             schedule(cand, modelContext: modelContext)
         }
-
-        #if DEBUG
-        // Dump the actual pending queue the OS holds, so we can see what
-        // truly got scheduled (vs. built/gated/suppressed) and when each
-        // will fire. `pendingNotificationRequests()` is async; the Task is
-        // pinned to @MainActor since the arbiter is main-isolated.
-        debugDumpPendingRequests()
-        #endif
     }
-
-    #if DEBUG
-    /// Prints every pending UNNotificationRequest (arbiter + daily), sorted
-    /// by fire time, with a countdown from now. DEBUG-only diagnostic.
-    private func debugDumpPendingRequests() {
-        Task { @MainActor in
-            let requests = await center.pendingNotificationRequests()
-            let now = Date()
-            let fmt = DateFormatter()
-            fmt.dateFormat = "MMM d, h:mm:ss a"
-
-            func nextFireDate(_ req: UNNotificationRequest) -> Date? {
-                if let cal = req.trigger as? UNCalendarNotificationTrigger {
-                    return cal.nextTriggerDate()
-                }
-                if let interval = req.trigger as? UNTimeIntervalNotificationTrigger {
-                    return interval.nextTriggerDate()
-                }
-                return nil
-            }
-
-            let rows = requests
-                .map { (req: $0, date: nextFireDate($0)) }
-                .sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
-
-            print("──────── [NudgeArbiter] PENDING NOTIFICATIONS (\(requests.count)) ────────")
-            if rows.isEmpty {
-                print("  (none scheduled — check permission, task existence, and fire-time-in-future)")
-            }
-            for row in rows {
-                let when: String
-                if let d = row.date {
-                    let mins = Int(d.timeIntervalSince(now) / 60)
-                    when = "\(fmt.string(from: d))  (in \(mins) min)"
-                } else {
-                    when = "no trigger date"
-                }
-                print("  • \(row.req.identifier)")
-                print("      \(when) — \(row.req.content.title): \(row.req.content.body.prefix(60))")
-            }
-            print("─────────────────────────────────────────────────────────────")
-        }
-    }
-    #endif
 
     // MARK: - Cancel
 
@@ -623,7 +571,13 @@ final class NudgeArbiter: NudgeArbitering {
         )
         unstartedDescriptor.fetchLimit = 50
         let unstarted = (try? modelContext.fetch(unstartedDescriptor)) ?? []
-        guard let target = unstarted.sorted(by: { TaskSortComparator().compare($0, $1) }).first else {
+        // Prefer the next item in the user's ordered plan (lowest
+        // sequenceIndex) — the plan's next step IS the answer to "what should
+        // I start?". Fall back to score when there's no plan.
+        let planNext = unstarted
+            .filter { $0.sequenceIndex != nil }
+            .min(by: { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) })
+        guard let target = planNext ?? unstarted.sorted(by: { TaskSortComparator().compare($0, $1) }).first else {
             #if DEBUG
             print("[NudgeArbiter] idle: SKIP — no incomplete non-event task to attach to (add a task first).")
             #endif
@@ -857,8 +811,19 @@ final class NudgeArbiter: NudgeArbitering {
         floaterDescriptor.fetchLimit = 50
         let floaters = (try? modelContext.fetch(floaterDescriptor)) ?? []
 
+        // If the user has an ordered plan, the check-in should point at the
+        // plan's NEXT item (lowest sequenceIndex) rather than an arbitrary
+        // undated task. Otherwise fall back to all floaters.
+        let planFloaters = floaters.filter { $0.sequenceIndex != nil }
+        let candidateTasks: [NudgeTask]
+        if let planNext = planFloaters.min(by: { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }) {
+            candidateTasks = [planNext]
+        } else {
+            candidateTasks = floaters
+        }
+
         var candidates: [NudgeCandidate] = []
-        for task in floaters {
+        for task in candidateTasks {
             let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
             let isDeepWork = StartByPlanner.isDeepWork(
                 category: task.taskCategory,

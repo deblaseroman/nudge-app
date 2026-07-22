@@ -326,6 +326,49 @@ enum CountdownState: Equatable {
         }
     }
 
+    // MARK: - Event timing line
+    //
+    // Events don't "count down" like tasks — they aren't completed, the user
+    // just shows up. So instead of "6 hours left / 2 days away", an event
+    // states WHEN it is, measured in whole CALENDAR DAYS (not 24h intervals):
+    //   • same day   → "Today at 3pm"
+    //   • 1 day      → "Tomorrow"
+    //   • 2–3 days   → "In 3 days, July 5 at 3pm"
+    //   • > 3 days   → "July 5 at 3pm"
+    //   • no clock time set → the " at 3pm" suffix is dropped
+    //
+    // NOTE: repeating-event phrasing ("Wed at 3pm" / "Wed and Thu at 3pm")
+    // is intentionally NOT handled here yet — the NudgeTask model stores one
+    // row per occurrence and has no recurrence flag, so detecting "this
+    // repeats" needs a separate design decision (add a recurrence field, or
+    // group same-title events). Single-occurrence phrasing ships first.
+    static func eventLine(specificTime: Date?, dueDate: Date?, now: Date) -> String? {
+        guard let anchor = specificTime ?? dueDate else { return nil }
+        let cal = Calendar.current
+        let dayDelta = cal.dateComponents(
+            [.day],
+            from: cal.startOfDay(for: now),
+            to: cal.startOfDay(for: anchor)
+        ).day ?? 0
+
+        let timeSuffix = specificTime != nil ? " at \(formatClockTime(anchor))" : ""
+
+        let monthDay = DateFormatter()
+        monthDay.dateFormat = "MMMM d"
+        let datePart = monthDay.string(from: anchor)
+
+        if dayDelta <= 0 {
+            return "Today\(timeSuffix)"
+        }
+        if dayDelta == 1 {
+            return "Tomorrow"
+        }
+        if dayDelta <= 3 {
+            return "In \(dayDelta) days, \(datePart)\(timeSuffix)"
+        }
+        return "\(datePart)\(timeSuffix)"
+    }
+
     /// `9pm` when the minutes are :00, `9:30pm` otherwise. Always lowercase.
     private static func formatClockTime(_ date: Date) -> String {
         let minute = Calendar.current.component(.minute, from: date)

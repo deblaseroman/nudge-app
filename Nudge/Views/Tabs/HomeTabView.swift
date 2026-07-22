@@ -274,6 +274,13 @@ struct HomeTabView: View {
         // and returns a conversational response + structured task data.
         // ────────────────────────────────────────────────────────────────
         Task {
+            // Plan/restructure intent → route to the AI day-plan refiner
+            // instead of the brain-dump prompt. Still counts as a chat turn.
+            if isPlanIntent(messageText) {
+                await handlePlanIntent()
+                isWaitingForAI = false
+                return
+            }
             do {
                 let history = messages.dropLast().map { msg in
                     ChatMessage(
@@ -358,6 +365,18 @@ struct HomeTabView: View {
                     }
                 }
 
+                // One active plan at a time: if this response captures a NEW
+                // ordered plan, clear sequenceIndex on any surviving tasks
+                // from the previous plan first. Those tasks aren't deleted —
+                // they just drop back into the normal Unscheduled/Scheduled
+                // sections. The new plan then owns 1,2,3…
+                let incomingIsPlan = response.tasks.contains { $0.sequenceIndex != nil }
+                if incomingIsPlan {
+                    for task in allTasks where task.sequenceIndex != nil {
+                        task.sequenceIndex = nil
+                    }
+                }
+
                 // Persist only genuinely NEW tasks
                 var newlyCreatedTasks: [NudgeTask] = []
                 for taskData in response.tasks {
@@ -385,16 +404,17 @@ struct HomeTabView: View {
                     // Parse dueTime ("3:00 PM") combined with dueDate into specificTime.
                     let specificTime = parseSpecificTime(timeString: taskData.dueTime, on: newDueDate)
 
-                    // Events MUST have a concrete time — if the AI flagged
-                    // something as an event but didn't supply a time, demote
-                    // it back to a task so it doesn't get stuck in the events
-                    // list without a slot.
-                    let isEvent = (taskData.isEvent ?? false) && specificTime != nil
+                    // Events keep their event classification even without a
+                    // time now — a timeless event lands in the Events list with
+                    // a "needs a time" chip, and the AI's reply asks for the
+                    // time in one follow-up question. (Previously we demoted
+                    // timeless events to tasks; that hid genuine plans.)
+                    let isEvent = taskData.isEvent ?? false
 
                     // Floater detection: no date AND no time → low-priority,
                     // "get to it whenever" task. Force low priority unless the
                     // AI explicitly said urgent/high.
-                    let isFloater = newDueDate == nil && specificTime == nil
+                    let isFloater = !isEvent && newDueDate == nil && specificTime == nil
                     let rawPriority = taskData.priority ?? "medium"
                     let priority: String = {
                         guard isFloater else { return rawPriority }
@@ -412,7 +432,11 @@ struct HomeTabView: View {
                         source: "capture",
                         estimatedMinutes: taskData.estimatedMinutes,
                         recurrence: taskData.recurrence,
-                        isInformationalEvent: isEvent
+                        isInformationalEvent: isEvent,
+                        // Ordered-plan position ("first X, then Y") — nil for
+                        // items the user didn't sequence. Never sets a timeline
+                        // placement; a plan is a numbered list, not a schedule.
+                        sequenceIndex: isEvent ? nil : taskData.sequenceIndex
                     )
                     modelContext.insert(task)
                     newlyCreatedTasks.append(task)
@@ -468,6 +492,52 @@ struct HomeTabView: View {
         }
     }
 
+    /// Simple keyword intent: is the user asking to plan / restructure / move
+    /// their day around? (Not a brain dump.)
+    private func isPlanIntent(_ text: String) -> Bool {
+        let t = text.lowercased()
+        let phrases = [
+            "plan my day", "plan my", "plan out my day", "plan the day",
+            "restructure", "reorganize", "reorganise", "rearrange",
+            "move things around", "move stuff around", "shuffle my day",
+            "organize my day", "organise my day", "redo my schedule",
+            "fix my schedule", "replan"
+        ]
+        return phrases.contains { t.contains($0) }
+    }
+
+    /// Runs the AI day-plan refiner and replies in-chat with the rationale.
+    /// Gated behind Pro / trial. An explicit chat message → `force: true`.
+    private func handlePlanIntent() async {
+        guard profile.isPro || profile.isInTrial else {
+            messages.append(HomeChatMessage(
+                role: .assistant,
+                text: "Planning your day with AI is a Pro feature. You can still use “Plan my day” in the Tasks tab any time."
+            ))
+            persistSession()
+            return
+        }
+
+        let outcome = await DayPlanRefiner.shared.refine(
+            profile: profile,
+            modelContext: modelContext,
+            force: true
+        )
+        let reply: String
+        switch outcome {
+        case .success(let rationale), .cached(let rationale):
+            reply = rationale.isEmpty ? "Done — I laid out your day on the timeline." : rationale
+        case .noTasks:
+            reply = "You're all set — there's nothing open to schedule into today's free time."
+        case .notEntitled:
+            reply = "Planning your day with AI is a Pro feature."
+        case .failed:
+            reply = "I couldn't rework the schedule just now. Try again in a moment, or use “Plan my day” in the Tasks tab."
+        }
+        messages.append(HomeChatMessage(role: .assistant, text: reply))
+        persistSession()
+    }
+
     private func persistSession() {
         let allMessages = messages
         // Reuse the latest session only if it was started TODAY. Otherwise
@@ -499,13 +569,21 @@ struct HomeTabView: View {
         parser.dateFormat = "yyyy-MM-dd"
         parser.locale = Locale(identifier: "en_US_POSIX")
         parser.timeZone = TimeZone.current
-        let parsedDate = parser.date(from: dateString) ?? Date()
+        let parsedDay = parser.date(from: dateString) ?? Date()
+
+        // A bare date (no clock time) means "due by the END of that day."
+        // Default to 23:59, NOT midnight — otherwise a task "due today"
+        // is instantly overdue against 12:00 AM. When the user gave an
+        // explicit time it's applied separately via `specificTime`, which
+        // takes precedence in every deadline calculation.
+        let calendar = Calendar.current
+        let endOfDay = calendar.date(bySettingHour: 23, minute: 59, second: 0, of: parsedDay) ?? parsedDay
 
         #if DEBUG
-        print("[HomeTabView] Parsed date: input=\"\(dateString)\" → result=\(parsedDate)")
+        print("[HomeTabView] Parsed date: input=\"\(dateString)\" → result=\(endOfDay)")
         #endif
 
-        return parsedDate
+        return endOfDay
     }
 
     /// Combines a date with a clock-time string ("3:00 PM", "15:00") into a

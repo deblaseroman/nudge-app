@@ -101,10 +101,18 @@ final class DayPlanRefiner {
         let gapDTOs = gaps.map { DayPlanInput.GapDTO(start: Self.iso($0.start), end: Self.iso($0.end)) }
 
         // ── Top ~8 open, unplaced tasks by Eisenhower score ───────────────
-        let candidates = allTasks
-            .filter { !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate == nil }
+        // Plan tasks first, in the user's stated sequenceIndex order (their
+        // order outranks score); non-plan tasks follow, by score. Cap at ~8.
+        let openUnplaced = allTasks.filter {
+            !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate == nil
+        }
+        let planCandidates = openUnplaced
+            .filter { $0.sequenceIndex != nil }
+            .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
+        let scoredCandidates = openUnplaced
+            .filter { $0.sequenceIndex == nil }
             .sorted { planScore(for: $0, modelContext: modelContext) > planScore(for: $1, modelContext: modelContext) }
-            .prefix(8)
+        let candidates = (planCandidates + scoredCandidates).prefix(8)
 
         guard !candidates.isEmpty else { return .noTasks }
 
@@ -119,7 +127,8 @@ final class DayPlanRefiner {
                 category: task.category,
                 estimatedMinutes: planningMinutes(for: task, modelContext: modelContext),
                 dueDate: (task.specificTime ?? task.dueDate).map { dueFmt.string(from: $0) },
-                score: planScore(for: task, modelContext: modelContext)
+                score: planScore(for: task, modelContext: modelContext),
+                sequenceIndex: task.sequenceIndex
             )
         }
 

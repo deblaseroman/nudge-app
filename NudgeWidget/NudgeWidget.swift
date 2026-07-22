@@ -58,6 +58,17 @@ struct EventSnapshot: Identifiable, Hashable {
     }
 }
 
+/// Compact block for the widget's mini day chart — today's events + placed
+/// tasks. `start`/`durationMinutes` position it on the wake→bed track.
+struct WidgetTimeBlock: Identifiable, Hashable {
+    let id: UUID
+    let title: String
+    let start: Date
+    let durationMinutes: Int
+    let isEvent: Bool
+    let isComplete: Bool
+}
+
 // MARK: - Timeline Entry
 
 struct NudgeTaskEntry: TimelineEntry {
@@ -77,6 +88,12 @@ struct NudgeTaskEntry: TimelineEntry {
     let sessionTimerEndDate: Date?
     let sessionPausedRemaining: Int?
     let activeTaskID: UUID?
+    /// Mini day-chart data. `timeBlocks` are today's events + placed tasks;
+    /// `dayStart`/`dayEnd` are the chart window (wake → bedtime). Defaulted so
+    /// the placeholder/empty factories don't need to specify them.
+    var timeBlocks: [WidgetTimeBlock] = []
+    var dayStart: Date = Date()
+    var dayEnd: Date = Date()
 
     static var placeholder: NudgeTaskEntry {
         NudgeTaskEntry(
@@ -200,7 +217,7 @@ struct NudgeTaskEntry: TimelineEntry {
 
 // MARK: - Widget Colors (light theme)
 
-private enum WidgetColors {
+enum WidgetColors {
     static let background = Color(red: 0.965, green: 0.976, blue: 0.967)
     static let surface = Color.white
     static let accent = Color(red: 0.451, green: 0.576, blue: 0.702)
@@ -420,6 +437,16 @@ struct NudgeTaskProvider: TimelineProvider {
                 if lhs.isComplete != rhs.isComplete {
                     return !lhs.isComplete
                 }
+                // Match the app: an ordered "Today's plan" comes first, in the
+                // user's stated sequenceIndex order, ahead of score/deadline.
+                let lSeq = lhs.sequenceIndex
+                let rSeq = rhs.sequenceIndex
+                if (lSeq != nil) != (rSeq != nil) {
+                    return lSeq != nil            // plan tasks before non-plan
+                }
+                if let l = lSeq, let r = rSeq, l != r {
+                    return l < r                  // lower number earlier
+                }
                 let leftBucket = sortBucket(for: lhs)
                 let rightBucket = sortBucket(for: rhs)
                 if leftBucket != rightBucket {
@@ -513,6 +540,50 @@ struct NudgeTaskProvider: TimelineProvider {
                 return UUID(uuidString: idString)
             }()
 
+            // ── Mini day chart: a rolling 5-hour window with "now" 15% in ──
+            // from the left (so a little of the recent past shows, and the
+            // next ~4¼ hours are ahead). A short window lets blocks show a
+            // label. `dayStart`/`dayEnd` drive the strip; the now-marker lands
+            // at 15% automatically because now = dayStart + 0.15 * window.
+            let chartWindow: TimeInterval = 5 * 3600
+            let chartStart = now.addingTimeInterval(-0.15 * chartWindow)
+            let chartEnd = now.addingTimeInterval(0.85 * chartWindow)
+
+            func overlapsWindow(start: Date, minutes: Int) -> Bool {
+                let end = start.addingTimeInterval(Double(minutes) * 60)
+                return start < chartEnd && end > chartStart
+            }
+
+            var blocks: [WidgetTimeBlock] = []
+            // Events in-window.
+            for event in allFetchedEvents {
+                guard let t = event.specificTime else { continue }
+                let mins = event.estimatedMinutes ?? 60
+                guard overlapsWindow(start: t, minutes: mins) else { continue }
+                blocks.append(WidgetTimeBlock(
+                    id: event.id,
+                    title: event.title,
+                    start: t,
+                    durationMinutes: mins,
+                    isEvent: true,
+                    isComplete: event.isComplete
+                ))
+            }
+            // Placed tasks in-window (incomplete + recently completed).
+            for task in (openActionable + recentDone) {
+                guard let p = task.plannedStartDate else { continue }
+                let mins = task.plannedDurationMinutes ?? task.estimatedMinutes ?? 30
+                guard overlapsWindow(start: p, minutes: mins) else { continue }
+                blocks.append(WidgetTimeBlock(
+                    id: task.id,
+                    title: task.title,
+                    start: p,
+                    durationMinutes: mins,
+                    isEvent: false,
+                    isComplete: task.isComplete
+                ))
+            }
+
             let liveEntry = NudgeTaskEntry(
                 date: Date(),
                 tasks: displayTasks,
@@ -527,7 +598,10 @@ struct NudgeTaskProvider: TimelineProvider {
                 isSessionPaused: sessionPaused,
                 sessionTimerEndDate: sessionEndDate,
                 sessionPausedRemaining: sessionPaused ? sessionPausedRemaining : nil,
-                activeTaskID: activeTaskID
+                activeTaskID: activeTaskID,
+                timeBlocks: blocks,
+                dayStart: chartStart,
+                dayEnd: chartEnd
             )
             let recentCompletionExpiry = recentlyCompletedTasks
                 .compactMap { $0.completedAt?.addingTimeInterval(completionDisplayDuration) }
@@ -754,11 +828,12 @@ struct NudgeTaskWidgetView: View {
                 mediumLayout
             }
         }
-        .background(WidgetColors.surface)
-        .overlay {
-            ContainerRelativeShape()
-                .strokeBorder(WidgetColors.neutral.opacity(0.28), lineWidth: 1)
-        }
+        // Expand so content stretches to the widget frame instead of hugging
+        // its intrinsic size. The background itself is now the edge-to-edge
+        // containerBackground (see NudgeTaskWidget below), NOT a .background()
+        // here — a manual .background sits inside the system content margins
+        // and left an inset ring of the container color around it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentTransition(.interpolate)
     }
 
@@ -1096,6 +1171,15 @@ struct NudgeTaskWidgetView: View {
     }
 
     private var sessionStartFooter: some View {
+        VStack(spacing: 6) {
+            if entry.dayEnd > entry.dayStart {
+                WidgetTimeBlockStrip(entry: entry)
+            }
+            sessionButtonRow
+        }
+    }
+
+    private var sessionButtonRow: some View {
         Group {
             if entry.isSessionActive {
                 HStack(spacing: 8) {
@@ -1146,17 +1230,17 @@ struct NudgeTaskWidgetView: View {
                 // Start — opens the app to the tasks tab where the user
                 // picks a task and starts manually. No auto-start.
                 Link(destination: URL(string: "nudge://focus-session")!) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                         Text("Start Session")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 6)
                     .background(WidgetColors.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
                 }
             }
         }
@@ -1444,6 +1528,106 @@ private struct WidgetCheckboxButtonStyle: ButtonStyle {
     }
 }
 
+// MARK: - Mini day-chart strip
+
+/// A compact, non-interactive day timeline for the large widget: today's
+/// events and placed tasks as small blocks on a wake→bed track, with a "now"
+/// marker. The marker advances each time the widget timeline refreshes
+/// (~every 15 min) — WidgetKit can't animate it continuously.
+struct WidgetTimeBlockStrip: View {
+    let entry: NudgeTaskEntry
+    private let labelH: CGFloat = 12      // start-time label row (top)
+    private let tickH: CGFloat = 5        // vertical connector label → block
+    private let barHeight: CGFloat = 44   // the block track
+    private let inset: CGFloat = 5
+    private var totalHeight: CGFloat { labelH + tickH + barHeight }
+
+    /// Clamped 0…1 position; `rawFraction` is unclamped so we can tell when a
+    /// block actually STARTS inside the window (vs. clipped at the left edge).
+    private func fraction(for date: Date) -> CGFloat { min(max(rawFraction(for: date), 0), 1) }
+    private func rawFraction(for date: Date) -> CGFloat {
+        let total = entry.dayEnd.timeIntervalSince(entry.dayStart)
+        guard total > 0 else { return 0 }
+        return CGFloat(date.timeIntervalSince(entry.dayStart) / total)
+    }
+
+    private func timeString(_ date: Date) -> String {
+        let m = Calendar.current.component(.minute, from: date)
+        let f = DateFormatter()
+        f.dateFormat = m == 0 ? "ha" : "h:mma"
+        return f.string(from: date).lowercased()
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let barTop = labelH + tickH
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(WidgetColors.chipBackground)
+                    .frame(width: w, height: barHeight)
+                    .offset(y: barTop)
+
+                ForEach(entry.timeBlocks) { block in
+                    let startX = fraction(for: block.start) * w
+                    let endDate = block.start.addingTimeInterval(Double(block.durationMinutes) * 60)
+                    let blockW = max(fraction(for: endDate) * w - startX, 4)
+                    // Only flag the start time when the block genuinely starts
+                    // inside the window (not clipped off the left edge).
+                    let startsInWindow = rawFraction(for: block.start) >= 0
+
+                    // The block itself.
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(block.isEvent
+                              ? WidgetColors.neutral.opacity(0.35)
+                              : WidgetColors.accent.opacity(0.85))
+                        .frame(width: blockW, height: barHeight - inset * 2)
+                        .overlay(alignment: .leading) {
+                            if blockW > 40 {
+                                Text(block.title)
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(block.isEvent ? WidgetColors.textPrimary : .white)
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.75)
+                                    .padding(.horizontal, 4)
+                                    .frame(width: blockW, alignment: .leading)
+                            }
+                        }
+                        .opacity(block.isComplete ? 0.3 : 1)
+                        .offset(x: startX, y: barTop + inset)
+
+                    if startsInWindow {
+                        // Vertical connector on the block's left edge, up to
+                        // the time label.
+                        Rectangle()
+                            .fill(WidgetColors.textMuted)
+                            .frame(width: 1, height: tickH + inset)
+                            .offset(x: startX, y: labelH)
+                            .opacity(block.isComplete ? 0.3 : 1)
+
+                        // Start-time label, left-aligned to the block edge
+                        // (clamped so it doesn't run off the right side).
+                        Text(timeString(block.start))
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(WidgetColors.textSecondary)
+                            .fixedSize()
+                            .offset(x: min(startX, w - 34), y: 0)
+                    }
+                }
+
+                if entry.date >= entry.dayStart && entry.date <= entry.dayEnd {
+                    Rectangle()
+                        .fill(WidgetColors.accent)
+                        .frame(width: 2, height: barHeight)
+                        .offset(x: fraction(for: entry.date) * w - 1, y: barTop)
+                }
+            }
+            .frame(height: totalHeight, alignment: .topLeading)
+        }
+        .frame(height: totalHeight)
+    }
+}
+
 // MARK: - Widget Configuration
 
 struct NudgeTaskWidget: Widget {
@@ -1452,8 +1636,11 @@ struct NudgeTaskWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: NudgeTaskProvider()) { entry in
             NudgeTaskWidgetView(entry: entry)
+                // Surface (the card color the content is designed against) now
+                // fills edge-to-edge via containerBackground, so there's no gap
+                // between the content and the widget's rounded border.
                 .containerBackground(for: .widget) {
-                    WidgetColors.background
+                    WidgetColors.surface
                 }
         }
         .configurationDisplayName("Nudge Tasks")

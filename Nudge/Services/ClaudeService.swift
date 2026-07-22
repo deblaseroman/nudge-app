@@ -66,7 +66,7 @@ class ClaudeService {
 
     - EVENT (isEvent: true): a fixed-time commitment the user CAN'T move and doesn't "complete" by checking it off. They just attend or show up.
       Examples: "I have class at 9", "work shift tomorrow at 4pm", "doctor appointment Friday at 2", "meeting with my advisor", "soccer practice", "lunch with mom".
-      Events MUST have a dueTime (specific clock time). If no time is given but it's clearly a recurring commitment like a class or work shift, ask yourself: did the user say WHEN? If not, treat it as a task.
+      If the user clearly names an event but gives NO time, STILL classify it as an event (isEvent: true) with dueTime null — do NOT demote it to a task. You will ask for the time in your reply (see FOLLOW-UP FOR TIMELESS EVENTS below).
       For work shifts use category "work". For class/lecture/lab use category "school". For appointments use "health" or "personal".
 
     - TASK (isEvent: false, the default): something the user needs to DO and check off.
@@ -80,6 +80,76 @@ class ClaudeService {
       - "class", "lecture", "shift", "appointment", "meeting" → EVENT
       - "assignment", "homework", "essay", "project" → TASK
 
+    THE CORE CLASSIFICATION RULE (apply this to EVERY item):
+    - An EVENT is something the user ATTENDS. It has a fixed start time and
+      happens whether or not they are ready (classes, shifts, appointments,
+      social plans). → isEvent: true
+    - A TASK is something the user COMPLETES and checks off (assignments,
+      studying, errands). → isEvent: false
+    - A DEADLINE is NOT an event. "essay due Friday 11:59pm" is a TASK with a
+      due date/time — the 11:59 is when it's DUE, not when the user shows up.
+    - A task with a CHOSEN time is still a TASK. "study at 5pm" is a task,
+      because it could be done at a different time and still get done.
+    - A commitment WITH ANOTHER PERSON at a fixed time is an EVENT ("gym at 6
+      with Jake"). Solo self-scheduled time is a TASK ("study at the library
+      at 8" — could slide to 9 and still happen).
+    - An exam, midterm, or presentation is an EVENT (you attend it) — but
+      STUDYING or PREPARING for it is a TASK. These usually come as a pair.
+    - An online quiz/assignment with an open/close WINDOW is a TASK, not an
+      event, no matter how time-bound it sounds ("quiz closes Sunday night").
+
+    LABELED EXAMPLES — study these classifications carefully:
+
+    Dump 1: "I have work today at 5:30 then after I want to work on cleaning my room. tomorrow I need to complete my calc assignment by 11pm and I have dinner with my mom at 5pm"
+      - work today 5:30 → EVENT
+      - clean my room → TASK
+      - calc assignment by 11pm tomorrow → TASK (deadline, not an event)
+      - dinner with mom 5pm tomorrow → EVENT
+
+    Dump 2: "bio lecture at 9 tmrw then lab at 2, need to print my lab report before that and grab a new notebook at some point"
+      - bio lecture 9am → EVENT
+      - lab 2pm → EVENT
+      - print lab report before 2pm → TASK (time constraint, still something you complete)
+      - grab a new notebook → TASK (undated floater)
+
+    Dump 3: "study for the econ midterm this weekend, its on tuesday at 8am. also laundry lol"
+      - study for econ midterm → TASK
+      - econ midterm tuesday 8am → EVENT (an exam is attended — studying is the task, the exam itself is the event)
+      - laundry → TASK
+
+    Dump 4: "office hours with prof kim at 3:30 thursday, want to ask about the essay. essay is due friday 11:59"
+      - office hours thursday 3:30 → EVENT
+      - essay due friday 11:59pm → TASK (deadline time ≠ event)
+
+    Dump 5: "gym at 6 with jake, then gonna study at the library at 8 for a couple hours"
+      - gym at 6 with jake → EVENT (committed plan with another person at a fixed time)
+      - study at library at 8 → TASK (self-scheduled — could slide to 9 and still happen; a task with a chosen time)
+
+    Dump 6: "club meeting 7pm wed, email the group about fundraiser before then, also call mom tonight"
+      - club meeting wed 7pm → EVENT
+      - email group about fundraiser → TASK
+      - call mom tonight → TASK (loose timing, still something you complete)
+
+    Dump 7: "dentist moved to monday 10am ugh. reschedule my shift, and finish the stats problem set its due mon at noon"
+      - dentist monday 10am → EVENT
+      - reschedule my shift → TASK
+      - stats problem set due monday noon → TASK
+
+    Dump 8: "coffee w/ sarah 2pm, pick up my meds after, quiz opens friday and closes sunday night need to take it"
+      - coffee with sarah 2pm → EVENT
+      - pick up meds → TASK
+      - take the quiz before sunday night → TASK (a window, not an appointment — online quizzes are tasks even though they have open/close times)
+
+    Dump 9: "work 4-9 sat and sun, somewhere in there start the history reading, chapter 4 and 5"
+      - work sat 4–9 → EVENT
+      - work sun 4–9 → EVENT
+      - history reading ch 4–5 → TASK
+
+    Dump 10: "group project meeting at 6 in the library then I should outline my part after, presentation is next thurs at 1"
+      - group project meeting 6pm → EVENT
+      - outline my part → TASK
+      - presentation next thursday 1pm → EVENT (attended — same logic as the exam)
+
     FLOATER tasks:
     A "floater" is a task with no date AND no time. It's something the user will get to whenever — low pressure. Floaters MUST have priority "low" (unless the user explicitly says it's urgent or high-priority). Do NOT default a missing date to today — leave dueDate null so the task is a true floater. Examples that should be floaters: "I should read more", "remember to clean my desk", "study spanish" (no time given).
 
@@ -90,6 +160,20 @@ class ClaudeService {
     - When the user wants to update something about an existing task, use task_updates with the existing task's id — never new_tasks.
     - If the user's latest message is conversational (e.g. "thanks", "ok", "how are you"), return empty new_tasks and task_updates arrays.
 
+    FOLLOW-UP FOR TIMELESS EVENTS:
+    - Save everything immediately — NEVER block or delay capture with questions.
+    - If ONE OR MORE of the new events has no dueTime, your "message" MUST end
+      with exactly ONE short question that names ALL of those events together in
+      a single sentence. Example: "A few of these sound like plans — when are
+      they? Birthday dinner, football game, office hours."
+    - NEVER ask one question per item. NEVER send more than one follow-up per
+      dump. If every event already has a time, ask nothing.
+    - NEVER ask about tasks that are missing a due date — undated tasks are
+      intentional floaters and must save silently.
+    - When the user replies with the times, DO NOT create new events. Update the
+      EXISTING events via task_updates (match by id from the task list), setting
+      dueTime (and dueDate if the reply also implies a day).
+
     You MUST respond with ONLY valid JSON — no text before or after:
     {
       "message": "your conversational response here",
@@ -98,8 +182,15 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM"}
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null}
     The "isEvent" boolean is REQUIRED on every new item.
+
+    ORDERED PLANS (sequenceIndex):
+    - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
+    - Items NOT part of a stated order get sequenceIndex null.
+    - CAPTURE-FIRST: every item in the plan MUST be saved in new_tasks. Never drop or merely ask about an item — even if a duration or detail is fuzzy, save it now (you may still ask a follow-up in "message"). A previous bug dropped an item that was only asked about; do not repeat that.
+    - Stated durations ("for an hour", "30 min") still go in estimatedMinutes. Do NOT set dueDate/dueTime from a plan's order — a plan is an ordered list, not a timed schedule.
+    - When you capture a plan, your "message" MUST render it back as a numbered list so the user sees the order, e.g. "Got it — here's your plan: 1. Gym  2. CVS  3. Shower + breakfast  4. Python (1h)". Plain text is fine.
 
     task_updates format (for updating existing tasks by id):
     {"id": "uuid-string", "estimatedMinutes": 60, "priority": "high", "dueDate": "YYYY-MM-DD"}
@@ -221,6 +312,30 @@ class ClaudeService {
             return f.string(from: tomorrow)
         }()
 
+        // Concrete weekday → ISO-date lookup for the next 14 days. The model
+        // is BAD at computing "which date is next Thursday" on its own (it
+        // put "Thursdays and Fridays" on the wrong dates), so we hand it an
+        // exact table and forbid it from calculating.
+        let upcomingDays: String = {
+            let weekday = DateFormatter()
+            weekday.dateFormat = "EEEE"
+            weekday.locale = Locale(identifier: "en_US_POSIX")
+            let iso = DateFormatter()
+            iso.dateFormat = "yyyy-MM-dd"
+            iso.locale = Locale(identifier: "en_US_POSIX")
+            let cal = Calendar.current
+            let today = Date()
+            var lines: [String] = []
+            // 21 days so "repeat for the next two weeks" always has every
+            // occurrence available to look up (2 weeks + buffer).
+            for offset in 0..<21 {
+                guard let d = cal.date(byAdding: .day, value: offset, to: today) else { continue }
+                let tag = offset == 0 ? "  (today)" : (offset == 1 ? "  (tomorrow)" : "")
+                lines.append("- \(weekday.string(from: d)) → \(iso.string(from: d))\(tag)")
+            }
+            return lines.joined(separator: "\n")
+        }()
+
         #if DEBUG
         print("[ClaudeService] Injected today's date: \(todayString) (ISO: \(todayISO)) time: \(nowClock12)")
         #endif
@@ -242,8 +357,41 @@ class ClaudeService {
         - "at HH:MM" / "at H PM" with NO day specified → dueDate = \(todayISO) IF that clock time is still in the future, otherwise dueDate = \(tomorrowISO).
         - NEVER place dueTime in the past. If the only interpretation produces a past time on \(todayISO), use \(tomorrowISO) instead.
         - If NO date AND NO time is mentioned → leave dueDate AND dueTime null. Floater rules apply (priority "low" unless explicitly urgent/high).
+        - DEFAULT DUE TIME: if a due DATE is given (today, tomorrow, "by Friday", "this weekend", "by the 15th", any resolved date) but NO explicit clock time, set dueDate and leave dueTime NULL. The app treats a dateless-time due date as end-of-day (11:59 PM) for all deadline math while displaying it as date-only. Only set dueTime when the user states an explicit time ("due at 3pm", "by noon"). This applies to task due dates only, never to events.
         - Never infer dates from previous tasks or conversation history.
         - Always return dates as ISO 8601 yyyy-MM-dd. Always return times as "h:mm a" (e.g. "9:00 PM", "3:30 PM").
+
+        NAMED WEEKDAYS — do NOT calculate these yourself. Look them up in this
+        table of the next 14 days and copy the exact ISO date:
+        \(upcomingDays)
+
+        - A single named weekday ("Thursday", "this Friday", "next Monday") → use
+          the ISO date of the SOONEST matching day in the table. Today counts as
+          a match only if the event's clock time is still in the future today;
+          otherwise use the following week's matching date.
+        - A single "this <weekday>" / "next <weekday>" ("meet a friend this
+          Saturday") → one event on the SOONEST matching date from the table.
+
+        RECURRENCE — the app has no recurring-event type, so you MUST expand
+        every recurrence into individual dated events: one object per
+        occurrence, each with its exact ISO date copied from the table above
+        and isEvent: true. Never emit a single "recurring" event.
+        - Bare plural/every ("Thursdays", "every Monday", "Thursdays and
+          Fridays" with no stated duration) → create the next 2 occurrences of
+          EACH named day.
+        - "for the next N weeks" / "repeat for N weeks" / "for N weeks" →
+          create one event per named day per week, for N weeks. Multiple named
+          days multiply with the week count.
+          Example: "meet a friend Monday and Wednesday, repeat for the next two
+          weeks" → 4 events: the next two Mondays AND the next two Wednesdays,
+          each with a concrete ISO date from the table.
+        - If a repeat/extend request in the LATEST message refers to an event
+          already created earlier in this conversation (or present in the task
+          list), add ONLY the new future occurrences — do not duplicate a date
+          that already exists.
+        - Never invent dates beyond the table. If the user asks for more weeks
+          than the table covers, create everything the table allows and say so
+          briefly in "message".
         ================================
         """
         if !existingTasks.isEmpty {
@@ -317,6 +465,79 @@ class ClaudeService {
         {"message": "Got it! Found X tasks.", "new_tasks": [{"title": "", "dueDate": "YYYY-MM-DD", "dueTime": "afternoon", "priority": "high", "category": "school", "estimatedMinutes": 30, "recurrence": null}]}
         """
         return try await send(userMessage: prompt).tasks
+    }
+
+    // MARK: - Day plan refinement (AI layer over the deterministic planner)
+
+    /// One API call that reorders/places today's open tasks into the free
+    /// gaps the caller already computed. The model returns ONLY JSON: an
+    /// ordered list of placements + a one-line rationale. Model is Haiku.
+    /// The caller applies the placements (never this method) so all SwiftData
+    /// mutation + arbiter reevaluation stays on the app side.
+    func refineDayPlan(input: DayPlanInput) async throws -> DayPlanResult {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let summaryJSON = (try? encoder.encode(input))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+
+        let prompt = """
+        Here is a JSON summary of the user's day. Place tasks into the free gaps.
+
+        \(summaryJSON)
+
+        Return ONLY JSON — no prose, no markdown fences — matching this schema:
+        {
+          "placements": [
+            {"taskID": "<id from tasks>", "startTime": "YYYY-MM-DDTHH:MM:SS", "durationMinutes": <int>}
+          ],
+          "rationale": "<ONE short friendly sentence>"
+        }
+
+        Hard rules:
+        - Only place tasks that appear in "tasks"; use their exact taskID.
+        - startTime is LOCAL time, format "YYYY-MM-DDTHH:MM:SS", no timezone.
+        - Every placement MUST sit inside one of "freeGaps" and fit
+          (startTime + durationMinutes ≤ that gap's end). The freeGaps already
+          exclude events and their 15-minute buffers — never place outside them.
+        - PLAN ORDER OUTRANKS SCORE: tasks with a non-null "sequenceIndex" are
+          the user's stated plan. Place them in ASCENDING sequenceIndex order
+          (lower number earlier in the day), before/around fixed events, and
+          ahead of non-plan tasks regardless of score. Non-plan tasks (null
+          sequenceIndex) fill remaining gaps by score.
+        - Deep-work / long tasks (larger estimatedMinutes; categories exam,
+          school, work) get the LONGEST gaps — apply this WITHIN each group,
+          after honoring plan order.
+        - Cluster errands together back-to-back when possible.
+        - Nothing in the last hour before bedtime (\(input.bedtime)).
+        - Leave ~15 minutes between placements.
+        - Prefer fewer, well-fit placements over cramming; skip a task rather
+          than force a bad fit.
+        - "rationale" is ONE short sentence, no lists, calm tone.
+        """
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 1200,
+            "system": "You are a precise scheduling assistant. Return only valid JSON matching the requested schema. No prose, no commentary.",
+            "messages": [["role": "user", "content": prompt]]
+        ]
+
+        guard !apiKey.isEmpty else { throw ClaudeError.missingAPIKey }
+
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let anthropic = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        guard let text = anthropic.content.first?.text else { throw ClaudeError.emptyResponse }
+        let cleaned = normalizedJSONPayload(from: text)
+        guard let d = cleaned.data(using: .utf8) else { throw ClaudeError.parseError }
+        return try JSONDecoder().decode(DayPlanResult.self, from: d)
     }
 
     // MARK: - Feature 4: Multi-Day Prep Plan Generation
@@ -730,6 +951,47 @@ struct ClaudeResponse: Codable {
     var tasks: [TaskData] { newTasks ?? [] }
 }
 
+// MARK: - Day plan DTOs
+
+/// The JSON summary of today sent to `refineDayPlan`. All times are LOCAL
+/// "YYYY-MM-DDTHH:MM:SS" strings.
+struct DayPlanInput: Encodable {
+    struct EventDTO: Encodable {
+        let title: String
+        let start: String
+        let durationMinutes: Int
+    }
+    struct GapDTO: Encodable {
+        let start: String
+        let end: String
+    }
+    struct TaskDTO: Encodable {
+        let taskID: String
+        let title: String
+        let category: String?
+        let estimatedMinutes: Int
+        let dueDate: String?
+        let score: Double
+        let sequenceIndex: Int?     // user's stated plan order; nil = not in a plan
+    }
+    let now: String
+    let bedtime: String
+    let events: [EventDTO]
+    let freeGaps: [GapDTO]
+    let tasks: [TaskDTO]
+}
+
+/// The model's response for `refineDayPlan`.
+struct DayPlanResult: Decodable {
+    struct Placement: Decodable {
+        let taskID: String
+        let startTime: String
+        let durationMinutes: Int
+    }
+    let placements: [Placement]
+    let rationale: String
+}
+
 /// Codable DTO for tasks returned by the Claude API
 struct TaskData: Codable {
     let title: String
@@ -741,6 +1003,7 @@ struct TaskData: Codable {
     let estimatedMinutes: Int?
     let recurrence: String?
     let dependsOnTask: String?      // title of the task this depends on (resolved client-side)
+    let sequenceIndex: Int?         // 1-based order when the user states a plan ("first X, then Y")
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -752,6 +1015,7 @@ struct TaskData: Codable {
         case estimatedMinutes = "estimatedMinutes"
         case recurrence
         case dependsOnTask = "depends_on_task"
+        case sequenceIndex = "sequenceIndex"
     }
 }
 

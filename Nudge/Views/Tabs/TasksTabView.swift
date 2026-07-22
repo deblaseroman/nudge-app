@@ -13,6 +13,7 @@ import WidgetKit
 struct TasksTabView: View {
     let profile: UserProfile
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var tasks: [NudgeTask]
     @Query private var completedRecords: [CompletedTaskRecord]
 
@@ -21,6 +22,21 @@ struct TasksTabView: View {
     @State private var showCancelSessionAlert = false
     @State private var showSessionTaskPicker = false
     @State private var showCompletedSheet = false
+    /// Set when the user taps empty timeline space — drives the placement
+    /// sheet. Carries the (15-min-rounded) tapped time.
+    @State private var placement: PlacementContext?
+    /// When "New task" is chosen from the placement sheet, the created task
+    /// should land at this time. Consumed by the create editor's onSave.
+    @State private var pendingPlacementTime: Date?
+    /// AI day-plan rationale shown above the timeline (from DayPlanRefiner).
+    @State private var refineRationale: String?
+    @State private var isRefining = false
+    #if DEBUG
+    @State private var showDeleteAllAlert = false
+    #endif
+    /// Events beyond the next two weeks are collapsed behind a "Show more"
+    /// button by default; this reveals them.
+    @State private var showAllEvents = false
     /// Task proposed by the idle nudge's "Not yet" action. When non-nil
     /// we show `IdleStartConfirmationSheet` offering to start a session
     /// on this task with a "pick something else" escape hatch.
@@ -40,13 +56,85 @@ struct TasksTabView: View {
             }
     }
 
-    /// Tasks shown in the main list — informational events excluded AND
-    /// completed tasks excluded (they live in the Completed sheet instead).
+    /// Whole calendar days from today to an event's date. Dateless events
+    /// return 0 so they surface in the "upcoming" list — a dateless event
+    /// still needs a time, and its "needs a time" chip must be visible
+    /// rather than buried behind "Show more".
+    private func daysUntilEvent(_ task: NudgeTask) -> Int {
+        guard let anchor = task.specificTime ?? task.dueDate else { return 0 }
+        let cal = Calendar.current
+        return cal.dateComponents(
+            [.day],
+            from: cal.startOfDay(for: Date()),
+            to: cal.startOfDay(for: anchor)
+        ).day ?? 0
+    }
+
+    /// Events within the next two weeks — always shown.
+    private var upcomingEvents: [NudgeTask] {
+        eventItems.filter { daysUntilEvent($0) <= 14 }
+    }
+
+    /// Events more than two weeks out — collapsed behind "Show more".
+    private var laterEvents: [NudgeTask] {
+        eventItems.filter { daysUntilEvent($0) > 14 }
+    }
+
+    /// Tasks shown in the main list — informational events excluded,
+    /// completed tasks excluded, AND ordered-plan tasks excluded (those live
+    /// only in the "Today's plan" section so they're never duplicated).
     private var sortedTasks: [NudgeTask] {
         let comparator = TaskSortComparator()
         return actionableTasks
-            .filter { !$0.isComplete }
+            .filter { !$0.isComplete && $0.sequenceIndex == nil }
             .sorted { comparator.compare($0, $1) }
+    }
+
+    /// Ordered "Today's plan" tasks (captured from the brain dump), in
+    /// sequenceIndex order. Includes completed ones so they stay struck-
+    /// through with their number; the section only SHOWS when at least one
+    /// is still open (`hasActivePlan`).
+    private var planTasks: [NudgeTask] {
+        actionableTasks
+            .filter { $0.sequenceIndex != nil }
+            .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
+    }
+
+    private var hasActivePlan: Bool {
+        planTasks.contains { !$0.isComplete }
+    }
+
+    /// Incomplete actionable tasks in the SAME order the app list uses:
+    /// ordered-plan tasks first (sequenceIndex order), then everything else by
+    /// TaskSortComparator. Used by the "start a session" task picker so it
+    /// matches the list. (`planTasks` is already sequenceIndex-sorted;
+    /// `sortedTasks` is the non-plan, incomplete, comparator-sorted set.)
+    private var orderedActionableTasks: [NudgeTask] {
+        planTasks.filter { !$0.isComplete } + sortedTasks
+    }
+
+    /// Open tasks not yet placed on today's timeline.
+    private var unscheduledTasks: [NudgeTask] {
+        sortedTasks.filter { $0.plannedStartDate == nil }
+    }
+
+    /// Open tasks placed on today's timeline. Kept in the list (in addition
+    /// to appearing on the timeline) so they stay checkable — placement must
+    /// not remove a task from completion tracking.
+    private var scheduledTasks: [NudgeTask] {
+        sortedTasks.filter { task in
+            guard let p = task.plannedStartDate else { return false }
+            return Calendar.current.isDateInToday(p)
+        }
+    }
+
+    /// True when "Plan my day" has auto-placed at least one task today —
+    /// gates the "Clear plan" button.
+    private var hasAutoPlacements: Bool {
+        tasks.contains { task in
+            guard task.plannedIsAuto, let p = task.plannedStartDate else { return false }
+            return Calendar.current.isDateInToday(p)
+        }
     }
 
     private var incompleteCount: Int {
@@ -74,6 +162,92 @@ struct TasksTabView: View {
                 header
                 startSessionButton
                 completedButton
+                HStack(alignment: .center) {
+                    sectionLabel("Today")
+                    Spacer()
+                    if hasAutoPlacements {
+                        Button {
+                            clearPlan()
+                        } label: {
+                            Text("Clear plan")
+                                .font(.custom(NudgeTheme.fontMedium, size: 13))
+                                .foregroundColor(NudgeTheme.textMuted)
+                                .padding(.horizontal, 12)
+                                .frame(height: 34)
+                                .background(NudgeTheme.surfaceAlt)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if profile.isPro || profile.isInTrial {
+                        Button {
+                            refineWithAI()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if isRefining {
+                                    ProgressView().scaleEffect(0.7)
+                                } else {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                Text("Refine")
+                                    .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                            }
+                            .foregroundColor(NudgeTheme.primary)
+                            .padding(.horizontal, 12)
+                            .frame(height: 34)
+                            .background(NudgeTheme.primary.opacity(0.12))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isRefining)
+                    }
+                    Button {
+                        planMyDay()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Plan my day")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(NudgeTheme.primary)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if let rationale = refineRationale, !rationale.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(NudgeTheme.primary)
+                        Text(rationale)
+                            .font(.custom(NudgeTheme.fontMedium, size: 13))
+                            .foregroundColor(NudgeTheme.textSecondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(NudgeTheme.primary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+                }
+                TodayTimelineView(
+                    profile: profile,
+                    onOpenTask: { task in
+                        // A placed task opens the manage window (with the
+                        // remove-from-timeline button); events open the editor.
+                        if !task.isInformationalEvent && task.plannedStartDate != nil {
+                            activeSheet = .manageTimeline(taskID: task.id)
+                        } else {
+                            activeSheet = .edit(taskID: task.id)
+                        }
+                    },
+                    onTapEmpty: { placement = PlacementContext(time: $0) },
+                    onCompleteTask: { toggleCompletion(for: $0) }
+                )
                 tasksContent
                     .padding(.top, 8)
             }
@@ -82,7 +256,23 @@ struct TasksTabView: View {
             .padding(.bottom, 24)
         }
         .background(NudgeTheme.background)
-        .onAppear(perform: purgeOldCompletedRecords)
+        .onAppear {
+            purgeOldCompletedRecords()
+            // Pick up a rationale produced elsewhere today (e.g. via the
+            // Home chat "plan my day" flow).
+            refineRationale = DayPlanRefiner.shared.todaysRationale()
+            // Durable idle "Not yet" intent — present the sheet whenever the
+            // Tasks tab appears, including a cold launch from the tap.
+            consumePendingIdleTask()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Also consume when returning to the foreground while the Tasks
+            // tab is already on screen (onAppear won't re-fire then).
+            if newPhase == .active { consumePendingIdleTask() }
+        }
+        .sheet(item: $placement) { ctx in
+            placementSheet(for: ctx)
+        }
         .sheet(item: $activeSheet) { destination in
             switch destination {
             case .create:
@@ -97,6 +287,12 @@ struct TasksTabView: View {
                             priority: draft.priority,
                             source: "manual"
                         )
+                        // If "New task" was chosen from a timeline slot, land
+                        // the new task at that time.
+                        if let placeAt = pendingPlacementTime {
+                            newTask.plannedStartDate = placeAt
+                            pendingPlacementTime = nil
+                        }
                         modelContext.insert(newTask)
                         try? modelContext.save()
                         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -128,15 +324,24 @@ struct TasksTabView: View {
                             try? modelContext.save()
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
                             refreshNotifications()
-                        }
+                        },
+                        // Only offered when the task is actually placed on the
+                        // timeline. Clears the placement without deleting it.
+                        onRemoveFromTimeline: (!task.isInformationalEvent && task.plannedStartDate != nil)
+                            ? { unscheduleTask(task) }
+                            : nil
                     )
                     .presentationDetents([.medium, .large])
+                }
+            case .manageTimeline(let taskID):
+                if let task = tasks.first(where: { $0.id == taskID }) {
+                    manageTimelineSheet(for: task)
                 }
             }
         }
         .sheet(isPresented: $showSessionTaskPicker) {
             SessionTaskPickerSheet(
-                tasks: actionableTasks.filter { !$0.isComplete },
+                tasks: orderedActionableTasks,
                 onPick: { task in
                     showSessionTaskPicker = false
                     coordinator.startSession(task: task, userName: profile.name)
@@ -188,6 +393,32 @@ struct TasksTabView: View {
         }
     }
 
+    /// Reads the DURABLE idle "Not yet" intent from the app group and, if a
+    /// valid still-open task is pending from today, presents the confirmation
+    /// sheet. This is the launch-path-independent path: it works on cold
+    /// launch (where the transient .nudgeIdleNotYetTapped post is missed
+    /// because this view wasn't subscribed yet) AND warm resume. Consuming
+    /// (clearing) the keys makes it one-shot.
+    private func consumePendingIdleTask() {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard let idString = defaults.string(forKey: NudgeNotificationService.pendingIdleTaskIDKey),
+              let uuid = UUID(uuidString: idString) else { return }
+
+        defer {
+            defaults.removeObject(forKey: NudgeNotificationService.pendingIdleTaskIDKey)
+            defaults.removeObject(forKey: NudgeNotificationService.pendingIdleTaskDateKey)
+        }
+
+        // Ignore a stale intent (e.g. tapped yesterday, app opened today).
+        if let date = defaults.object(forKey: NudgeNotificationService.pendingIdleTaskDateKey) as? Date,
+           !Calendar.current.isDateInToday(date) {
+            return
+        }
+        // Only present if the task still exists and is open.
+        guard tasks.contains(where: { $0.id == uuid && !$0.isComplete }) else { return }
+        idleProposedTaskID = uuid
+    }
+
     /// Looks up the proposed task, guarding against deletion or completion
     /// between the notification firing and the user tapping "Not yet".
     private var idleProposedTask: NudgeTask? {
@@ -213,6 +444,21 @@ struct TasksTabView: View {
 
             Spacer()
 
+            #if DEBUG
+            // Testing-only: wipe every task + event. Never ships in release.
+            Button(action: {
+                NudgeHaptics.medium()
+                showDeleteAllAlert = true
+            }) {
+                Image(systemName: "trash")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(NudgeTheme.overdue)
+                    .frame(width: 42, height: 42)
+                    .background(NudgeTheme.overdue.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            #endif
+
             Button(action: {
                 NudgeHaptics.medium()
                 activeSheet = .create
@@ -225,6 +471,14 @@ struct TasksTabView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
         }
+        #if DEBUG
+        .alert("Delete everything?", isPresented: $showDeleteAllAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete all", role: .destructive) { deleteAllTasksAndEvents() }
+        } message: {
+            Text("Removes every task and event. Testing only.")
+        }
+        #endif
     }
 
     private var emptyState: some View {
@@ -242,23 +496,99 @@ struct TasksTabView: View {
         .padding(.vertical, 60)
     }
 
+    /// Fixed row height so the reorderable List can be sized inside the
+    /// outer ScrollView (a scroll-disabled List needs a bounded height).
+    private let planRowHeight: CGFloat = 84
+
+    /// Ordered "Today's plan" — a numbered, long-press-reorderable list.
+    /// Uses a scroll-disabled List so SwiftUI's `.onMove` gives native drag
+    /// reordering while still living inside the tab's ScrollView.
+    private var planSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("Today's plan")
+            List {
+                ForEach(planTasks, id: \.id) { task in
+                    HStack(alignment: .center, spacing: 10) {
+                        Text("\(task.sequenceIndex ?? 0).")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                            .foregroundColor(task.isComplete ? NudgeTheme.textMuted : NudgeTheme.primary)
+                            .frame(width: 20, alignment: .trailing)
+                        TaskRowView(
+                            task: task,
+                            isLastIncompleteTask: false,
+                            onOpen: { activeSheet = .edit(taskID: task.id) },
+                            onToggleComplete: { toggleCompletion(for: task) },
+                            onDelete: { deleteTask(task) },
+                            onConvertToEvent: { setEventFlag(task, isEvent: true) }
+                        )
+                    }
+                    .frame(height: planRowHeight)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                }
+                .onMove(perform: movePlanTasks)
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollDisabled(true)
+            .frame(height: planRowHeight * CGFloat(max(planTasks.count, 1)))
+        }
+    }
+
+    /// Rewrites sequenceIndex to match the dropped order, persists, and
+    /// reevaluates (order changes which task the idle nudge suggests first).
+    private func movePlanTasks(from source: IndexSet, to destination: Int) {
+        var reordered = planTasks
+        reordered.move(fromOffsets: source, toOffset: destination)
+        for (i, task) in reordered.enumerated() {
+            task.sequenceIndex = i + 1
+        }
+        try? modelContext.save()
+        NudgeHaptics.light()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        refreshNotifications()
+    }
+
     private var tasksContent: some View {
         Group {
-            if sortedTasks.isEmpty && eventItems.isEmpty {
+            if sortedTasks.isEmpty && eventItems.isEmpty && !hasActivePlan {
                 emptyState
             } else {
                 VStack(alignment: .leading, spacing: 20) {
-                    if !sortedTasks.isEmpty {
-                        sectionLabel("Tasks")
+                    if hasActivePlan {
+                        planSection
+                    }
+
+                    if !unscheduledTasks.isEmpty {
+                        sectionLabel("Unscheduled")
 
                         VStack(spacing: 12) {
-                            ForEach(sortedTasks, id: \.id) { task in
+                            ForEach(unscheduledTasks, id: \.id) { task in
                                 TaskRowView(
                                     task: task,
                                     isLastIncompleteTask: incompleteCount == 1 && !task.isComplete,
                                     onOpen: { activeSheet = .edit(taskID: task.id) },
                                     onToggleComplete: { toggleCompletion(for: task) },
-                                    onDelete: { deleteTask(task) }
+                                    onDelete: { deleteTask(task) },
+                                    onConvertToEvent: { setEventFlag(task, isEvent: true) }
+                                )
+                            }
+                        }
+                    }
+
+                    if !scheduledTasks.isEmpty {
+                        sectionLabel("Scheduled")
+
+                        VStack(spacing: 12) {
+                            ForEach(scheduledTasks, id: \.id) { task in
+                                TaskRowView(
+                                    task: task,
+                                    isLastIncompleteTask: incompleteCount == 1 && !task.isComplete,
+                                    onOpen: { activeSheet = .edit(taskID: task.id) },
+                                    onToggleComplete: { toggleCompletion(for: task) },
+                                    onDelete: { deleteTask(task) },
+                                    onConvertToEvent: { setEventFlag(task, isEvent: true) }
                                 )
                             }
                         }
@@ -268,8 +598,46 @@ struct TasksTabView: View {
                         sectionLabel("Events")
 
                         VStack(spacing: 12) {
-                            ForEach(eventItems, id: \.id) { event in
-                                EventRowView(task: event)
+                            ForEach(upcomingEvents, id: \.id) { event in
+                                EventRowView(
+                                    task: event,
+                                    onOpen: { activeSheet = .edit(taskID: event.id) },
+                                    onDelete: { deleteTask(event) },
+                                    onConvertToTask: { setEventFlag(event, isEvent: false) },
+                                    onSetTime: { setEventTime(event, to: $0) }
+                                )
+                            }
+
+                            if showAllEvents {
+                                ForEach(laterEvents, id: \.id) { event in
+                                    EventRowView(
+                                        task: event,
+                                        onOpen: { activeSheet = .edit(taskID: event.id) },
+                                        onDelete: { deleteTask(event) },
+                                        onConvertToTask: { setEventFlag(event, isEvent: false) },
+                                        onSetTime: { setEventTime(event, to: $0) }
+                                    )
+                                }
+                            }
+
+                            if !laterEvents.isEmpty {
+                                Button {
+                                    NudgeHaptics.light()
+                                    withAnimation(NudgeAnimation.standard) {
+                                        showAllEvents.toggle()
+                                    }
+                                } label: {
+                                    Text(showAllEvents
+                                         ? "Show fewer events"
+                                         : "Show \(laterEvents.count) more event\(laterEvents.count == 1 ? "" : "s")")
+                                        .font(.custom(NudgeTheme.fontMedium, size: 14))
+                                        .foregroundColor(NudgeTheme.primary)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 44)
+                                        .background(NudgeTheme.surfaceAlt)
+                                        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -477,6 +845,449 @@ struct TasksTabView: View {
         refreshNotifications()
     }
 
+    #if DEBUG
+    /// Testing-only: wipes every NudgeTask (tasks AND events). Not compiled
+    /// into release builds.
+    private func deleteAllTasksAndEvents() {
+        NudgeHaptics.medium()
+        withAnimation(NudgeAnimation.standard) {
+            for task in tasks {
+                modelContext.delete(task)
+            }
+        }
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        refreshNotifications()
+    }
+    #endif
+
+    /// One-tap correction when the AI misclassified an item. Flips it
+    /// between task and event, then re-runs the arbiter since the two are
+    /// scheduled differently (events get factual heads-ups; tasks get
+    /// discretionary nudges).
+    private func setEventFlag(_ task: NudgeTask, isEvent: Bool) {
+        NudgeHaptics.light()
+        withAnimation(NudgeAnimation.standard) {
+            task.isInformationalEvent = isEvent
+        }
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        refreshNotifications()
+    }
+
+    /// Fills in a missing start time on an event (from the "needs a time"
+    /// chip). Combines the chosen clock time with the event's existing day
+    /// (or today if it had no date), then re-runs the arbiter so the event
+    /// reminder can schedule immediately.
+    private func setEventTime(_ event: NudgeTask, to time: Date) {
+        let cal = Calendar.current
+        let timeComps = cal.dateComponents([.hour, .minute], from: time)
+        // If the event already has a day, keep it (time-only edit). If not,
+        // the picker included a date, so take the day from the picked value.
+        let baseDay = event.dueDate ?? time
+        var dayComps = cal.dateComponents([.year, .month, .day], from: baseDay)
+        dayComps.hour = timeComps.hour
+        dayComps.minute = timeComps.minute
+        let combined = cal.date(from: dayComps)
+
+        withAnimation(NudgeAnimation.standard) {
+            event.specificTime = combined
+            if event.dueDate == nil { event.dueDate = combined }
+            if let combined {
+                let fmt = DateFormatter()
+                fmt.dateFormat = "h:mm a"
+                event.dueTime = fmt.string(from: combined)
+            }
+        }
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        refreshNotifications()
+    }
+
+    // MARK: - Timeline placement
+
+    /// Identifies a tapped empty-timeline slot for the placement sheet.
+    struct PlacementContext: Identifiable {
+        let id = UUID()
+        let time: Date
+    }
+
+    /// Places (or moves) a task onto today's timeline at `time`. Does NOT
+    /// touch dueDate/specificTime — placement is independent of the deadline.
+    private func placeTask(_ task: NudgeTask, at time: Date) {
+        NudgeHaptics.light()
+        withAnimation(NudgeAnimation.standard) {
+            task.plannedStartDate = time
+            task.plannedIsAuto = false   // user-placed
+        }
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        refreshNotifications()
+    }
+
+    /// Clears a task's timeline placement (back to Unscheduled).
+    private func unscheduleTask(_ task: NudgeTask) {
+        NudgeHaptics.light()
+        withAnimation(NudgeAnimation.standard) {
+            task.plannedStartDate = nil
+            task.plannedIsAuto = false
+        }
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        refreshNotifications()
+    }
+
+    // MARK: - Plan my day (deterministic, no AI)
+
+    /// Effort minutes used for planning: explicit estimate, else the
+    /// per-category prior, else 30.
+    private func planningMinutes(for task: NudgeTask) -> Int {
+        if let e = task.estimatedMinutes, e > 0 { return e }
+        if let c = task.taskCategory { return NudgeConfig.categoryEffortPriors[c] ?? 30 }
+        return 30
+    }
+
+    /// Deterministic Eisenhower score for ranking candidates. Reads only
+    /// cached intelligence (no API).
+    private func planScore(for task: NudgeTask) -> Double {
+        let est = planningMinutes(for: task)
+        let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
+        let isDeep = StartByPlanner.isDeepWork(category: task.taskCategory, effortMinutes: est)
+        let importance = EisenhowerScorer.importance(
+            category: task.taskCategory,
+            isDeepWork: isDeep,
+            statedUrgency: signals.statedUrgency,
+            hasDependencies: task.dependsOnTaskId != nil
+        )
+        let urgency: Double
+        if let deadline = task.specificTime ?? task.dueDate {
+            urgency = EisenhowerScorer.urgency(
+                hoursUntilDue: deadline.timeIntervalSince(Date()) / 3600,
+                effortHoursRemaining: Double(est) / 60.0
+            )
+        } else {
+            urgency = 0.6
+        }
+        return EisenhowerScorer.score(urgency: urgency, importance: importance)
+    }
+
+    /// Auto-places up to 4 open tasks into today's free gaps. Deterministic;
+    /// fills around events and any existing placements; never overwrites a
+    /// manual placement.
+    private func planMyDay() {
+        let cal = Calendar.current
+
+        // Day window: wake + 30 min → bedtime − 60 min (today).
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = cal.dateComponents([.hour, .minute], from: wake)
+        let bedComps = cal.dateComponents([.hour, .minute], from: profile.bedtime)
+        var dayComps = cal.dateComponents([.year, .month, .day], from: Date())
+        dayComps.hour = wakeComps.hour; dayComps.minute = wakeComps.minute
+        guard let wakeToday = cal.date(from: dayComps) else { return }
+        dayComps.hour = bedComps.hour; dayComps.minute = bedComps.minute
+        guard let bedToday = cal.date(from: dayComps) else { return }
+
+        let dayStart = wakeToday.addingTimeInterval(30 * 60)
+        let dayEnd = bedToday.addingTimeInterval(-60 * 60)
+        // Don't place in the past.
+        let scanStart = max(dayStart, Date())
+        guard dayEnd > scanStart else { return }
+
+        // Occupied intervals: event busy windows (already include 15-min tail
+        // + merges) plus any existing placements (auto or manual) so we fill
+        // around them and never overwrite.
+        var busy: [(start: Date, end: Date)] = BusyWindowResolver.shared
+            .busyWindows(from: dayStart, to: dayEnd, modelContext: modelContext)
+            .map { ($0.start, $0.end) }
+
+        for task in tasks where task.isInformationalEvent == false {
+            guard let p = task.plannedStartDate, cal.isDateInToday(p) else { continue }
+            let mins = task.plannedDurationMinutes ?? planningMinutes(for: task)
+            busy.append((p, p.addingTimeInterval(Double(mins) * 60)))
+        }
+
+        // "Get ready" buffer: block the hour BEFORE each event. We can't know
+        // how long the user needs to prep/travel, so leave the hour before an
+        // event free rather than scheduling work right up against it.
+        let preEventBuffer: TimeInterval = 60 * 60
+        for event in tasks where event.isInformationalEvent {
+            guard let start = event.specificTime, cal.isDateInToday(start) else { continue }
+            busy.append((start.addingTimeInterval(-preEventBuffer), start))
+        }
+
+        // Candidates: open, non-event, not already placed. Ranked by score.
+        // Explicit "Plan my day" DOES place plan tasks. Plan tasks go first,
+        // in the user's stated sequenceIndex order (their order outranks
+        // Eisenhower score); non-plan tasks follow, by score. A placed plan
+        // task keeps its number in Today's plan AND shows on the timeline.
+        let openUnplaced = tasks.filter {
+            !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate == nil
+        }
+        let planCandidates = openUnplaced
+            .filter { $0.sequenceIndex != nil }
+            .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
+        let scoredCandidates = openUnplaced
+            .filter { $0.sequenceIndex == nil }
+            .sorted { planScore(for: $0) > planScore(for: $1) }
+        let candidates = planCandidates + scoredCandidates
+
+        let spacing: TimeInterval = 15 * 60
+        var placedCount = 0
+
+        for task in candidates {
+            guard placedCount < 4 else { break }
+            let duration = TimeInterval(planningMinutes(for: task) * 60)
+            guard let start = earliestGapStart(
+                fitting: duration,
+                busy: busy,
+                from: scanStart,
+                to: dayEnd
+            ) else { continue }
+
+            task.plannedStartDate = start
+            task.plannedDurationMinutes = planningMinutes(for: task)
+            task.plannedIsAuto = true
+            // Occupy this slot + 15 min spacing for the next placement.
+            busy.append((start, start.addingTimeInterval(duration + spacing)))
+            placedCount += 1
+        }
+
+        guard placedCount > 0 else {
+            NudgeHaptics.error()
+            return
+        }
+        withAnimation(NudgeAnimation.standard) { }
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        NudgeHaptics.success()
+        refreshNotifications()
+    }
+
+    /// Earliest start ≥ `from` where `duration` fits before the next busy
+    /// interval (or `to`). Snaps to the next 15-min boundary when it still
+    /// fits. Returns nil if nothing fits.
+    private func earliestGapStart(
+        fitting duration: TimeInterval,
+        busy: [(start: Date, end: Date)],
+        from: Date,
+        to: Date
+    ) -> Date? {
+        let sorted = busy.sorted { $0.start < $1.start }
+        var cursor = from
+        func snapped(_ d: Date) -> Date {
+            let ti = d.timeIntervalSinceReferenceDate
+            return Date(timeIntervalSinceReferenceDate: (ti / 900).rounded(.up) * 900)
+        }
+        for interval in sorted {
+            if interval.start > cursor {
+                let candidate = snapped(cursor)
+                if candidate.addingTimeInterval(duration) <= interval.start {
+                    return candidate
+                }
+            }
+            cursor = max(cursor, interval.end)
+        }
+        let candidate = snapped(cursor)
+        if candidate.addingTimeInterval(duration) <= to {
+            return candidate
+        }
+        return nil
+    }
+
+    /// Runs the AI refine (Pro/trial only). A button tap is an explicit ask,
+    /// so `force: true`. Shows the returned rationale above the timeline.
+    private func refineWithAI() {
+        guard !isRefining else { return }
+        isRefining = true
+        Task { @MainActor in
+            let outcome = await DayPlanRefiner.shared.refine(
+                profile: profile,
+                modelContext: modelContext,
+                force: true
+            )
+            isRefining = false
+            switch outcome {
+            case .success(let r), .cached(let r):
+                refineRationale = r
+            case .noTasks:
+                NudgeHaptics.error()
+            case .notEntitled, .failed:
+                NudgeHaptics.error()
+            }
+        }
+    }
+
+    /// Removes only auto (Plan my day) placements from today; keeps manual
+    /// ones.
+    private func clearPlan() {
+        NudgeHaptics.light()
+        withAnimation(NudgeAnimation.standard) {
+            for task in tasks {
+                guard task.plannedIsAuto, let p = task.plannedStartDate,
+                      Calendar.current.isDateInToday(p) else { continue }
+                task.plannedStartDate = nil
+                task.plannedDurationMinutes = nil
+                task.plannedIsAuto = false
+            }
+        }
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        refreshNotifications()
+    }
+
+    @ViewBuilder
+    private func manageTimelineSheet(for task: NudgeTask) -> some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                VStack(spacing: 6) {
+                    Text(task.title)
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 18))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .multilineTextAlignment(.center)
+                    if let planned = task.plannedStartDate {
+                        Text("Placed at \(planned.formatted(date: .omitted, time: .shortened))")
+                            .font(.custom(NudgeTheme.fontBody, size: 13))
+                            .foregroundColor(NudgeTheme.textMuted)
+                    }
+                }
+                .padding(.top, 12)
+
+                // Swap this slot for a different task: free the slot, then
+                // open the placement picker at the same time.
+                Button {
+                    let time = task.plannedStartDate
+                    unscheduleTask(task)
+                    activeSheet = nil
+                    if let time {
+                        DispatchQueue.main.async { placement = PlacementContext(time: time) }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Swap for another task")
+                    }
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                    .foregroundColor(NudgeTheme.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(NudgeTheme.primary.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    let id = task.id
+                    activeSheet = nil
+                    DispatchQueue.main.async { activeSheet = .edit(taskID: id) }
+                } label: {
+                    Text("Open task details")
+                        .font(.custom(NudgeTheme.fontMedium, size: 14))
+                        .foregroundColor(NudgeTheme.textMuted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+            .padding(20)
+            .background(NudgeTheme.background)
+            .navigationTitle("Timeline")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { activeSheet = nil }
+                }
+                // Small remove button, top-right.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        unscheduleTask(task)
+                        activeSheet = nil
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundColor(NudgeTheme.overdue)
+                    }
+                    .accessibilityLabel("Remove from timeline")
+                }
+            }
+        }
+        .presentationDetents([.height(220)])
+    }
+
+    @ViewBuilder
+    private func placementSheet(for ctx: PlacementContext) -> some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Button {
+                        NudgeHaptics.light()
+                        pendingPlacementTime = ctx.time
+                        placement = nil
+                        // Present the create editor on the next runloop tick
+                        // so the placement sheet finishes dismissing first.
+                        DispatchQueue.main.async { activeSheet = .create }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                            Text("New task")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                            Spacer()
+                        }
+                        .foregroundColor(NudgeTheme.primary)
+                        .padding(16)
+                        .frame(maxWidth: .infinity)
+                        .background(NudgeTheme.primary.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+                    }
+                    .buttonStyle(.plain)
+
+                    if unscheduledTasks.isEmpty {
+                        Text("No unscheduled tasks to place.")
+                            .font(.custom(NudgeTheme.fontBody, size: 14))
+                            .foregroundColor(NudgeTheme.textMuted)
+                            .padding(.vertical, 12)
+                    } else {
+                        ForEach(unscheduledTasks, id: \.id) { task in
+                            Button {
+                                placeTask(task, at: ctx.time)
+                                placement = nil
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(task.title)
+                                        .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                        .foregroundColor(NudgeTheme.textPrimary)
+                                    Text(task.priority.capitalized)
+                                        .font(.custom(NudgeTheme.fontBody, size: 12))
+                                        .foregroundColor(NudgeTheme.textMuted)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(16)
+                                .background(NudgeTheme.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
+                                        .stroke(NudgeTheme.border, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .background(NudgeTheme.background)
+            .navigationTitle("Place at \(ctx.time.formatted(date: .omitted, time: .shortened))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { placement = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
     /// Re-runs every notification decision via the arbiter using the
     /// current data state. The reason flag lets the arbiter pick the
     /// appropriate cancel/keep semantics for the trigger.
@@ -526,6 +1337,9 @@ struct TaskRowView: View {
     let onOpen: () -> Void
     let onToggleComplete: () -> Void
     let onDelete: () -> Void
+    /// Flips this task into an event (isInformationalEvent = true) when the
+    /// AI misclassified it. One-tap correction.
+    let onConvertToEvent: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -586,6 +1400,20 @@ struct TaskRowView: View {
                     .foregroundColor(NudgeTheme.textMuted)
             }
 
+            // One-tap "this is actually an event" correction.
+            if !task.isComplete {
+                Button(action: onConvertToEvent) {
+                    Image(systemName: "calendar.badge.plus")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(NudgeTheme.textMuted)
+                        .frame(width: 30, height: 30)
+                        .background(NudgeTheme.surfaceAlt)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Convert to event")
+            }
+
             if task.isComplete {
                 Button(action: onDelete) {
                     Image(systemName: "trash")
@@ -641,6 +1469,33 @@ struct TaskRowView: View {
 
 struct EventRowView: View {
     let task: NudgeTask
+    /// Tap opens the editor (where the user can reschedule the date/time or
+    /// delete). Defaulted so existing previews / call sites still compile.
+    var onOpen: () -> Void = {}
+    /// Quick trash button — events never "complete," so unlike tasks the
+    /// delete affordance is always present on the row itself.
+    var onDelete: () -> Void = {}
+    /// Flips this event back into a task (isInformationalEvent = false) when
+    /// the AI misclassified it. One-tap correction.
+    var onConvertToTask: () -> Void = {}
+    /// Called with a chosen clock time when the user fills in a missing start
+    /// time via the "needs a time" chip.
+    var onSetTime: (Date) -> Void = { _ in }
+
+    @State private var showTimePicker = false
+    @State private var pickedTime = Date()
+
+    /// An event with no concrete start time needs one before reminders can
+    /// fire — surfaced via the "needs a time" chip.
+    private var needsTime: Bool { task.specificTime == nil }
+
+    /// A timeless event may also be missing its day entirely. When so, the
+    /// chip and picker cover BOTH date and time.
+    private var needsDate: Bool { task.dueDate == nil }
+
+    private var chipLabel: String {
+        needsDate ? "needs a time and date" : "needs a time"
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -656,24 +1511,67 @@ struct EventRowView: View {
                     .font(.custom(NudgeTheme.fontMedium, size: 15))
                     .foregroundColor(NudgeTheme.textPrimary)
 
-                if let dueDate = task.specificTime ?? task.dueDate,
-                   let remaining = CountdownState.remainingLine(dueDate: dueDate, now: CountdownClock.shared.now) {
-                    Text(remaining)
+                // Events use their own timing phrasing (Today / Tomorrow /
+                // In N days, date / date) — NOT the task-style "hours left /
+                // days away" countdown.
+                if let eventLine = CountdownState.eventLine(
+                    specificTime: task.specificTime,
+                    dueDate: task.dueDate,
+                    now: CountdownClock.shared.now
+                ) {
+                    Text(eventLine)
                         .font(.custom(NudgeTheme.fontBody, size: 12))
                         .foregroundColor(NudgeTheme.textSecondary)
+                }
+
+                // "needs a time" chip — opens an inline time picker. Tapping
+                // it must NOT also trigger the row's edit tap, so it lives in
+                // its own button.
+                if needsTime {
+                    Button {
+                        NudgeHaptics.light()
+                        pickedTime = task.specificTime ?? task.dueDate ?? Date()
+                        showTimePicker = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock.badge.questionmark")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(chipLabel)
+                                .font(.custom(NudgeTheme.fontMedium, size: 11))
+                        }
+                        .foregroundColor(NudgeTheme.primary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(NudgeTheme.primary.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
 
             Spacer()
 
-            if let dueLine = CountdownState.dueDateLine(
-                dueDate: task.dueDate,
-                specificTime: task.specificTime
-            ) {
-                Text(dueLine)
-                    .font(.custom(NudgeTheme.fontBody, size: 12))
+            // One-tap "this is actually a task" correction.
+            Button(action: onConvertToTask) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(NudgeTheme.textMuted)
+                    .frame(width: 30, height: 30)
+                    .background(NudgeTheme.surfaceAlt)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Convert to task")
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(NudgeTheme.textMuted)
+                    .frame(width: 30, height: 30)
+                    .background(NudgeTheme.surfaceAlt)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
         }
         .padding(16)
         .background(NudgeTheme.surface)
@@ -682,6 +1580,50 @@ struct EventRowView: View {
             RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
                 .stroke(NudgeTheme.border, lineWidth: 1)
         )
+        .contentShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+        .onTapGesture(perform: onOpen)
+        .sheet(isPresented: $showTimePicker) {
+            NavigationStack {
+                VStack(spacing: 20) {
+                    DatePicker(
+                        "Start",
+                        selection: $pickedTime,
+                        displayedComponents: needsDate ? [.date, .hourAndMinute] : [.hourAndMinute]
+                    )
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 200)
+                    .clipped()
+
+                    Button {
+                        NudgeHaptics.medium()
+                        onSetTime(pickedTime)
+                        showTimePicker = false
+                    } label: {
+                        Text("Set time")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 46)
+                            .background(NudgeTheme.primary)
+                            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                    }
+
+                    Spacer()
+                }
+                .padding(20)
+                .background(NudgeTheme.background)
+                .navigationTitle("When is \(task.title)?")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Cancel") { showTimePicker = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
     }
 
     /// Events use "Starts" (or "Class starts") instead of "Due" because
@@ -709,6 +1651,9 @@ struct TaskEditorSheet: View {
     let mode: Mode
     let onSave: (TaskDraft) -> Void
     var onDelete: (() -> Void)? = nil
+    /// When set (task is placed on today's timeline), shows a button to
+    /// remove it from the timeline without deleting the task itself.
+    var onRemoveFromTimeline: (() -> Void)? = nil
 
     @State private var draft = TaskDraft()
 
@@ -794,6 +1739,25 @@ struct TaskEditorSheet: View {
                             priorityChip(title: "Medium", value: "medium")
                             priorityChip(title: "Low", value: "low")
                         }
+                    }
+
+                    if let onRemoveFromTimeline {
+                        Button(action: {
+                            onRemoveFromTimeline()
+                            dismiss()
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "calendar.badge.minus")
+                                Text("Remove from timeline")
+                            }
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                            .foregroundColor(NudgeTheme.primary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 46)
+                            .background(NudgeTheme.primary.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     if let onDelete {
@@ -1161,6 +2125,9 @@ struct TaskDraft {
 enum TaskSheetDestination: Identifiable {
     case create
     case edit(taskID: UUID)
+    /// Small window shown when a PLACED task's timeline block is tapped —
+    /// holds the "Remove from timeline" button.
+    case manageTimeline(taskID: UUID)
 
     var id: String {
         switch self {
@@ -1168,6 +2135,8 @@ enum TaskSheetDestination: Identifiable {
             return "create"
         case .edit(let taskID):
             return "edit-\(taskID.uuidString)"
+        case .manageTimeline(let taskID):
+            return "manage-\(taskID.uuidString)"
         }
     }
 }

@@ -22,13 +22,46 @@ struct TodayTimelineView: View {
     let onOpenTask: (NudgeTask) -> Void
     /// Tapped empty axis space — the Date is already rounded to 15 min.
     let onTapEmpty: (Date) -> Void
+    /// Long-pressed a placed task block — mark it complete (full animation).
+    var onCompleteTask: (NudgeTask) -> Void = { _ in }
 
+    // Bounded fetches. This view is ALWAYS mounted in the Tasks tab and
+    // re-reads on every 60s clock tick, so unbounded @Query here fetches the
+    // full task/outcome history into the main context on a hot path. Scope
+    // and cap them:
+    //   • outcomes → only pending markers (what the strip draws), capped
+    //   • tasks    → capped; the day chart only needs today's handful
     @Query private var allTasks: [NudgeTask]
     @Query private var outcomes: [NudgeOutcome]
     @Query private var eventDurations: [EventDurationStats]
 
     /// Shared 60-second tick drives the "now" indicator.
     private var clock: CountdownClock { CountdownClock.shared }
+
+    init(
+        profile: UserProfile,
+        onOpenTask: @escaping (NudgeTask) -> Void,
+        onTapEmpty: @escaping (Date) -> Void,
+        onCompleteTask: @escaping (NudgeTask) -> Void = { _ in }
+    ) {
+        self.profile = profile
+        self.onOpenTask = onOpenTask
+        self.onTapEmpty = onTapEmpty
+        self.onCompleteTask = onCompleteTask
+
+        var tasksDescriptor = FetchDescriptor<NudgeTask>()
+        tasksDescriptor.fetchLimit = 300
+        _allTasks = Query(tasksDescriptor)
+
+        // Notification markers are the pending outcomes only.
+        var outcomesDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> { $0.resultRaw == "pending" }
+        )
+        outcomesDescriptor.fetchLimit = 60
+        _outcomes = Query(outcomesDescriptor)
+
+        _eventDurations = Query()
+    }
 
     // MARK: - Layout constants
 
@@ -144,47 +177,53 @@ struct TodayTimelineView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 ZStack(alignment: .topLeading) {
-                    tapLayer
                     axis
                     ForEach(hourTicks, id: \.self) { tickView(at: $0) }
                     ForEach(todaysEvents, id: \.id) { eventBlock($0) }
                     ForEach(placedTasks, id: \.id) { taskBlock($0) }
                     ForEach(todaysMarkers, id: \.id) { markerView($0) }
                     nowIndicator
-                    // Invisible scroll anchor at "now" so onAppear can center it.
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .offset(x: max(x(for: clock.now), 0), y: 0)
-                        .id("nowAnchor")
+                    // Invisible scroll anchor whose FRAME ORIGIN is genuinely
+                    // at "now". Neither .offset nor .padding work here — both
+                    // leave the view's frame origin at x=0, so ScrollViewReader
+                    // targeted the start of the day. An HStack with a leading
+                    // spacer of width = x(now) actually pushes the anchor's
+                    // frame to the now position.
+                    HStack(spacing: 0) {
+                        Color.clear.frame(width: max(x(for: clock.now), 0), height: 1)
+                        Color.clear.frame(width: 1, height: 1).id("nowAnchor")
+                        Spacer(minLength: 0)
+                    }
+                    .frame(width: contentWidth, alignment: .leading)
                 }
                 .frame(width: contentWidth, height: totalHeight, alignment: .topLeading)
+                .contentShape(Rectangle())
+                // Empty-space taps live on the CONTAINER — a parent gesture is
+                // lower priority than the block Buttons inside, so tapping a
+                // block opens it while tapping bare axis places a task.
+                .gesture(
+                    SpatialTapGesture()
+                        .onEnded { value in
+                            onTapEmpty(snappedDate(forX: value.location.x))
+                        }
+                )
             }
             .frame(height: totalHeight)
             .background(NudgeTheme.surfaceAlt.opacity(0.4))
             .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
             .onAppear {
-                DispatchQueue.main.async {
-                    proxy.scrollTo("nowAnchor", anchor: UnitPoint(x: 0.33, y: 0.5))
+                // Open with "now" near the LEFT edge (small lead-in of the
+                // past for padding) rather than centered — so the strip
+                // starts at the blue line. The full day is still rendered, so
+                // the user can scroll back to the morning if they want.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    proxy.scrollTo("nowAnchor", anchor: UnitPoint(x: 0.1, y: 0.5))
                 }
             }
         }
     }
 
     // MARK: - Pieces
-
-    /// Full-size transparent layer that turns empty-space taps into a
-    /// placement request. Blocks drawn above it consume their own taps.
-    private var tapLayer: some View {
-        Color.clear
-            .frame(width: contentWidth, height: totalHeight)
-            .contentShape(Rectangle())
-            .gesture(
-                SpatialTapGesture()
-                    .onEnded { value in
-                        onTapEmpty(snappedDate(forX: value.location.x))
-                    }
-            )
-    }
 
     private var axis: some View {
         Rectangle()
@@ -210,56 +249,71 @@ struct TodayTimelineView: View {
     private func eventBlock(_ task: NudgeTask) -> some View {
         let start = task.specificTime ?? Date()
         let w = width(forMinutes: eventMinutes(for: task))
-        return VStack(alignment: .leading, spacing: 2) {
-            Text(task.title)
-                .font(.custom(NudgeTheme.fontSemiBold, size: 12))
-                .foregroundColor(NudgeTheme.textPrimary)
-                .lineLimit(1)
-            Text(clockLabel(start))
-                .font(.custom(NudgeTheme.fontBody, size: 10))
-                .foregroundColor(NudgeTheme.textMuted)
+        return Button {
+            onOpenTask(task)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 12))
+                    .foregroundColor(NudgeTheme.textPrimary)
+                    .lineLimit(1)
+                Text(clockLabel(start))
+                    .font(.custom(NudgeTheme.fontBody, size: 10))
+                    .foregroundColor(NudgeTheme.textMuted)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(width: w, height: blockHeight, alignment: .topLeading)
+            .background(NudgeTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(NudgeTheme.border, lineWidth: 1)
+            )
+            .opacity(task.isComplete ? 0.3 : 1.0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(width: w, height: blockHeight, alignment: .topLeading)
-        .background(NudgeTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(NudgeTheme.border, lineWidth: 1)
-        )
-        .opacity(task.isComplete ? 0.3 : 1.0)
+        .buttonStyle(.plain)
         .offset(x: x(for: start), y: blockTop)
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture { onOpenTask(task) }
     }
 
     private func taskBlock(_ task: NudgeTask) -> some View {
         let start = task.plannedStartDate ?? Date()
         let w = width(forMinutes: taskMinutes(for: task))
-        return VStack(alignment: .leading, spacing: 2) {
-            Text(task.title)
-                .font(.custom(NudgeTheme.fontSemiBold, size: 12))
-                .foregroundColor(task.isComplete ? NudgeTheme.textMuted : NudgeTheme.primary)
-                .strikethrough(task.isComplete, color: NudgeTheme.textMuted)
-                .lineLimit(1)
-            Text(clockLabel(start))
-                .font(.custom(NudgeTheme.fontBody, size: 10))
-                .foregroundColor(NudgeTheme.textMuted)
+        return Button {
+            onOpenTask(task)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 12))
+                    .foregroundColor(task.isComplete ? NudgeTheme.textMuted : NudgeTheme.primary)
+                    .strikethrough(task.isComplete, color: NudgeTheme.textMuted)
+                    .lineLimit(1)
+                Text(clockLabel(start))
+                    .font(.custom(NudgeTheme.fontBody, size: 10))
+                    .foregroundColor(NudgeTheme.textMuted)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(width: w, height: blockHeight, alignment: .topLeading)
+            .background(NudgeTheme.primary.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(NudgeTheme.primary.opacity(0.5), lineWidth: 1)
+            )
+            .opacity(task.isComplete ? 0.3 : 1.0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(width: w, height: blockHeight, alignment: .topLeading)
-        .background(NudgeTheme.primary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(NudgeTheme.primary.opacity(0.5), lineWidth: 1)
+        .buttonStyle(.plain)
+        // Complete from the timeline: long-press marks done with the full
+        // NudgeFeedback burst (same effect as the list rows). Tap still opens
+        // the block; the long-press is a simultaneous gesture so both work.
+        .taskCompletionEffect(isComplete: Binding(get: { task.isComplete }, set: { _ in }))
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                if !task.isComplete { onCompleteTask(task) }
+            }
         )
-        .opacity(task.isComplete ? 0.3 : 1.0)
         .offset(x: x(for: start), y: blockTop)
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture { onOpenTask(task) }
     }
 
     private func markerView(_ outcome: NudgeOutcome) -> some View {

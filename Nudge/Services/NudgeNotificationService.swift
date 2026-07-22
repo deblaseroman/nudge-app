@@ -33,6 +33,12 @@ final class NudgeNotificationService: NSObject {
 
     static let shared = NudgeNotificationService()
 
+    /// App-group keys for the durable "idle Not-yet → show confirmation
+    /// sheet" intent. Written when the user taps "Not yet"; consumed by
+    /// TasksTabView when it appears/becomes active (survives cold launch).
+    static let pendingIdleTaskIDKey = "nudge.pendingIdleTaskID"
+    static let pendingIdleTaskDateKey = "nudge.pendingIdleTaskDate"
+
     enum AuthorizationState {
         case notDetermined
         case denied
@@ -214,6 +220,20 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             // model from inside the deferred closures (different runloop
             // tick, potentially stale faulted reference).
             let topTaskIDString = topTask?.id.uuidString
+
+            // DURABLE pending state. The transient .nudgeIdleNotYetTapped
+            // post is only caught if TasksTabView is already mounted and
+            // subscribed — which it is NOT on a COLD LAUNCH from the
+            // notification tap (the whole view tree is still building, so the
+            // post fires before the subscriber exists and the sheet never
+            // shows). Persisting the proposed task to the app group makes the
+            // intent survive the launch: TasksTabView reads it whenever it
+            // appears / becomes active, independent of timing or launch path.
+            if let topTaskIDString {
+                let defaults = SharedModelContainer.appGroupDefaults
+                defaults.set(topTaskIDString, forKey: Self.pendingIdleTaskIDKey)
+                defaults.set(Date(), forKey: Self.pendingIdleTaskDateKey)
+            }
             // Two-step async hop: the tab-open post fires first on the next
             // main runloop tick so SwiftUI can commit deepLinkTab → MainTabView
             // selectedTab → TasksTabView mounts → .onReceive subscription
@@ -268,6 +288,14 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
     private func pickTopOpenTask(context: ModelContext) -> NudgeTask? {
         let allTasks = (try? context.fetch(FetchDescriptor<NudgeTask>())) ?? []
         let open = allTasks.filter { !$0.isInformationalEvent && !$0.isComplete }
+        // If the user has an ordered plan today, its NEXT item (lowest
+        // sequenceIndex) is the answer to "what should I start?" — prefer it
+        // over pure score.
+        if let planNext = open
+            .filter({ $0.sequenceIndex != nil })
+            .min(by: { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }) {
+            return planNext
+        }
         return open.sorted(by: { TaskSortComparator().compare($0, $1) }).first
     }
 
