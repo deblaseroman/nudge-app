@@ -45,16 +45,20 @@ The only other scheduling site is `NotificationScheduler` (the two fixed daily m
 
 ### App ↔ widget sharing
 
-Both targets share one SwiftData store and one `UserDefaults` via App Group `group.com.deblaser.nudge`, built in `SharedModelContainer`:
+Both targets read and write one SwiftData store (`Nudge.store`) and one `UserDefaults` via App Group `group.com.deblaser.nudge` — but they build their containers separately: the app from `SharedModelContainer`, the widget from its own `widgetModelContainer` in `NudgeWidget/NudgeWidget.swift`.
 
-- Every new `@Model` must be registered in `SharedModelContainer.schema`.
+- Every new `@Model` must be registered in **three** hand-synced lists — nothing enforces agreement, and a mismatch is a runtime crash, not a build error:
+  1. `SharedModelContainer.schema` (`Nudge/Services/SharedModelContainer.swift`) — the app's container
+  2. `widgetSchema` (`NudgeWidget/NudgeWidget.swift`) — the widget's container
+  3. the `#Preview` container in `Nudge/ContentView.swift` — previews only, and already missing `CompletedTaskRecord`, `TimeBlock`, `CategoryDurationStats`, `EventDurationStats`
 - Use `SharedModelContainer.appGroupDefaults` for shared defaults; never construct `UserDefaults(suiteName:)` inline (hot-path cost, and the cached instance is the app-wide convention).
 - Widget App Intents (`CompleteTaskIntent`, `FocusSessionIntents`) write back through the shared store; `SessionCoordinator` drives Live Activities via `LiveActivityManager`.
 - `FocusSessionIntents.swift` exists in both `Nudge/Services/` and `NudgeWidget/` — make sure you're editing the copy for the target you mean.
 
 ### AI vs deterministic split
 
-- All Anthropic calls live in `ClaudeService` (Haiku). `NudgeIntelligence` caches per-task AI signals in `TaskIntelligence` (7-day TTL, single-flight). `DayPlanRefiner` is the AI layer over Plan-my-day.
+- All Anthropic calls live in `ClaudeService` (Haiku). `NudgeIntelligence` caches per-task AI signals in `TaskIntelligence` (7-day TTL, single-flight).
+- **Plan-my-day has two implementations.** The deterministic one is `planMyDay()` inside `Nudge/Views/Tabs/TasksTabView.swift` — not a service, and *not* `DayPlanner.swift`, which is dead code. `DayPlanRefiner` is the AI layer over it (Pro/trial gated, cached once per day). Both write only `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto`.
 - The notification path is fully deterministic: `EisenhowerScorer` (urgency×importance → quadrant), `DurationModel` (category priors + learned `CategoryDurationStats`), `StartByPlanner`, `BusyWindowResolver`. No LLM calls in the arbiter.
 
 ### Conventions
