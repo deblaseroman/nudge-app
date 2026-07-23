@@ -57,7 +57,7 @@
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES"
       launchAutomaticallySubstyle = "2"
-      queueDebuggingEnableBacktraceRecording = "Yes">
+      queueDebuggingEnableBacktraceRecording = "No">
       <RemoteRunnable
          runnableDebuggingMode = "2"
          BundleIdentifier = "com.apple.springboard">
