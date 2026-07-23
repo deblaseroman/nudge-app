@@ -80,6 +80,7 @@
 				Models/TaskActivityAttributes.swift,
 				Models/TaskCategory.swift,
 				Models/TaskIntelligence.swift,
+				Models/TaskStakes.swift,
 				Models/TimeBlock.swift,
 				Models/UserProfile.swift,
 				Services/SharedModelContainer.swift,

@@ -47,6 +47,20 @@ final class NudgeTask {
     /// reorderable list, not a placement.
     var sequenceIndex: Int?
 
+    /// Canonical consequence signal — raw storage for `TaskStakes`
+    /// ("high" | "medium" | "low"). Nil = never classified, which is what
+    /// a later backfill pass keys on. Read through `stakes`; unknown
+    /// strings read as nil, never crash. Deliberately NOT part of the
+    /// memberwise init: every automated writer must go through
+    /// `setStakesFromAutomation` so the user-override guard below cannot
+    /// be bypassed.
+    var stakesRaw: String? = nil
+    /// True once the user has set stakes by hand (manual editor — not
+    /// built yet). While set, `setStakesFromAutomation` is a no-op, so no
+    /// AI or import pass can clobber the user's choice. Only user-driven
+    /// UI may write `stakes` directly, and it must set this flag too.
+    var stakesIsUserSet: Bool = false
+
     init(
         id: UUID = UUID(),
         title: String,
@@ -109,5 +123,27 @@ final class NudgeTask {
             return TaskCategory(rawValue: key) ?? .other
         }
         set { category = newValue?.rawValue }
+    }
+
+    /// Typed view of `stakesRaw`. Unknown or empty strings → nil (unlike
+    /// `taskCategory`, there is no catch-all case — nil means "never
+    /// classified" and later passes rely on that). The setter is for
+    /// user-driven editors only; automated writers use
+    /// `setStakesFromAutomation`.
+    var stakes: TaskStakes? {
+        get { TaskStakes.parse(stakesRaw) }
+        set { stakesRaw = newValue?.rawValue }
+    }
+
+    /// The single write path for every NON-USER stakes writer — the
+    /// brain-dump classifier, the screenshot import, the deterministic
+    /// calendar-import fallback, and any future backfill/upgrade pass.
+    /// Refuses to overwrite a hand-set value (`stakesIsUserSet`), and
+    /// treats nil as "the classifier didn't say" (keeps the current
+    /// value) rather than a clear.
+    func setStakesFromAutomation(_ newValue: TaskStakes?) {
+        guard !stakesIsUserSet else { return }
+        guard let newValue else { return }
+        stakesRaw = newValue.rawValue
     }
 }

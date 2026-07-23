@@ -253,16 +253,18 @@ final class CalendarService {
                 continue
             }
 
+            let category = inferCategory(from: event)
             let task = NudgeTask(
                 title: title,
                 dueDate: dueDate,
                 dueTime: event.isAllDay ? nil : "specific",
                 specificTime: specificTime,
                 priority: "medium",
-                category: inferCategory(from: event),
+                category: category,
                 source: "calendar",
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
+            task.setStakesFromAutomation(inferStakes(title: title, category: category))
             modelContext.insert(task)
             importedCount += 1
         }
@@ -348,6 +350,7 @@ final class CalendarService {
                 source: "calendar",
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
+            task.setStakesFromAutomation(inferStakes(title: title, category: "school"))
             modelContext.insert(task)
             importedCount += 1
         }
@@ -427,9 +430,30 @@ final class CalendarService {
     }
 
     /// Returns true if the given event title contains keywords indicating importance.
+    /// Also the keyword half of `inferStakes` below.
     func isHighPriorityEvent(title: String) -> Bool {
         let lower = title.lowercased()
         return highPriorityKeywords.contains { lower.contains($0) }
+    }
+
+    // MARK: - Stakes Inference (deterministic)
+
+    /// Deterministic consequence signal for imported items — keyword scan
+    /// first, then the category ladder. Synchronous and offline on purpose:
+    /// imports must work with no network and no API key, so there is no
+    /// Claude call here. A later AI pass can upgrade these values through
+    /// `NudgeTask.setStakesFromAutomation`, which is also the only way this
+    /// result may be written (user-set stakes must survive re-imports).
+    func inferStakes(title: String, category: String?) -> TaskStakes {
+        if isHighPriorityEvent(title: title) { return .high }
+        switch category.flatMap({ TaskCategory(rawValue: $0.lowercased()) }) {
+        case .exam:
+            return .high
+        case .work, .school, .health:
+            return .medium
+        default:
+            return .low
+        }
     }
 
     // MARK: - Category & Priority Inference

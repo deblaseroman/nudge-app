@@ -60,6 +60,11 @@ class ClaudeService {
     - If the user volunteers a specific time (e.g. "at 3 PM", "tomorrow at 9"), set dueTime to that time string ("3:00 PM") AND set dueDate. Otherwise leave dueTime null and only set dueDate if a date was mentioned.
     - Assign priority: "urgent", "high", "medium", or "low" (default "medium")
     - Categorize: "exam", "school", "work", "health", "personal", "errand", or "other". Use "exam" for tests/midterms/finals/quizzes; "school" for any other coursework (assignments, readings, papers); "work" for jobs/shifts/meetings; "health" for doctor/gym/therapy/medication; "personal" for friends/family/hobbies; "errand" for quick utilitarian tasks (pick up, return, pay).
+    - Assign stakes: "high", "medium", or "low" on EVERY item. Stakes means CONSEQUENCE — how bad is it if this is missed or handled badly? It is NOT urgency and NOT category. Time pressure is scored elsewhere: something due tomorrow is not automatically high stakes, and a final exam three weeks away is still "high".
+      "high" = lasting consequences if missed or flubbed: exams/midterms/finals, job interviews, flights, medical appointments, deadlines with real penalties (rent, visa, registration), significant personal occasions (a close friend's wedding, mom's birthday dinner).
+      "medium" = matters but recoverable: regular assignments and problem sets, work shifts, classes, dated errands.
+      "low" = minor or optional: someday tasks, loose intentions ("read more", "clean my desk"), hobby items.
+      Stakes is not school-specific: a job interview, a doctor's appointment, and a final exam are ALL "high". A task can be priority "high" (do it soon) and stakes "medium" (recoverable if flubbed) — the two are independent.
 
     CRITICAL — TASKS vs EVENTS:
     Every item the user mentions is EITHER a task OR an event. You MUST decide which and set the "isEvent" boolean field:
@@ -182,7 +187,7 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null}
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null}
     The "isEvent" boolean is REQUIRED on every new item.
 
     ORDERED PLANS (sequenceIndex):
@@ -200,8 +205,8 @@ class ClaudeService {
     {
       "message": "Added study spanish and do laundry to your floaters — get to them when you can.",
       "new_tasks": [
-        {"title": "Study Spanish", "isEvent": false, "priority": "low", "category": "school"},
-        {"title": "Do laundry", "isEvent": false, "priority": "low", "category": "personal"}
+        {"title": "Study Spanish", "isEvent": false, "priority": "low", "category": "school", "stakes": "low"},
+        {"title": "Do laundry", "isEvent": false, "priority": "low", "category": "personal", "stakes": "low"}
       ],
       "task_updates": []
     }
@@ -210,7 +215,7 @@ class ClaudeService {
     {
       "message": "Got your work shift in — see you tomorrow at 4 PM.",
       "new_tasks": [
-        {"title": "Work", "isEvent": true, "priority": "medium", "category": "work", "dueDate": "2026-05-25", "dueTime": "4:00 PM"}
+        {"title": "Work", "isEvent": true, "priority": "medium", "category": "work", "stakes": "medium", "dueDate": "2026-05-25", "dueTime": "4:00 PM"}
       ],
       "task_updates": []
     }
@@ -219,8 +224,8 @@ class ClaudeService {
     {
       "message": "Locked in class at 9 AM tomorrow and added the essay to your tasks.",
       "new_tasks": [
-        {"title": "Bio 101 lecture", "isEvent": true, "priority": "medium", "category": "school", "dueDate": "2026-05-25", "dueTime": "9:00 AM"},
-        {"title": "Finish essay", "isEvent": false, "priority": "high", "category": "school"}
+        {"title": "Bio 101 lecture", "isEvent": true, "priority": "medium", "category": "school", "stakes": "medium", "dueDate": "2026-05-25", "dueTime": "9:00 AM"},
+        {"title": "Finish essay", "isEvent": false, "priority": "high", "category": "school", "stakes": "medium"}
       ],
       "task_updates": []
     }
@@ -608,7 +613,8 @@ class ClaudeService {
             "title": "<short event name>",
             "startISO": "<datetime, format YYYY-MM-DDTHH:MM:SS, LOCAL TIME, no timezone suffix>",
             "durationMinutes": <int or null>,
-            "category": "exam" | "school" | "work" | "health" | "personal" | "errand" | "other" | null
+            "category": "exam" | "school" | "work" | "health" | "personal" | "errand" | "other" | null,
+            "stakes": "high" | "medium" | "low" | null
           }
         ]
 
@@ -620,6 +626,7 @@ class ClaudeService {
         - For class schedules like "MATH 220 MWF 10:00 AM", emit one event per implied day across the next 7 days at that time.
         - When in doubt about whether something is an event vs. UI text, INCLUDE IT. The user can delete bad ones.
         - Default category to "\(defaultCategory)" when unsure.
+        - stakes = the CONSEQUENCE of missing the event, not its timing: "high" for exams/finals/interviews/flights/medical appointments; "medium" for regular classes and work shifts; "low" for optional or social items. Use null when you can't tell.
         - Only return [] if there is genuinely zero date/time information anywhere in the text.
 
         OCR TEXT:
@@ -694,7 +701,8 @@ class ClaudeService {
                 title: title,
                 startDate: start,
                 estimatedMinutes: json.durationMinutes,
-                category: json.category
+                category: json.category,
+                stakes: TaskStakes.parse(json.stakes)
             )
         }
         #if DEBUG
@@ -1000,6 +1008,7 @@ struct TaskData: Codable {
     let dueTime: String?
     let priority: String?
     let category: String?
+    let stakes: String?             // "high" | "medium" | "low" — consequence signal; unknown/missing → nil via TaskStakes.parse
     let estimatedMinutes: Int?
     let recurrence: String?
     let dependsOnTask: String?      // title of the task this depends on (resolved client-side)
@@ -1012,6 +1021,7 @@ struct TaskData: Codable {
         case dueTime = "dueTime"
         case priority
         case category
+        case stakes
         case estimatedMinutes = "estimatedMinutes"
         case recurrence
         case dependsOnTask = "depends_on_task"
@@ -1066,6 +1076,7 @@ private struct ScreenshotEventJSON: Codable {
     let startISO: String
     let durationMinutes: Int?
     let category: String?
+    let stakes: String?             // consequence signal; unknown/missing → nil via TaskStakes.parse
 }
 
 private extension DateFormatter {

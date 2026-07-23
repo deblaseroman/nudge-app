@@ -110,6 +110,10 @@ final class ScreenshotCalendarImporter {
                 estimatedMinutes: event.estimatedMinutes,
                 isInformationalEvent: true
             )
+            // Stakes writes go through the one guarded automation path
+            // (never the init) so every non-user writer inherits the
+            // user-override protection.
+            task.setStakesFromAutomation(event.stakes)
             modelContext.insert(task)
             importedCount += 1
         }
@@ -183,4 +187,7 @@ struct ParsedScreenshotEvent {
     let startDate: Date
     let estimatedMinutes: Int?
     let category: String?
+    /// Consequence signal from the AI parse; nil when the model couldn't
+    /// tell (tolerant-parsed — an unknown string never survives to here).
+    let stakes: TaskStakes?
 }

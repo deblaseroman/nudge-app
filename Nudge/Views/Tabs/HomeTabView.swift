@@ -438,6 +438,11 @@ struct HomeTabView: View {
                         // placement; a plan is a numbered list, not a schedule.
                         sequenceIndex: isEvent ? nil : taskData.sequenceIndex
                     )
+                    // Stakes writes go through the one guarded automation
+                    // path (never the init) so every non-user writer
+                    // inherits the user-override protection. Unknown or
+                    // missing strings parse to nil and leave stakes unset.
+                    task.setStakesFromAutomation(TaskStakes.parse(taskData.stakes))
                     modelContext.insert(task)
                     newlyCreatedTasks.append(task)
                 }

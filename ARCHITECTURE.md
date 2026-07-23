@@ -63,12 +63,20 @@ than reusing `SharedModelContainer`. The only guardrail is a comment in
 ### 3. Target boundaries are directory boundaries
 
 The project uses Xcode's file-system-synchronized groups: dropping a `.swift`
-file into `Nudge/` or `NudgeWidget/` auto-joins that target — no `.pbxproj` edit.
+file into `Nudge/` or `NudgeWidget/` auto-joins that target — no `.pbxproj` edit
+**for the owning target only**.
 
 The widget target additionally compiles all of `Nudge/Models/*.swift` plus
 `Nudge/Services/SharedModelContainer.swift`, and **nothing else** from `Nudge/`.
 So widget code can reach the models but not `NudgeConfig`, `DurationModel`,
 `EisenhowerScorer`, or any other service.
+
+That cross-target membership is NOT automatic: it's a hand-maintained
+per-file `membershipExceptions` list in `project.pbxproj` ("Exceptions for
+'Nudge' folder in 'NudgeWidgetExtension' target"). A **new** file in
+`Nudge/Models/` joins the app target by itself but is invisible to the
+widget until added to that list — the failure mode is a widget-only build
+error naming the missing type.
 
 ---
 
@@ -120,7 +128,7 @@ So widget code can reach the models but not `NudgeConfig`, `DurationModel`,
 ## Services
 
 - `Nudge/Services/SharedModelContainer.swift` — Builds the app-group SwiftData `ModelContainer` + shared `UserDefaults`. Compiled into both targets, but **only the app actually uses it** — the widget re-declares its own schema/container (see Cross-cutting invariant 2).
-- `Nudge/Services/ClaudeService.swift` — All Anthropic (Haiku) calls: brain-dump parsing, day-plan refine, prep plans, screenshot parsing. Called by Home/Tasks, `DayPlanRefiner`, `NudgeIntelligence`, `ScreenshotCalendarImporter`. The brain-dump system prompt is a **behavioral contract**, not just parsing instructions: event-vs-task classification rules (a deadline is not an event; an exam is an event but studying for it is a task), 10 labeled worked examples, the ORDERED PLANS (`sequenceIndex`) rules, the single-follow-up rule for timeless events, and a generated 21-day weekday→ISO-date lookup table — *"The model is BAD at computing 'which date is next Thursday' on its own (it put 'Thursdays and Fridays' on the wrong dates), so we hand it an exact table and forbid it from calculating."* Edit this prompt carefully; it defines app-wide capture behavior.
+- `Nudge/Services/ClaudeService.swift` — All Anthropic (Haiku) calls: brain-dump parsing, day-plan refine, prep plans, screenshot parsing. Called by Home/Tasks, `DayPlanRefiner`, `NudgeIntelligence`, `ScreenshotCalendarImporter`. The brain-dump system prompt is a **behavioral contract**, not just parsing instructions: event-vs-task classification rules (a deadline is not an event; an exam is an event but studying for it is a task), 10 labeled worked examples, the ORDERED PLANS (`sequenceIndex`) rules, the single-follow-up rule for timeless events, and a generated 21-day weekday→ISO-date lookup table — *"The model is BAD at computing 'which date is next Thursday' on its own (it put 'Thursdays and Fridays' on the wrong dates), so we hand it an exact table and forbid it from calculating."* Both capture schemas (brain dump + screenshot) also emit the optional `stakes` consequence field (tolerant-decoded via `TaskStakes.parse`). Edit this prompt carefully; it defines app-wide capture behavior.
 - `Nudge/Services/NudgeIntelligence.swift` — Read-only cached AI signals per task (`TaskIntelligence`); single-flight enrichment via `ClaudeService`. Read by `NudgeArbiter` / scoring.
 - `Nudge/Services/NudgeArbiter.swift` — The decision engine: `reevaluate` reads data, applies gates, schedules/cancels notifications, writes `NudgeOutcome`. Called by `ContentView`, tabs, `SessionCoordinator`, `DayPlanRefiner`. Idle and floater check-in candidates target the **plan's next item** (lowest `sequenceIndex`) ahead of score — see Cross-cutting invariant 1.
 - `Nudge/Services/NudgeConfig.swift` — All tunable constants (thresholds, budgets, priors) the arbiter/scorers consult.
@@ -133,7 +141,7 @@ So widget code can reach the models but not `NudgeConfig`, `DurationModel`,
 - `Nudge/Services/NotificationScheduler.swift` — Registers the two fixed daily notifications (morning kickoff, bedtime planning) from `UserProfile`.
 - `Nudge/Services/NudgeNotificationService.swift` — `UNUserNotificationCenterDelegate`: handles taps/actions, routes to tabs/sheets, writes `NudgeOutcome`. `pickTopOpenTask` prefers the **plan's next item** over score. The idle-"Not yet" intent is made durable by writing `pendingIdleTaskIDKey`/`pendingIdleTaskDateKey` to the app group (consumed by `TasksTabView` on appear/active) because *"The transient `.nudgeIdleNotYetTapped` post is only caught if TasksTabView is already mounted and subscribed — which it is NOT on a COLD LAUNCH from the notification tap."*
 - `Nudge/Services/NudgeNotificationCategories.swift` — Defines `UNNotificationCategory` + action buttons used by every arbiter notification.
-- `Nudge/Services/CalendarService.swift` — Apple Calendar / Canvas iCal import into `NudgeTask` events; rolling-window sync + past-event purge.
+- `Nudge/Services/CalendarService.swift` — Apple Calendar / Canvas iCal import into `NudgeTask` events; rolling-window sync + past-event purge. Stamps deterministic stakes at import (`inferStakes`: keyword scan via `isHighPriorityEvent`, then category ladder) — synchronous and offline on purpose; no Claude call.
 - `Nudge/Services/ScreenshotCalendarImporter.swift` — Vision OCR → `ClaudeService` → `NudgeTask` events from a schedule screenshot.
 - `Nudge/Services/SessionCoordinator.swift` — Runs a single focus session (state, timers, widget publish); drives `LiveActivityManager`, calls the arbiter.
 - `Nudge/Services/LiveActivityManager.swift` — Starts/updates/ends the focus-session Live Activity (ActivityKit); driven by `SessionCoordinator`.
@@ -148,12 +156,13 @@ So widget code can reach the models but not `NudgeConfig`, `DurationModel`,
 
 ## Models (SwiftData `@Model` unless noted)
 
-- `Nudge/Models/NudgeTask.swift` — Core task/event record (title, due, category, `isInformationalEvent`); the central entity most services read/write. Two independent scheduling concepts live here: **placement** — `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto` (a slot on today's timeline; `plannedIsAuto` distinguishes "Plan my day" placements from manual ones, so `clearPlan()` can remove only the auto ones) — and **plan order** — `sequenceIndex` (see Cross-cutting invariant 1). Neither implies the other, and neither touches `dueDate`/`specificTime`, which remain the deadline.
+- `Nudge/Models/NudgeTask.swift` — Core task/event record (title, due, category, `isInformationalEvent`); the central entity most services read/write. Two independent scheduling concepts live here: **placement** — `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto` (a slot on today's timeline; `plannedIsAuto` distinguishes "Plan my day" placements from manual ones, so `clearPlan()` can remove only the auto ones) — and **plan order** — `sequenceIndex` (see Cross-cutting invariant 1). Neither implies the other, and neither touches `dueDate`/`specificTime`, which remain the deadline. Also carries the canonical stakes signal — `stakesRaw`/`stakes` + `stakesIsUserSet`; every non-user writer must go through `setStakesFromAutomation` (deliberately absent from the init), which refuses to overwrite a hand-set value.
 - `Nudge/Models/UserProfile.swift` — User settings/preferences (wake/bedtime, toggles, Pro/trial); read by arbiter, scheduler, tabs.
 - `Nudge/Models/NudgeOutcome.swift` — Audit log of each emitted notification and the user's response; feeds fatigue/scoring.
 - `Nudge/Models/TaskIntelligence.swift` — Cached AI signals per task (statedUrgency, suggestedFirstStep); written by `NudgeIntelligence`.
 - `Nudge/Models/StatedUrgency.swift` — Enum (none/explicit) for language-derived urgency.
 - `Nudge/Models/TaskCategory.swift` — Enum of task categories + helpers used across scoring/config.
+- `Nudge/Models/TaskStakes.swift` — Closed high/medium/low **consequence** signal ("stakes") + tolerant `parse` (unknown → nil, no catch-all case — nil means "never classified"). Stored raw on `NudgeTask.stakesRaw`. Data-only for now: written by capture/screenshot (AI) and calendar imports (deterministic `CalendarService.inferStakes`), consumed by nothing yet.
 - `Nudge/Models/CategoryDurationStats.swift` — Learned per-category effort mean; written on completion, read by `DurationModel`.
 - `Nudge/Models/EventDurationStats.swift` — Learned per-title event duration; read by the timeline / busy-window logic.
 - `Nudge/Models/TimeBlock.swift` — Scheduled time-block record (retained for the schedule rebuild).
