@@ -42,6 +42,21 @@ class ClaudeService {
 
     // MARK: - System Prompts
 
+    /// The stakes rule — the definition of the CONSEQUENCE signal. Shared
+    /// verbatim between the brain-dump system prompt below and the batch
+    /// classifier (`classifyStakes`) that the backfill pass uses: both
+    /// write the same field on the same model, so they must apply the same
+    /// definition, and interpolating one constant into both is what keeps
+    /// them from drifting. Says nothing about tasks-vs-events or the
+    /// response schema on purpose — those differ per call site.
+    static let stakesRuleText = """
+    Stakes means CONSEQUENCE — how bad is it if this is missed or handled badly? It is NOT urgency and NOT category. Time pressure is scored elsewhere: something due tomorrow is not automatically high stakes, and a final exam three weeks away is still "high".
+    "high" = lasting consequences if missed or flubbed: exams/midterms/finals, job interviews, flights, medical appointments, deadlines with real penalties (rent, visa, registration), significant personal occasions (a close friend's wedding, mom's birthday dinner).
+    "medium" = matters but recoverable: regular assignments and problem sets, work shifts, classes, dated errands.
+    "low" = minor or optional: someday tasks, loose intentions ("read more", "clean my desk"), hobby items.
+    Stakes is not school-specific: a job interview, a doctor's appointment, and a final exam are ALL "high". A task can be priority "high" (do it soon) and stakes "medium" (recoverable if flubbed) — the two are independent.
+    """
+
     private let chatSystemPrompt = """
     You are Nudge, a warm and energetic productivity companion for college students who want to combat executive dysfunction.
 
@@ -60,11 +75,7 @@ class ClaudeService {
     - If the user volunteers a specific time (e.g. "at 3 PM", "tomorrow at 9"), set dueTime to that time string ("3:00 PM") AND set dueDate. Otherwise leave dueTime null and only set dueDate if a date was mentioned.
     - Assign priority: "urgent", "high", "medium", or "low" (default "medium")
     - Categorize: "exam", "school", "work", "health", "personal", "errand", or "other". Use "exam" for tests/midterms/finals/quizzes; "school" for any other coursework (assignments, readings, papers); "work" for jobs/shifts/meetings; "health" for doctor/gym/therapy/medication; "personal" for friends/family/hobbies; "errand" for quick utilitarian tasks (pick up, return, pay).
-    - Assign stakes: "high", "medium", or "low" on EVERY item. Stakes means CONSEQUENCE — how bad is it if this is missed or handled badly? It is NOT urgency and NOT category. Time pressure is scored elsewhere: something due tomorrow is not automatically high stakes, and a final exam three weeks away is still "high".
-      "high" = lasting consequences if missed or flubbed: exams/midterms/finals, job interviews, flights, medical appointments, deadlines with real penalties (rent, visa, registration), significant personal occasions (a close friend's wedding, mom's birthday dinner).
-      "medium" = matters but recoverable: regular assignments and problem sets, work shifts, classes, dated errands.
-      "low" = minor or optional: someday tasks, loose intentions ("read more", "clean my desk"), hobby items.
-      Stakes is not school-specific: a job interview, a doctor's appointment, and a final exam are ALL "high". A task can be priority "high" (do it soon) and stakes "medium" (recoverable if flubbed) — the two are independent.
+    - Assign stakes: "high", "medium", or "low" on EVERY item. \(ClaudeService.stakesRuleText)
 
     CRITICAL — TASKS vs EVENTS:
     Every item the user mentions is EITHER a task OR an event. You MUST decide which and set the "isEvent" boolean field:
@@ -756,6 +767,139 @@ class ClaudeService {
         return nil
     }
 
+    // MARK: - Batch stakes classification (backfill / upgrade pass)
+
+    /// Classifies a batch of task titles into `TaskStakes` in ONE request.
+    /// Array in, array out — the backfill pass dedupes ~100 rows down to
+    /// ~15 unique normalized titles and spends one call on them, instead of
+    /// one call per row.
+    ///
+    /// Uses the same `stakesRuleText` as the brain-dump prompt, so a row
+    /// upgraded here lands where capture would have put it.
+    ///
+    /// Matching is by INDEX, not by echoed title: the model rewords and
+    /// re-cases titles, and a title-keyed response would silently drop rows.
+    ///
+    /// The response must cover the request EXACTLY — every index sent,
+    /// once each — or the whole chunk is thrown away. A truncated response
+    /// (`max_tokens`) or a model that renumbers is still well-formed JSON,
+    /// so the decoder alone cannot catch it, and applying a partial answer
+    /// would leave rows silently unclassified while looking like a success.
+    ///
+    /// A `null` stakes is the one legitimate gap: it means "couldn't tell",
+    /// occupies its index, and is simply absent from the returned map —
+    /// `setStakesFromAutomation(nil)` already treats that as "keep the
+    /// current value".
+    ///
+    /// - Parameter titles: Unique titles. Keys of the returned dictionary
+    ///   are these strings verbatim, so the caller can map straight back.
+    /// - Returns: One entry per title the model gave a real answer for —
+    ///   smaller than `titles` only by the `null`s. Empty for empty input.
+    /// - Throws: `ClaudeError.parseError` if the response doesn't decode or
+    ///   doesn't cover the request; the network errors otherwise.
+    func classifyStakes(titles: [String]) async throws -> [String: TaskStakes] {
+        guard !titles.isEmpty else { return [:] }
+
+        let numbered = titles.enumerated()
+            .map { "\($0.offset). \($0.element)" }
+            .joined(separator: "\n")
+
+        let prompt = """
+        Classify the STAKES of each item on someone's task list.
+
+        \(ClaudeService.stakesRuleText)
+
+        Return ONLY a JSON array. No prose, no markdown fences. Schema:
+        [
+          {"index": <the item's number below>, "stakes": "high" | "medium" | "low" | null}
+        ]
+
+        Rules:
+        - Return exactly one object per item, covering every index from 0 to \(titles.count - 1).
+        - Titles are lowercased and stripped of punctuation. That is normalization for matching — it is NOT a signal about how important the item is.
+        - You only get the title. Judge the typical consequence of missing an item with that name; do not invent context.
+        - Use null ONLY when the title is genuinely too vague to judge at all. Prefer a real answer.
+
+        ITEMS:
+        \(numbered)
+        """
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 4000,
+            "system": "You are a precise classifier. Return only valid JSON matching the requested schema. No prose, no commentary.",
+            "messages": [["role": "user", "content": prompt]]
+        ]
+
+        guard !apiKey.isEmpty else { throw ClaudeError.missingAPIKey }
+
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        guard let text = anthropicResponse.content.first?.text else {
+            throw ClaudeError.emptyResponse
+        }
+
+        return try Self.decodeStakesClassifications(from: text, titles: titles)
+    }
+
+    /// Strips fences, decodes the JSON array, verifies it covers the
+    /// request, and maps indices back onto the caller's titles.
+    private static func decodeStakesClassifications(
+        from raw: String,
+        titles: [String]
+    ) throws -> [String: TaskStakes] {
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```json") { cleaned = String(cleaned.dropFirst(7)) }
+        if cleaned.hasPrefix("```")     { cleaned = String(cleaned.dropFirst(3)) }
+        if cleaned.hasSuffix("```")     { cleaned = String(cleaned.dropLast(3)) }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let start = cleaned.firstIndex(of: "["),
+              let end = cleaned.lastIndex(of: "]"),
+              let arrayData = String(cleaned[start...end]).data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([StakesClassificationJSON].self, from: arrayData)
+        else {
+            #if DEBUG
+            print("[ClaudeService] classifyStakes — unparseable response:\n\(raw)")
+            #endif
+            throw ClaudeError.parseError
+        }
+
+        // Coverage check, before a single value is mapped back. Requiring
+        // the index SET to match (not just the count) also rejects
+        // duplicates and out-of-range indices, which would otherwise let a
+        // full-length response leave real titles unclassified.
+        let returnedIndices = Set(decoded.map(\.index))
+        guard decoded.count == titles.count, returnedIndices == Set(titles.indices) else {
+            #if DEBUG
+            print(
+                "[ClaudeService] classifyStakes — response does not cover the request: "
+                + "sent \(titles.count) title(s), got \(decoded.count) row(s) over "
+                + "\(returnedIndices.count) distinct index/indices. Abandoning chunk."
+            )
+            #endif
+            throw ClaudeError.parseError
+        }
+
+        var result: [String: TaskStakes] = [:]
+        for row in decoded {
+            // A null/unknown stakes is the model saying "couldn't tell".
+            // It held its index above, so coverage is satisfied; it just
+            // contributes no entry here.
+            guard let stakes = TaskStakes.parse(row.stakes) else { continue }
+            result[titles[row.index]] = stakes
+        }
+        return result
+    }
+
     // MARK: - Network Layer
 
     private func makeRequest(body: [String: Any]) async throws -> ClaudeResponse {
@@ -1077,6 +1221,18 @@ private struct ScreenshotEventJSON: Codable {
     let durationMinutes: Int?
     let category: String?
     let stakes: String?             // consequence signal; unknown/missing → nil via TaskStakes.parse
+}
+
+// MARK: - Batch stakes classification DTO
+
+/// One row of `classifyStakes`'s array response. Keyed by `index` into the
+/// caller's title array rather than by title — the model rewords titles,
+/// indices survive. `stakes` is optional twice over: the model may answer
+/// `null` ("can't tell"), and an unknown string decodes to nil via
+/// `TaskStakes.parse`. Both mean "no classification for this row".
+private struct StakesClassificationJSON: Codable {
+    let index: Int
+    let stakes: String?
 }
 
 private extension DateFormatter {

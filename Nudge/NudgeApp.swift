@@ -53,6 +53,14 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         }
         Self.scheduleNextDailyRecalc()
 
+        // One-shot repair of the stakes signal on rows that predate it or
+        // got the deterministic calendar-import value. Fire-and-forget and
+        // fails silently — it must never delay or block launch. Lives here
+        // rather than in a view because it is a data migration, not UI.
+        Task { @MainActor in
+            StakesBackfill.shared.runIfNeeded()
+        }
+
         return true
     }
 

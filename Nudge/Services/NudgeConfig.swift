@@ -181,4 +181,25 @@ enum NudgeConfig {
     /// For shallow tasks: total lead = effort × (1 + multiplier). A 30-min
     /// task with multiplier = 1.0 → startBy = due − 60 min.
     static let shallowBufferMultiplier: Double = 1.0
+
+    // MARK: - Stakes backfill
+    //
+    // Drives `StakesBackfill`, the one-shot pass that classifies stakes on
+    // rows that never got a value and re-classifies calendar rows the
+    // deterministic `CalendarService.inferStakes` fallback got wrong.
+
+    /// Unique normalized titles per Claude request. The pass dedupes first,
+    /// so this bounds request size, not row count — 40 titles is a few
+    /// hundred output tokens, comfortably inside the response budget.
+    static let stakesBackfillChunkSize: Int = 40
+
+    /// Pause between chunk requests. Cheap insurance against tripping the
+    /// rate limit on a large import; the pass is background work with no
+    /// deadline, so there is nothing to gain by going faster.
+    static let stakesBackfillInterChunkDelaySeconds: Double = 0.5
+
+    /// How long to wait before the single retry after a 429. One retry
+    /// only — if the limit is still hot, the pass abandons and runs again
+    /// on a later launch.
+    static let stakesBackfillRateLimitBackoffSeconds: Double = 5.0
 }
