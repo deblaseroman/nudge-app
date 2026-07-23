@@ -15,6 +15,11 @@ enum NudgeNotificationCategoryID: String {
     case idle       = "category.idle"
     case getAhead   = "category.getAhead"
     case breakDown  = "category.breakDown"
+    /// Morning prompt — no action buttons on purpose: the whole
+    /// interaction is "tap → land in Home chat → type your answer".
+    /// A future banner-reply (UNTextInputNotificationAction) would
+    /// attach here.
+    case morningPrompt = "category.morning"
 }
 
 enum NudgeNotificationActionID: String {
@@ -95,9 +100,15 @@ enum NudgeNotificationCategories {
             intentIdentifiers: [],
             options: []
         )
+        let morningPrompt = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.morningPrompt.rawValue,
+            actions: [],
+            intentIdentifiers: [],
+            options: []
+        )
 
         UNUserNotificationCenter.current().setNotificationCategories([
-            eventBlock, idle, getAhead, breakDown
+            eventBlock, idle, getAhead, breakDown, morningPrompt
         ])
     }
 }

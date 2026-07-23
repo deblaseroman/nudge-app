@@ -33,9 +33,10 @@ final class UserProfile {
     var onboardingComplete: Bool
     var widgetAdded: Bool
     var notificationsEnabled: Bool
+    /// Gates the arbiter's morning prompt (formerly the fixed
+    /// NotificationScheduler morning kickoff — same toggle, new machinery).
     var morningCheckInNotificationsEnabled: Bool
     var taskDueSoonNotificationsEnabled: Bool
-    var eveningCheckInNotificationsEnabled: Bool
     var deadlinePrepNotificationsEnabled: Bool
     var sessionStarterNotificationsEnabled: Bool
 
@@ -46,6 +47,9 @@ final class UserProfile {
     // source today. Do NOT add UI for them; do NOT consume them. If a future
     // notification kind needs a toggle, prefer adding a new field over
     // resurrecting one of these (the names are misleading at this point).
+
+    /// Gated the retired bedtime-planning notification (removed Jul 2026).
+    var eveningCheckInNotificationsEnabled: Bool
     var windDownNotificationsEnabled: Bool
     var habitReminderNotificationsEnabled: Bool
     var monthlyCheckInNotificationsEnabled: Bool

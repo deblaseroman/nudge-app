@@ -35,13 +35,13 @@ When the Xcode MCP server is connected, prefer its tools (`BuildProject`, `Xcode
 The most important invariant: **UI never schedules notifications directly.** Views mutate SwiftData, then call `NudgeArbiter.shared.reevaluate(reason:profile:modelContext:)`. The arbiter is declarative — each run:
 
 1. Cancels every notification it owns (IDs prefixed `nudge.arb.`, tracked synchronously in App Group UserDefaults — deliberately NOT via the async `pendingNotificationRequests()`, which raced scheduling and killed fresh notifications)
-2. Rebuilds candidates (event-block reminders, idle, get-ahead, floater check-in, break-it-down)
+2. Rebuilds candidates (event-block reminders, morning prompt, idle, get-ahead, floater check-in, break-it-down)
 3. Filters through gates (busy windows from `BusyWindowResolver`, quiet hours, daily budget, spacing, per-task fatigue from `NudgeOutcome` history)
 4. Picks winners and schedules
 
 Time-triggered reasons (`appLaunch`, `sceneActive`, `backgroundTask`) are debounced 60s; data-driven reasons always run. Triggers live in `ContentView` (launch/scene-phase), `NudgeApp` (BGTask), and the tabs after mutations.
 
-The only other scheduling site is `NotificationScheduler` (the two fixed daily morning/bedtime notifications). `NudgeNotificationService` is the delegate side: taps/actions → deep-link tab routing + `NudgeOutcome` write-back, which feeds future fatigue gating.
+The arbiter is the ONLY scheduling site. `NotificationScheduler` is retired — it no longer schedules anything and survives only for the shared session-start key and the one-time cleanup of the old `nudge.daily.*` repeating notifications (which outlive the code that scheduled them). `NudgeNotificationService` is the delegate side: taps/actions → deep-link tab routing + `NudgeOutcome` write-back, which feeds future fatigue gating. The morning prompt's tap routes to Home chat; everything else routes to Tasks.
 
 ### App ↔ widget sharing
 

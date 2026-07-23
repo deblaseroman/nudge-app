@@ -42,10 +42,19 @@ enum NudgeConfig {
     // MARK: - Quiet hours
     /// No discretionary nudges before this many minutes after wake.
     /// (Lets the user actually wake up before being pestered.)
+    /// Also the morning prompt's fire offset — it goes out the moment the
+    /// post-wake quiet period ends.
     static let postWakeQuietMinutes: Int = 30
 
     /// No discretionary nudges within this many minutes of bedtime.
     static let preBedtimeQuietMinutes: Int = 60
+
+    // MARK: - Morning prompt
+    /// Skip the morning "what do you want to get done today?" prompt when
+    /// at least this fraction of the day's awake window (wake+quiet →
+    /// bed−quiet) is already committed to events. A day that's half booked
+    /// doesn't need an open-ended planning ask on top.
+    static let morningPromptBusyDayThreshold: Double = 0.5
 
     // MARK: - Cache lifetimes
     /// TaskIntelligence is re-analyzed if older than this many days.

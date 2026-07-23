@@ -264,11 +264,17 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             // User tapped the notification body itself (not a button).
             outcome?.result = .tappedStart
             outcome?.actedAt = Date()
+            // The morning prompt asks a question the user answers by TYPING —
+            // its landing surface is the Home chat, where the reply flows
+            // through normal brain-dump capture. Every other notification's
+            // home remains the Tasks tab.
+            let kindRaw = requestContent.userInfo[NudgeNotificationUserInfoKey.kind] as? String
+            let tab = (kindRaw == NudgeOutcomeKind.morningPrompt.rawValue) ? "home" : "tasks"
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: .nudgeNotificationOpenTab,
                     object: nil,
-                    userInfo: ["tab": "tasks"]
+                    userInfo: ["tab": tab]
                 )
             }
 

@@ -29,6 +29,32 @@ struct BusyWindow {
     let end: Date
 }
 
+/// Aggregate commitment load for one day's awake window — the reusable
+/// answer to "how full is this day already?". Previously this math existed
+/// only implicitly inside `TasksTabView.planMyDay()` and (privately) in
+/// `DayPlanRefiner.freeGaps` — neither exported a number a gate could
+/// consume, which is why this lives here now instead of a third copy.
+struct DayLoad {
+    let windowStart: Date
+    let windowEnd: Date
+    /// Minutes of the window covered by merged event busy windows
+    /// (including their tail buffers and cramped-gap merges). Placed
+    /// tasks deliberately do NOT count — the question is about fixed
+    /// commitments, not the plan the user drew on top of them.
+    let busyMinutes: Int
+
+    var windowMinutes: Int {
+        max(Int(windowEnd.timeIntervalSince(windowStart) / 60), 0)
+    }
+
+    /// 0 = completely free day, 1 = fully committed.
+    var busyFraction: Double {
+        let total = windowMinutes
+        guard total > 0 else { return 1 }
+        return min(Double(busyMinutes) / Double(total), 1)
+    }
+}
+
 @MainActor
 final class BusyWindowResolver {
 
@@ -75,6 +101,51 @@ final class BusyWindowResolver {
             modelContext: modelContext
         )
         return windows.contains { fireDate >= $0.start && fireDate <= $0.end }
+    }
+
+    // MARK: - Day load
+
+    /// Commitment load for `day`'s awake window: wake + postWakeQuietMinutes
+    /// → bedtime − preBedtimeQuietMinutes, the same window the planners use
+    /// (their inline wake+30 / bed−60 literals mirror these constants).
+    /// `wake`/`bedtime` are clock-time Dates from `UserProfile`; only their
+    /// hour/minute components are read, so any `day` — today or a future
+    /// fire day — can be assessed. Returns nil when the window is invalid
+    /// (e.g. a past-midnight bedtime collapses it) — callers should fail
+    /// OPEN on nil rather than suppress.
+    func dayLoad(
+        on day: Date,
+        wake: Date,
+        bedtime: Date,
+        modelContext: ModelContext
+    ) -> DayLoad? {
+        let calendar = Calendar.current
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        let bedComps = calendar.dateComponents([.hour, .minute], from: bedtime)
+        var dayComps = calendar.dateComponents([.year, .month, .day], from: day)
+
+        dayComps.hour = wakeComps.hour
+        dayComps.minute = wakeComps.minute
+        guard let wakeOnDay = calendar.date(from: dayComps) else { return nil }
+        dayComps.hour = bedComps.hour
+        dayComps.minute = bedComps.minute
+        guard let bedOnDay = calendar.date(from: dayComps) else { return nil }
+
+        let start = wakeOnDay.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
+        let end = bedOnDay.addingTimeInterval(-Double(NudgeConfig.preBedtimeQuietMinutes) * 60)
+        guard end > start else { return nil }
+
+        let windows = busyWindows(from: start, to: end, modelContext: modelContext)
+        let busySeconds = windows.reduce(0.0) { total, window in
+            let overlapStart = max(window.start, start)
+            let overlapEnd = min(window.end, end)
+            return total + max(overlapEnd.timeIntervalSince(overlapStart), 0)
+        }
+        return DayLoad(
+            windowStart: start,
+            windowEnd: end,
+            busyMinutes: Int(busySeconds / 60)
+        )
     }
 
     // MARK: - Duration resolution

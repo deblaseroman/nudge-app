@@ -110,10 +110,11 @@ struct ContentView: View {
             guard let profile = currentProfile else { return }
             // Clear yesterday's events before anything else uses the event list.
             CalendarService.shared.purgePastEvents(modelContext: modelContext)
-            // Factual repeating notifications (bedtime planning + morning
-            // kickoff). Not part of the arbiter.
-            NotificationScheduler.shared.scheduleDailyNotifications(for: profile)
-            // Every other notification decision goes through the arbiter.
+            // Sweep the retired fixed daily notifications (pre-Jul-2026
+            // repeating requests that outlive the code that scheduled them).
+            NotificationScheduler.shared.cancelRetiredDailyNotifications()
+            // EVERY notification decision goes through the arbiter — the
+            // morning prompt included.
             NudgeArbiter.shared.reevaluate(
                 reason: .appLaunch,
                 profile: profile,
@@ -173,8 +174,11 @@ struct ContentView: View {
 
     /// Re-trigger notification scheduling whenever any field that affects
     /// notification timing OR per-kind enablement changes. Flipping any of
-    /// the consumed toggles in Settings should reflect immediately, so each
-    /// toggle is part of the token.
+    /// the consumed toggles in Settings should reflect promptly, so each
+    /// toggle is part of the token. (The reevaluate this drives uses a
+    /// time-triggered reason, so a toggle flip within the arbiter's 60s
+    /// debounce window lands on the next run — same latency as every other
+    /// arbiter toggle.)
     private var notificationToken: String {
         guard let profile = currentProfile else { return "no-profile" }
         return [
@@ -182,7 +186,6 @@ struct ContentView: View {
             (profile.wakeTime ?? profile.morningCheckInTime).timeIntervalSinceReferenceDate.description,
             profile.notificationsEnabled.description,
             profile.morningCheckInNotificationsEnabled.description,
-            profile.eveningCheckInNotificationsEnabled.description,
             profile.taskDueSoonNotificationsEnabled.description,
             profile.sessionStarterNotificationsEnabled.description,
             profile.deadlinePrepNotificationsEnabled.description

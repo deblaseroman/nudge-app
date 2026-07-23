@@ -76,14 +76,9 @@ struct SettingsTabView: View {
                     // toggles let the user opt out of just one kind without
                     // killing everything.
                     toggleSettingsRow(
-                        title: "Morning kickoff",
-                        subtitle: "A nudge 30 min after your wake time to build momentum.",
+                        title: "Morning prompt",
+                        subtitle: "Asks what you want to get done today, 30 min after wake. Skipped when your day is already packed.",
                         isOn: $profile.morningCheckInNotificationsEnabled
-                    )
-                    toggleSettingsRow(
-                        title: "Bedtime planning",
-                        subtitle: "A check-in 30 min before bed to plan tomorrow.",
-                        isOn: $profile.eveningCheckInNotificationsEnabled
                     )
                     toggleSettingsRow(
                         title: "Task due soon",

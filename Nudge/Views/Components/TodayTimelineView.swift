@@ -366,10 +366,11 @@ struct TodayTimelineView: View {
 
     private func markerLabel(_ kind: NudgeOutcomeKind) -> String {
         switch kind {
-        case .eventBlock:  return "event reminder"
-        case .idle:        return "check-in"
-        case .getAhead:    return "get ahead"
-        case .breakItDown: return "break it down"
+        case .eventBlock:    return "event reminder"
+        case .idle:          return "check-in"
+        case .getAhead:      return "get ahead"
+        case .breakItDown:   return "break it down"
+        case .morningPrompt: return "morning check-in"
         }
     }
 }

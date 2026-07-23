@@ -15,6 +15,10 @@ enum NudgeOutcomeKind: String, Codable {
     case idle
     case getAhead
     case breakItDown
+    /// Day-opening capture ask ("what do you want to get done today?").
+    /// Replaced the fixed NotificationScheduler morning kickoff when the
+    /// morning notification moved under the arbiter (Jul 2026).
+    case morningPrompt
 }
 
 enum NudgeOutcomeResult: String, Codable {

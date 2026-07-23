@@ -101,16 +101,17 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
 
         let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first
         if let profile {
-            // All notification decisions go through the arbiter.
+            // All notification decisions go through the arbiter — including
+            // the morning prompt, which is why this ~6 AM run matters: it
+            // reassesses today's day-load with the morning's data before
+            // the wake+30 fire time.
             NudgeArbiter.shared.reevaluate(
                 reason: .backgroundTask,
                 profile: profile,
                 modelContext: context
             )
-            // Keep the two repeating check-in notifications (bedtime planning
-            // + morning kickoff) — these aren't nudges, they're factual
-            // anchors and don't compete with the arbiter.
-            NotificationScheduler.shared.scheduleDailyNotifications(for: profile)
+            // Sweep the retired pre-Jul-2026 repeating daily notifications.
+            NotificationScheduler.shared.cancelRetiredDailyNotifications()
         }
         task.setTaskCompleted(success: true)
     }

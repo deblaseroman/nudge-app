@@ -236,12 +236,13 @@ final class NudgeArbiter: NudgeArbitering {
         // 1. Build candidate set
         var candidates: [NudgeCandidate] = []
         candidates.append(contentsOf: buildEventBlockCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildMorningPromptCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildIdleCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildGetAheadCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildFloaterCheckInCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildBreakItDownCandidates(profile: profile, modelContext: modelContext))
         #if DEBUG
-        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + idle + getAhead + floater + breakDown).")
+        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + getAhead + floater + breakDown).")
         #endif
 
         // 2. Run gates
@@ -487,6 +488,94 @@ final class NudgeArbiter: NudgeArbitering {
         case .personal, .errand, .other, .none:
             return "Event"
         }
+    }
+
+    /// Morning prompt — the day-opening capture ask ("what do you want to
+    /// get done today?"). Tapping it lands in the Home chat, where the
+    /// answer flows through the normal brain-dump capture. Replaces the
+    /// fixed `NotificationScheduler` morning kickoff so the decision runs
+    /// through the arbiter's declarative rebuild instead of a repeating
+    /// clock trigger that fires no matter what the day looks like.
+    ///
+    /// Budget-exempt like event blocks — it's the daily anchor, not a
+    /// discretionary nudge. That also means `passesGates` skips the shared
+    /// quiet-hours/busy gates for it (they're keyed on
+    /// `countsAgainstBudget`), so this builder does its own checks:
+    ///   1. Per-kind toggle (`morningCheckInNotificationsEnabled` — the
+    ///      same Settings switch that gated the old kickoff).
+    ///   2. Day-fullness: skip when the fire day's awake window is already
+    ///      ≥ `morningPromptBusyDayThreshold` committed to events — a
+    ///      packed day doesn't need an open-ended planning ask on top.
+    ///   3. Fire-moment: skip when the fire time itself lands inside a
+    ///      busy window (early class overlapping wake+30).
+    ///
+    /// Fire time is the end of the post-wake quiet period, today if still
+    /// ahead, else tomorrow — so after delivery the next reevaluate rolls
+    /// to tomorrow's stamp-dated ID and never re-fires today's. Suppression
+    /// is evaluated against the FIRE day, not "today": an evening
+    /// reevaluate assesses tomorrow with whatever events are known now,
+    /// and the 6 AM background task re-runs it with the morning's data.
+    private func buildMorningPromptCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.morningCheckInNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — morningCheckInNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        var todayComps = calendar.dateComponents([.year, .month, .day], from: Date())
+        todayComps.hour = wakeComps.hour
+        todayComps.minute = wakeComps.minute
+        guard let todaysWake = calendar.date(from: todayComps) else { return [] }
+
+        var fireDate = todaysWake.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
+        if fireDate <= Date() {
+            fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
+        }
+
+        if let load = BusyWindowResolver.shared.dayLoad(
+            on: fireDate,
+            wake: wake,
+            bedtime: profile.bedtime,
+            modelContext: modelContext
+        ), load.busyFraction >= NudgeConfig.morningPromptBusyDayThreshold {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — fire day is \(Int(load.busyFraction * 100))% committed (threshold \(Int(NudgeConfig.morningPromptBusyDayThreshold * 100))%).")
+            #endif
+            return []
+        }
+
+        if BusyWindowResolver.shared.isBusy(at: fireDate, modelContext: modelContext) {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — fire time \(fireDate) lands inside a busy window.")
+            #endif
+            return []
+        }
+
+        #if DEBUG
+        print("[NudgeArbiter] morning: OK — will schedule morning prompt at \(fireDate).")
+        #endif
+        return [NudgeCandidate(
+            id: "\(prefix)morning.\(stamp(calendar.startOfDay(for: fireDate)))",
+            kind: .morningPrompt,
+            fireDate: fireDate,
+            title: "Good morning",
+            body: "What do you want to get done today? Tell me and I'll set it up.",
+            categoryID: .morningPrompt,
+            interruption: .active,
+            taskID: nil,
+            tier: .normal,
+            urgency: 1.0,
+            importance: 1.0,
+            receptivity: 1.0,
+            countsAgainstBudget: false,
+            estimatedMinutes: nil
+        )]
     }
 
     /// Idle / paralysis nudge — fires at wake+idleThreshold and asks "Have
