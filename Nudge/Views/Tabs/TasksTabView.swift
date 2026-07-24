@@ -34,9 +34,10 @@ struct TasksTabView: View {
     #if DEBUG
     @State private var showDeleteAllAlert = false
     #endif
-    /// Events beyond the next two weeks are collapsed behind a "Show more"
-    /// button by default; this reveals them.
-    @State private var showAllEvents = false
+    /// Day-groups beyond the first `NudgeConfig.eventsExpandedDays` are
+    /// collapsed behind a "Show N more days" button by default; this reveals
+    /// them.
+    @State private var showAllEventDays = false
     /// Task proposed by the idle nudge's "Not yet" action. When non-nil
     /// we show `IdleStartConfirmationSheet` offering to start a session
     /// on this task with a "pick something else" escape hatch.
@@ -48,37 +49,98 @@ struct TasksTabView: View {
         tasks.filter { !$0.isInformationalEvent }
     }
 
+    /// Incomplete informational events, time-sorted. Completed events are
+    /// excluded to match the Calendar tab preview's `!isComplete` filter.
     private var eventItems: [NudgeTask] {
         tasks
-            .filter { $0.isInformationalEvent }
+            .filter { $0.isInformationalEvent && !$0.isComplete }
             .sorted { lhs, rhs in
                 (lhs.specificTime ?? lhs.dueDate ?? .distantFuture) < (rhs.specificTime ?? rhs.dueDate ?? .distantFuture)
             }
     }
 
-    /// Whole calendar days from today to an event's date. Dateless events
-    /// return 0 so they surface in the "upcoming" list — a dateless event
-    /// still needs a time, and its "needs a time" chip must be visible
-    /// rather than buried behind "Show more".
-    private func daysUntilEvent(_ task: NudgeTask) -> Int {
-        guard let anchor = task.specificTime ?? task.dueDate else { return 0 }
+    /// One calendar day's worth of events for the grouped Events section.
+    private struct EventDayGroup: Identifiable {
+        let day: Date
+        let events: [NudgeTask]
+        var id: Date { day }
+    }
+
+    /// Events bucketed by calendar day, each day time-ordered. Fully dateless
+    /// events (no dueDate and no specificTime) have no day of their own, so
+    /// they're parked under today — their "needs a time and date" chip stays
+    /// visible at the top of the list instead of vanishing, the same surfacing
+    /// the old flat list gave them.
+    private var eventDayGroups: [EventDayGroup] {
         let cal = Calendar.current
-        return cal.dateComponents(
-            [.day],
-            from: cal.startOfDay(for: Date()),
-            to: cal.startOfDay(for: anchor)
-        ).day ?? 0
+        let today = cal.startOfDay(for: Date())
+        let byDay = Dictionary(grouping: eventItems) { event -> Date in
+            guard let anchor = event.specificTime ?? event.dueDate else { return today }
+            return cal.startOfDay(for: anchor)
+        }
+        return byDay
+            .map { EventDayGroup(day: $0.key, events: $0.value.sorted(by: Self.eventsWithinDayOrder)) }
+            .sorted { $0.day < $1.day }
     }
 
-    /// Events within the next two weeks — always shown.
-    private var upcomingEvents: [NudgeTask] {
-        eventItems.filter { daysUntilEvent($0) <= 14 }
+    /// Within a day: untimed / "needs a time" events sort to the top, then
+    /// timed events in clock order. `nonisolated` because it's pure — it reads
+    /// only its two NudgeTask arguments and no main-actor state — so it can be
+    /// handed to the nonisolated `sorted(by:)` without crossing the actor.
+    private nonisolated static func eventsWithinDayOrder(_ lhs: NudgeTask, _ rhs: NudgeTask) -> Bool {
+        switch (lhs.specificTime, rhs.specificTime) {
+        case let (l?, r?): return l < r
+        case (nil, nil):   return lhs.title < rhs.title
+        case (nil, _):     return true
+        case (_, nil):     return false
+        }
     }
 
-    /// Events more than two weeks out — collapsed behind "Show more".
-    private var laterEvents: [NudgeTask] {
-        eventItems.filter { daysUntilEvent($0) > 14 }
+    /// Normalized titles appearing `routineEventRepeatThreshold`+ times among
+    /// the section's events — the repetition half of EventRowView's "routine"
+    /// de-emphasis. A row can't see its siblings, so this is computed here and
+    /// passed down per row. Counts the same set the section renders
+    /// (`eventItems`: incomplete informational events, expanded AND collapsed
+    /// days), the population the rule was validated against when chosen.
+    private var routineRepeatedTitles: Set<String> {
+        let counts = Dictionary(grouping: eventItems) {
+            Self.normalizedEventTitle($0.title)
+        }.mapValues(\.count)
+        return Set(
+            counts.filter { $0.value >= NudgeConfig.routineEventRepeatThreshold }.keys
+        )
     }
+
+    /// Trim + lowercase, the same normalization `CalendarService.isDuplicate`
+    /// uses — "CHEM 210 " and "chem 210" count as the same fixture.
+    /// `nonisolated` for the same reason as `eventsWithinDayOrder`: pure.
+    private nonisolated static func normalizedEventTitle(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// The first `eventsExpandedDays` day-groups — always shown.
+    private var expandedEventDays: [EventDayGroup] {
+        Array(eventDayGroups.prefix(NudgeConfig.eventsExpandedDays))
+    }
+
+    /// Day-groups past the expanded window — hidden behind "Show N more days".
+    private var collapsedEventDays: [EventDayGroup] {
+        Array(eventDayGroups.dropFirst(NudgeConfig.eventsExpandedDays))
+    }
+
+    /// Header for a day-group: "Today · Friday", "Tomorrow · Saturday", then
+    /// "Sunday, Jul 27" for everything further out.
+    private func eventDayHeader(for day: Date) -> String {
+        let cal = Calendar.current
+        let daysOut = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: day).day ?? 0
+        let weekday = day.formatted(.dateTime.weekday(.wide))
+        switch daysOut {
+        case 0:  return "Today · \(weekday)"
+        case 1:  return "Tomorrow · \(weekday)"
+        default: return "\(weekday), \(day.formatted(.dateTime.month(.abbreviated).day()))"
+        }
+    }
+
 
     /// Tasks shown in the main list — informational events excluded,
     /// completed tasks excluded, AND ordered-plan tasks excluded (those live
@@ -293,6 +355,12 @@ struct TasksTabView: View {
                             newTask.plannedStartDate = placeAt
                             pendingPlacementTime = nil
                         }
+                        // Hand-set stakes: write directly + flag as user-set
+                        // so no later automation pass overwrites it.
+                        if draft.stakesUserPicked, let picked = draft.stakes {
+                            newTask.stakes = picked
+                            newTask.stakesIsUserSet = true
+                        }
                         modelContext.insert(newTask)
                         try? modelContext.save()
                         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -313,6 +381,13 @@ struct TasksTabView: View {
                             task.dueDate = draft.dueDate
                             task.dueTime = draft.dueTimeLabel
                             task.specificTime = draft.specificTime
+                            // Hand-set stakes: write directly + flag as
+                            // user-set so no later automation pass overwrites
+                            // it. Only when a chip was actually tapped.
+                            if draft.stakesUserPicked, let picked = draft.stakes {
+                                task.stakes = picked
+                                task.stakesIsUserSet = true
+                            }
                             try? modelContext.save()
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
                             // Title may have changed — re-enrich once.
@@ -594,42 +669,34 @@ struct TasksTabView: View {
                         }
                     }
 
-                    if !eventItems.isEmpty {
+                    if !eventDayGroups.isEmpty {
                         sectionLabel("Events")
 
-                        VStack(spacing: 12) {
-                            ForEach(upcomingEvents, id: \.id) { event in
-                                EventRowView(
-                                    task: event,
-                                    onOpen: { activeSheet = .edit(taskID: event.id) },
-                                    onDelete: { deleteTask(event) },
-                                    onConvertToTask: { setEventFlag(event, isEvent: false) },
-                                    onSetTime: { setEventTime(event, to: $0) }
-                                )
+                        // Computed once per render, not once per row — the
+                        // repeat count scans every event.
+                        let routineTitles = routineRepeatedTitles
+
+                        VStack(alignment: .leading, spacing: 20) {
+                            ForEach(expandedEventDays) { group in
+                                eventDaySection(group, routineTitles: routineTitles)
                             }
 
-                            if showAllEvents {
-                                ForEach(laterEvents, id: \.id) { event in
-                                    EventRowView(
-                                        task: event,
-                                        onOpen: { activeSheet = .edit(taskID: event.id) },
-                                        onDelete: { deleteTask(event) },
-                                        onConvertToTask: { setEventFlag(event, isEvent: false) },
-                                        onSetTime: { setEventTime(event, to: $0) }
-                                    )
+                            if showAllEventDays {
+                                ForEach(collapsedEventDays) { group in
+                                    eventDaySection(group, routineTitles: routineTitles)
                                 }
                             }
 
-                            if !laterEvents.isEmpty {
+                            if !collapsedEventDays.isEmpty {
                                 Button {
                                     NudgeHaptics.light()
                                     withAnimation(NudgeAnimation.standard) {
-                                        showAllEvents.toggle()
+                                        showAllEventDays.toggle()
                                     }
                                 } label: {
-                                    Text(showAllEvents
-                                         ? "Show fewer events"
-                                         : "Show \(laterEvents.count) more event\(laterEvents.count == 1 ? "" : "s")")
+                                    Text(showAllEventDays
+                                         ? "Show fewer days"
+                                         : "Show \(collapsedEventDays.count) more day\(collapsedEventDays.count == 1 ? "" : "s")")
                                         .font(.custom(NudgeTheme.fontMedium, size: 14))
                                         .foregroundColor(NudgeTheme.primary)
                                         .frame(maxWidth: .infinity)
@@ -1257,7 +1324,9 @@ struct TasksTabView: View {
                                     Text(task.title)
                                         .font(.custom(NudgeTheme.fontMedium, size: 15))
                                         .foregroundColor(NudgeTheme.textPrimary)
-                                    Text(task.priority.capitalized)
+                                    // Importance (stakes), one channel app-wide.
+                                    // "—" when unclassified (nil stakes).
+                                    Text(task.stakes?.rawValue.capitalized ?? "—")
                                         .font(.custom(NudgeTheme.fontBody, size: 12))
                                         .foregroundColor(NudgeTheme.textMuted)
                                 }
@@ -1322,10 +1391,71 @@ struct TasksTabView: View {
         showSessionTaskPicker = true
     }
 
+    /// One day's section in the Events list: a day header over that day's
+    /// event rows. The header is the quietest text layer (muted), so the rows
+    /// — and their high-stakes emphasis — carry the visual weight.
+    @ViewBuilder
+    private func eventDaySection(_ group: EventDayGroup, routineTitles: Set<String>) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(eventDayHeader(for: group.day))
+                .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                .foregroundColor(NudgeTheme.textMuted)
+
+            VStack(spacing: 12) {
+                ForEach(group.events, id: \.id) { event in
+                    EventRowView(
+                        task: event,
+                        titleRepeatsAsRoutine: routineTitles.contains(
+                            Self.normalizedEventTitle(event.title)
+                        ),
+                        onOpen: { activeSheet = .edit(taskID: event.id) },
+                        onDelete: { deleteTask(event) },
+                        onConvertToTask: { setEventFlag(event, isEvent: false) },
+                        onSetTime: { setEventTime(event, to: $0) }
+                    )
+                }
+            }
+        }
+    }
+
     private func sectionLabel(_ title: String) -> some View {
         Text(title)
             .font(.custom(NudgeTheme.fontSemiBold, size: 18))
             .foregroundColor(NudgeTheme.textPrimary)
+    }
+}
+
+// MARK: - Shared stakes row styling
+//
+// The high-stakes visual treatment shared by task and event rows: the amber
+// "High" pill and the semibold title weight. Task rows layer their own
+// time-pressure states (overdue / approaching / sitting) on top; event rows
+// use ONLY these two, because those time states are task concepts.
+
+/// Amber "High" importance pill. Shared so a high-stakes item reads identically
+/// whether it's a task or an event. Callers guard on stakes/completion; this is
+/// purely the pill's appearance. Its text is folded into the row title's
+/// VoiceOver label, so it stays hidden from the a11y tree here.
+struct HighStakesPill: View {
+    var body: some View {
+        Text("High")
+            .font(.custom(NudgeTheme.fontSemiBold, size: 11))
+            .foregroundColor(NudgeTheme.amber)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(NudgeTheme.amber.opacity(0.15))
+            .clipShape(Capsule())
+            .accessibilityHidden(true)
+    }
+}
+
+enum StakesRowStyle {
+    /// Semibold title when the row is high-stakes, else the normal medium
+    /// weight. Task rows pass their calm high-stakes state (the weight bump is
+    /// suppressed under time pressure, where color carries the signal); event
+    /// rows pass the event's stakes directly.
+    static func titleFontName(isHighStakes: Bool) -> String {
+        isHighStakes ? NudgeTheme.fontSemiBold : NudgeTheme.fontMedium
     }
 }
 
@@ -1367,23 +1497,25 @@ struct TaskRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack(alignment: .leading) {
                     Text(task.title)
-                        .font(.custom(NudgeTheme.fontMedium, size: 15))
+                        .font(.custom(titleFontName, size: 15))
                         .foregroundColor(NudgeTheme.textPrimary)
                         .strikethrough(task.isComplete, color: NudgeTheme.textMuted)
+                        .accessibilityLabel(titleAccessibilityLabel)
 
                     if task.isComplete {
                         AnimatedStrikethrough(isVisible: $task.isComplete)
                     }
                 }
 
-                // Subtitle slot — "12 hours left" / "5 days away" / "3 hours ago".
-                // Hidden for far-future and at night so the row stays calm
-                // when there's no time pressure to communicate.
-                if let dueDate = task.specificTime ?? task.dueDate,
-                   let remaining = CountdownState.remainingLine(dueDate: dueDate, now: CountdownClock.shared.now) {
-                    Text(remaining)
+                // Subtitle slot — the remaining-time line ("12 hours left" /
+                // "5 days away"), recolored coral when the deadline is
+                // approaching, or the amber "Sitting N days" line for aging
+                // low-stakes floaters. Nil ⇒ no subtitle, so calm rows stay
+                // exactly as before.
+                if let subtitle {
+                    Text(subtitle.text)
                         .font(.custom(NudgeTheme.fontBody, size: 12))
-                        .foregroundColor(NudgeTheme.textSecondary)
+                        .foregroundColor(subtitle.color)
                 }
             }
 
@@ -1397,7 +1529,7 @@ struct TaskRowView: View {
                ) {
                 Text(dueLine)
                     .font(.custom(NudgeTheme.fontBody, size: 12))
-                    .foregroundColor(NudgeTheme.textMuted)
+                    .foregroundColor(rowTreatment == .overdue ? NudgeTheme.overdue : NudgeTheme.textMuted)
             }
 
             // One-tap "this is actually an event" correction.
@@ -1425,9 +1557,25 @@ struct TaskRowView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            // Stakes importance badge. Last element so it sits flush at the
+            // trailing edge and aligns vertically down the list. Amber in
+            // every row state — importance is constant; the row's time
+            // colors move independently. Its text is folded into the title's
+            // VoiceOver label, so it's hidden from the a11y tree here.
+            if task.stakes == .high, !task.isComplete {
+                HighStakesPill()
+            }
         }
         .padding(16)
-        .background(NudgeTheme.surface)
+        .background(rowBackground)
+        // Leading stakes/time bar. Added before the clip so its outer
+        // corners round with the card; clear (absent) for calm + sitting.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(stakesBarColor ?? .clear)
+                .frame(width: 4)
+        }
         .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
         .overlay(
             RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
@@ -1438,15 +1586,143 @@ struct TaskRowView: View {
         .onTapGesture(perform: onOpen)
     }
 
+    /// Leading importance dot. Reads STAKES (not priority) so importance is
+    /// one channel app-wide — same mapping as the session picker's dot.
     private var priorityColor: Color {
-        switch task.priority {
-        case "high":
+        switch task.stakes {
+        case .high:
             return NudgeTheme.primary
-        case "medium":
+        case .medium:
             return NudgeTheme.textMuted.opacity(0.6)
-        default:
+        case .low, .none:
             return NudgeTheme.textMuted
         }
+    }
+
+    // MARK: - Stakes row treatment (display only)
+    //
+    // First match wins. Time-pressure states (overdue, approaching) outrank
+    // the calm high-stakes state. The amber "High" pill and the leading dot
+    // are computed separately and do NOT depend on this — importance shows
+    // regardless of which time state the row is in.
+
+    private enum StakesRowTreatment: Equatable {
+        case overdue                // stakes medium|high AND past deadline
+        case approaching            // stakes high AND deadline within N days
+        case highStakes             // stakes high, no time pressure
+        case sitting(days: Int)     // stakes low, undated, aging
+        case none
+    }
+
+    private var rowTreatment: StakesRowTreatment {
+        // A finished task needs no flagging. Returning .none keeps completed
+        // rows exactly as today — no bar, tint, weight bump, or subtitle
+        // change — and (with the pill's own guard) no pill either.
+        guard !task.isComplete else { return .none }
+
+        let stakes = task.stakes
+        // Overdue is a factual state, so everything past due reads
+        // overdue-red EXCEPT deliberately low-stakes tasks, which we protect
+        // from red. nil (unclassified) is not low, so it still shows overdue.
+        if task.isOverdue, stakes != .low {
+            return .overdue
+        }
+        if stakes == .high, isApproaching {
+            return .approaching
+        }
+        if stakes == .high {
+            return .highStakes
+        }
+        if stakes == .low,
+           task.dueDate == nil, task.specificTime == nil,
+           let days = daysSitting, days >= NudgeConfig.stakesSittingDays {
+            return .sitting(days: days)
+        }
+        return .none
+    }
+
+    /// "Approaching" = deadline within `stakesApproachingDays` calendar days,
+    /// measured off `sortDeadline`. Deliberately a plain day count and NOT
+    /// the EisenhowerScorer urgency curve: that curve is a function of slack
+    /// (hoursUntilDue − effortHoursRemaining), so a fixed urgency value maps
+    /// to a different day count per task and can't express a clean "3 days."
+    /// Keeping this off the curve also keeps the display fully independent of
+    /// scoring — the entire reason stakes exists as its own signal.
+    private var isApproaching: Bool {
+        let deadline = task.sortDeadline
+        guard deadline != .distantFuture else { return false }
+        let now = CountdownClock.shared.now
+        let window = Double(NudgeConfig.stakesApproachingDays) * 86_400
+        return deadline > now && deadline <= now.addingTimeInterval(window)
+    }
+
+    private var daysSitting: Int? {
+        Calendar.current.dateComponents(
+            [.day], from: task.createdAt, to: CountdownClock.shared.now
+        ).day
+    }
+
+    /// Card fill. Tinted only for the two time-pressure states; every other
+    /// state keeps today's `surface`, so non-special rows are unchanged.
+    private var rowBackground: Color {
+        switch rowTreatment {
+        case .overdue:     return NudgeTheme.overdue.opacity(0.12)
+        case .approaching: return NudgeTheme.coral.opacity(0.12)
+        default:           return NudgeTheme.surface
+        }
+    }
+
+    /// Leading edge bar. Amber for calm high-stakes; the time colors when
+    /// the row is under time pressure; absent otherwise (sitting shows only
+    /// its subtitle, no bar).
+    private var stakesBarColor: Color? {
+        switch rowTreatment {
+        case .overdue:        return NudgeTheme.overdue
+        case .approaching:    return NudgeTheme.coral
+        case .highStakes:     return NudgeTheme.amber
+        case .sitting, .none: return nil
+        }
+    }
+
+    /// Title weight bumps only in the calm high-stakes state. Under time
+    /// pressure the row color carries the signal and the title stays as-is;
+    /// non-high rows keep today's weight exactly.
+    private var titleFontName: String {
+        StakesRowStyle.titleFontName(isHighStakes: rowTreatment == .highStakes)
+    }
+
+    /// Subtitle under the title. Returns today's remaining-time line for
+    /// normal rows (unchanged), recolors it coral when approaching, and
+    /// substitutes the amber "Sitting N days" line for the sitting state
+    /// (which has no deadline, hence no remaining-time line of its own).
+    private var subtitle: (text: String, color: Color)? {
+        if case .sitting(let days) = rowTreatment {
+            return ("Sitting \(days) day\(days == 1 ? "" : "s")", NudgeTheme.amber)
+        }
+        if let dueDate = task.specificTime ?? task.dueDate,
+           let remaining = CountdownState.remainingLine(
+               dueDate: dueDate, now: CountdownClock.shared.now
+           ) {
+            let color = (rowTreatment == .approaching)
+                ? NudgeTheme.coral : NudgeTheme.textSecondary
+            return (remaining, color)
+        }
+        return nil
+    }
+
+    /// VoiceOver label for the title element. Adds stakes + state words on
+    /// high-stakes and overdue rows (the two the spec calls out); other rows
+    /// keep just the title, and the sitting subtitle is already spoken as
+    /// its own text element.
+    private var titleAccessibilityLabel: String {
+        var parts = [task.title]
+        if task.stakes == .high, !task.isComplete { parts.append("High stakes") }
+        switch rowTreatment {
+        case .overdue:     parts.append("overdue")
+        case .approaching: parts.append("due soon")
+        default:           break
+        }
+        return parts.joined(separator: ", ")
     }
 
     /// Picks the leading word for the CountdownLabel based on what the task
@@ -1469,6 +1745,11 @@ struct TaskRowView: View {
 
 struct EventRowView: View {
     let task: NudgeTask
+    /// True when this event's normalized title appears
+    /// `NudgeConfig.routineEventRepeatThreshold`+ times among the section's
+    /// events — computed by the parent, since a row can't see its siblings.
+    /// The repetition half of `isRoutine` below.
+    var titleRepeatsAsRoutine: Bool = false
     /// Tap opens the editor (where the user can reschedule the date/time or
     /// delete). Defaulted so existing previews / call sites still compile.
     var onOpen: () -> Void = {}
@@ -1497,19 +1778,68 @@ struct EventRowView: View {
         needsDate ? "needs a time and date" : "needs a time"
     }
 
+    // MARK: - Stakes display (parity with TaskRowView)
+    //
+    // Events borrow only the two importance channels from the task row — the
+    // amber "High" pill and the semibold title weight. The time-pressure
+    // states (overdue / approaching / sitting) are deliberately absent: an
+    // event isn't "completed" or "overdue," the user just shows up.
+
+    /// High-stakes events get the pill + heavier title, exactly like tasks.
+    private var isHighStakes: Bool { task.stakes == .high }
+
+    /// "Routine" = a recurring fixture, not a notable commitment: the title
+    /// repeats `routineEventRepeatThreshold`+ times (≈ weekly-or-denser within
+    /// the 21-day window), stakes below high, already timed (so it isn't the
+    /// attention-needing "needs a time" case), and not a work shift — the
+    /// `.work` carve-out is insurance so repeated shifts keep full weight.
+    /// Repetition was chosen over source-keyed dimming after a real-data
+    /// comparison: it catches typed AND imported class meetings; source
+    /// caught only imported ones. These render in a lighter title and quieter
+    /// icon so exams and needs-a-time events carry the weight in each day.
+    private var isRoutine: Bool {
+        titleRepeatsAsRoutine
+            && task.stakes != .high
+            && !needsTime
+            && task.taskCategory != .work
+    }
+
+    private var titleFontName: String {
+        StakesRowStyle.titleFontName(isHighStakes: isHighStakes)
+    }
+
+    private var titleColor: Color {
+        isRoutine ? NudgeTheme.textSecondary : NudgeTheme.textPrimary
+    }
+
+    private var iconColor: Color {
+        isRoutine ? NudgeTheme.textMuted : NudgeTheme.primary
+    }
+
+    private var iconBackground: Color {
+        isRoutine ? NudgeTheme.surfaceAlt : NudgeTheme.primary.opacity(0.12)
+    }
+
+    /// Folds "High stakes" into the title's VoiceOver label, mirroring
+    /// TaskRowView so the hidden pill's meaning is still announced.
+    private var titleAccessibilityLabel: String {
+        isHighStakes ? "\(task.title), High stakes" : task.title
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: task.specificTime == nil ? "calendar" : "calendar.badge.clock")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(NudgeTheme.primary)
+                .foregroundColor(iconColor)
                 .frame(width: 28, height: 28)
-                .background(NudgeTheme.primary.opacity(0.12))
+                .background(iconBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(task.title)
-                    .font(.custom(NudgeTheme.fontMedium, size: 15))
-                    .foregroundColor(NudgeTheme.textPrimary)
+                    .font(.custom(titleFontName, size: 15))
+                    .foregroundColor(titleColor)
+                    .accessibilityLabel(titleAccessibilityLabel)
 
                 // Events use their own timing phrasing (Today / Tomorrow /
                 // In N days, date / date) — NOT the task-style "hours left /
@@ -1572,6 +1902,13 @@ struct EventRowView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+
+            // High-stakes importance pill — parity with task rows. Last in the
+            // row so it sits flush at the trailing edge; hidden from a11y since
+            // its text is folded into the title's VoiceOver label.
+            if isHighStakes {
+                HighStakesPill()
+            }
         }
         .padding(16)
         .background(NudgeTheme.surface)
@@ -1733,11 +2070,11 @@ struct TaskEditorSheet: View {
                         .datePickerStyle(.compact)
                     }
 
-                    editorSection(title: "Priority") {
+                    editorSection(title: "Importance") {
                         HStack(spacing: 10) {
-                            priorityChip(title: "High", value: "high")
-                            priorityChip(title: "Medium", value: "medium")
-                            priorityChip(title: "Low", value: "low")
+                            stakesChip(title: "High", value: .high)
+                            stakesChip(title: "Medium", value: .medium)
+                            stakesChip(title: "Low", value: .low)
                         }
                     }
 
@@ -1832,17 +2169,23 @@ struct TaskEditorSheet: View {
         }
     }
 
-    private func priorityChip(title: String, value: String) -> some View {
-        Button(action: {
+    /// Stakes selector chip. Writes `draft.stakes` and flags the choice as
+    /// user-made so the save path can set `stakesIsUserSet` (which makes
+    /// `setStakesFromAutomation` a no-op on the row thereafter). Priority is
+    /// no longer surfaced or edited here; it stays in the model untouched.
+    private func stakesChip(title: String, value: TaskStakes) -> some View {
+        let isSelected = draft.stakes == value
+        return Button(action: {
             NudgeHaptics.light()
-            draft.priority = value
+            draft.stakes = value
+            draft.stakesUserPicked = true
         }) {
             Text(title)
                 .font(.custom(NudgeTheme.fontMedium, size: 13))
-                .foregroundColor(draft.priority == value ? .white : NudgeTheme.textPrimary)
+                .foregroundColor(isSelected ? .white : NudgeTheme.textPrimary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(draft.priority == value ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
+                .background(isSelected ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
                 .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
         }
     }
@@ -1872,6 +2215,10 @@ struct TaskEditorSheet: View {
             dueDate: task.dueDate,
             specificTime: task.specificTime
         )
+        // Show the task's current stakes selected, WITHOUT marking it a fresh
+        // user choice — only tapping a chip sets stakesUserPicked, so simply
+        // opening + saving a row can't lock an automation-set value.
+        draft.stakes = task.stakes
         // Explicit enrichment trigger. The `suggestedFirstStep` getter is
         // now a pure read (it used to kick off a refresh on cache miss);
         // opening the editor is the moment to (re)analyze so the suggestion
@@ -1968,11 +2315,13 @@ struct SessionTaskPickerSheet: View {
         }
     }
 
+    /// Leading importance dot — reads STAKES (not priority), matching
+    /// TaskRowView so importance is one channel app-wide.
     private func priorityColor(_ task: NudgeTask) -> Color {
-        switch task.priority {
-        case "high", "urgent": return NudgeTheme.primary
-        case "medium": return NudgeTheme.textMuted.opacity(0.6)
-        default: return NudgeTheme.textMuted
+        switch task.stakes {
+        case .high: return NudgeTheme.primary
+        case .medium: return NudgeTheme.textMuted.opacity(0.6)
+        case .low, .none: return NudgeTheme.textMuted
         }
     }
 
@@ -2084,6 +2433,12 @@ struct WeeklyCompletedSheet: View {
 struct TaskDraft {
     var title = ""
     var priority = "medium"
+    /// User-chosen stakes. Populated from the task on edit so the current
+    /// value shows selected, but a save only writes it when the user
+    /// actually tapped a chip (`stakesUserPicked`) — opening a row and
+    /// saving without touching stakes must not lock an automation-set value.
+    var stakes: TaskStakes? = nil
+    var stakesUserPicked = false
     var dueDate: Date? = nil
     var specificTime: Date? = nil
 

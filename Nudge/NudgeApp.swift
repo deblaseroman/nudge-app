@@ -61,6 +61,15 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
             StakesBackfill.shared.runIfNeeded()
         }
 
+        // ⚠️ TEMP-STAKES-DUMP — remove after verifying capture-assigned
+        // stakes. Grep the tag to delete every trace (this block + the
+        // method below).
+        #if DEBUG
+        Task { @MainActor in
+            Self.tempDumpAllTaskStakes()
+        }
+        #endif
+
         return true
     }
 
@@ -123,6 +132,31 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         }
         task.setTaskCompleted(success: true)
     }
+
+    // ⚠️ TEMP-STAKES-DUMP — remove after verifying capture-assigned stakes.
+    // Prints every NudgeTask at launch so we can eyeball what stakes freshly
+    // captured tasks receive. The StakesBackfill dry-run table excludes them
+    // by design (they're neither nil-stakes nor calendar rows), so this is
+    // the only place we see the capture flow's own output. Sorted by source
+    // so capture / calendar / manual rows cluster. Grep "TEMP-STAKES-DUMP".
+    #if DEBUG
+    @MainActor
+    static func tempDumpAllTaskStakes() {
+        let context = SharedModelContainer.container.mainContext
+        let tasks = ((try? context.fetch(FetchDescriptor<NudgeTask>())) ?? [])
+            .sorted { ($0.source, $0.title) < ($1.source, $1.title) }
+        print("\n── TEMP-STAKES-DUMP · \(tasks.count) task(s) ──────────────────────")
+        for t in tasks {
+            let userSet = t.stakesIsUserSet ? " (user-set)" : ""
+            print("  stakes=\(t.stakes?.rawValue ?? "nil")\(userSet)"
+                + "\tsrc=\(t.source)"
+                + "\tcat=\(t.category ?? "nil")"
+                + "\tpri=\(t.priority)"
+                + "\t\(t.title)")
+        }
+        print("── TEMP-STAKES-DUMP end ───────────────────────────────────────\n")
+    }
+    #endif
 }
 
 @main

@@ -202,4 +202,40 @@ enum NudgeConfig {
     /// only — if the limit is still hot, the pass abandons and runs again
     /// on a later launch.
     static let stakesBackfillRateLimitBackoffSeconds: Double = 5.0
+
+    // MARK: - Stakes row display
+    //
+    // DISPLAY-ONLY thresholds for the task list's stakes treatments. They
+    // drive row color/emphasis in `TaskRowView` and nothing else — no
+    // scoring, ranking, gating, or notification decision reads them. Kept
+    // here only because the app's convention is that every tunable lives in
+    // NudgeConfig.
+
+    /// A high-stakes task whose deadline falls within this many days reads
+    /// as "approaching" (coral row). Pure calendar proximity measured off
+    /// `NudgeTask.sortDeadline` — deliberately NOT the EisenhowerScorer
+    /// urgency curve, which folds in remaining effort and so can't express a
+    /// clean day count. Keeping it off the curve also keeps display fully
+    /// independent of scoring.
+    static let stakesApproachingDays: Int = 3
+
+    /// A low-stakes, undated task older than this many days reads as
+    /// "sitting" — a faint amber "Sitting N days" subtitle, no bar or tint.
+    static let stakesSittingDays: Int = 7
+
+    // MARK: - Events section display
+    //
+    // DISPLAY-ONLY. Drives how the Tasks tab's Events section groups rows into
+    // days and how many day-groups it shows before collapsing the rest. No
+    // scoring, gating, import, or notification decision reads it.
+
+    /// Number of upcoming day-groups the Events section shows expanded; the
+    /// remaining days collapse behind a single "Show N more days" control.
+    static let eventsExpandedDays: Int = 3
+
+    /// An event whose normalized title appears this many-or-more times among
+    /// the section's events reads as a routine fixture (class meeting,
+    /// standing appointment) and renders de-emphasized in EventRowView.
+    /// With the 21-day calendar window, 3 ≈ "weekly or more frequent."
+    static let routineEventRepeatThreshold: Int = 3
 }

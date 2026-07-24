@@ -33,6 +33,13 @@ struct NudgeTheme {
     /// Soft coral used for countdown urgency indicators. Calmer than red —
     /// signals attention without screaming.
     static let coral = Color(hex: "#FF7F50")
+    /// Amber for the STAKES / importance channel — the "High" pill and the
+    /// high-stakes left bar in the task list. Deliberately its own hue,
+    /// distinct from `coral` and `overdue`, which both track TIME pressure
+    /// (approaching / overdue). Stakes is importance and stays constant
+    /// while a row's time colors change, so it must not share their red
+    /// family — that separation is the whole point of the signal.
+    static let amber = Color(hex: "#C98A1F")
 
     // MARK: - Border
     static let border = Color(hex: "#7E8780").opacity(0.22)
