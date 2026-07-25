@@ -409,11 +409,16 @@ final class NudgeArbiter: NudgeArbitering {
                 let firstID = firstEvent?.id.uuidString ?? UUID().uuidString
                 let candidateID = "\(prefix)event.\(stamp(day)).\(firstID)"
 
-                // Skip if we already scheduled this event-block reminder
-                // today. The marker means cancelAll wiped the pending
-                // request (because it was already delivered) and we
-                // shouldn't re-add a duplicate.
-                if eventReminderHistory[candidateID] != nil { continue }
+                // Skip only if this block's reminder was already DELIVERED
+                // (stored fire time in the past) — re-adding it would
+                // duplicate-fire via the ASAP fallback above. A marker with
+                // a future fire time means cancelAll wiped a still-PENDING
+                // request at the start of this reevaluate; that candidate
+                // must be rebuilt, or the reminder never fires at all.
+                if let markedFire = eventReminderHistory[candidateID],
+                   Date(timeIntervalSinceReferenceDate: markedFire) <= now {
+                    continue
+                }
 
                 let body = NudgeArbiter.eventBlockBody(block: block)
                 let tier = tier(for: firstEvent, fireDate: fireDate)
