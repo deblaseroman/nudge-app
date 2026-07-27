@@ -68,15 +68,25 @@ struct ContentView: View {
             guard let deepLink = DeepLink(url: url) else { return }
             switch deepLink {
             case .startSession:
-                // Widget-driven auto-start. Pick the highest-priority/most-
-                // overdue incomplete task and kick off a session immediately.
+                // Widget-driven auto-start. Pick the same task the rest of the
+                // app calls "next" and kick off a session immediately.
                 if !SessionCoordinator.shared.isSessionActive,
                    let profile = currentProfile {
-                    let comparator = TaskSortComparator()
-                    let pick = tasks
+                    let open = tasks
                         .filter { !$0.isInformationalEvent && !$0.isComplete }
-                        .sorted { comparator.compare($0, $1) }
-                        .first
+                    // If the user has an ordered plan today, its NEXT item
+                    // (lowest sequenceIndex) is the answer to "what should I
+                    // start?" — prefer it over pure score, matching
+                    // NudgeNotificationService.pickTopOpenTask and the widget's
+                    // own display order. Sorting by score alone started a
+                    // different task than the widget was showing.
+                    let comparator = TaskSortComparator()
+                    let pick = open
+                        .filter { $0.sequenceIndex != nil }
+                        .min { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
+                        ?? open
+                            .sorted { comparator.compare($0, $1) }
+                            .first
                     if let task = pick {
                         SessionCoordinator.shared.startSession(
                             task: task,
