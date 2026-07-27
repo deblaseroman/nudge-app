@@ -231,6 +231,26 @@ final class SessionCoordinator {
         sessionEnd = .distantPast
         sessionStartedAt = nil
         publishSessionState(isActive: false, currentTaskID: nil, timerEndDate: nil)
+
+        // Re-run the arbiter now that the session is over. Without this the
+        // active-session gate keeps rejecting every candidate until the next
+        // foreground reevaluation, so an abandoned session silently suppressed
+        // all nudges. Must come AFTER `isSessionActive = false` — the gate
+        // reads that flag live.
+        reevaluateAfterSessionEnd()
+    }
+
+    /// Fires a `.sessionEnded` arbiter pass. Callers must have already cleared
+    /// `isSessionActive`, since `passesGates` reads it directly.
+    private func reevaluateAfterSessionEnd() {
+        let context = ModelContext(SharedModelContainer.container)
+        guard let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first
+        else { return }
+        NudgeArbiter.shared.reevaluate(
+            reason: .sessionEnded,
+            profile: profile,
+            modelContext: context
+        )
     }
 
     // MARK: - Private
@@ -258,9 +278,16 @@ final class SessionCoordinator {
         publishSessionState(isActive: false, currentTaskID: nil, timerEndDate: nil)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.isSessionActive = false
-            self?.currentTask = nil
-            self?.sessionState = .active
+            guard let self else { return }
+            self.isSessionActive = false
+            self.currentTask = nil
+            self.sessionState = .active
+            // Deliberately inside the deferred block, not at the end of
+            // finishSession: `isSessionActive` stays true for these 3 seconds
+            // (the completion card animates out), and the arbiter's gate reads
+            // it live. Reevaluating any earlier would gate-reject every
+            // candidate and leave the same stale state this fixes.
+            self.reevaluateAfterSessionEnd()
         }
     }
 
