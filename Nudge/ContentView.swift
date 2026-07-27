@@ -33,6 +33,7 @@ struct ContentView: View {
             ensureProfileExists()
             EngagementTracker.shared.recordAppOpen(modelContext: modelContext)
             EngagementTracker.shared.updateInactivityState(modelContext: modelContext)
+            recordForegroundAndClassifyOutcomes()
         }
         .onReceive(
             // `.receive(on: DispatchQueue.main)` is the canonical Combine
@@ -145,6 +146,11 @@ struct ContentView: View {
             // can't run code while the app is suspended.
             CalendarService.shared.purgePastEvents(modelContext: modelContext)
 
+            // Stamp the foreground and resolve any delivered-but-unanswered
+            // nudges. `.onAppear` above covers cold launch; this covers
+            // background → foreground, which nothing recorded before.
+            recordForegroundAndClassifyOutcomes()
+
             // Every notification decision flows through the arbiter.
             NudgeArbiter.shared.reevaluate(
                 reason: .sceneActive,
@@ -190,6 +196,25 @@ struct ContentView: View {
             profile.sessionStarterNotificationsEnabled.description,
             profile.deadlinePrepNotificationsEnabled.description
         ].joined(separator: "-")
+    }
+
+    /// Foreground bookkeeping for the outcome-recording loop: stamp the
+    /// open into `AppOpenLog`, then classify every delivered nudge whose
+    /// response window has closed.
+    ///
+    /// Record-then-classify is safe in that order because
+    /// `outcomeClassificationGraceMinutes` > `outcomeActionWindowMinutes`:
+    /// every window being judged is already closed, so THIS open can never
+    /// be counted as engagement with a row it's classifying.
+    ///
+    /// Independent of the arbiter's reevaluate — `cancelAll` no longer
+    /// touches past-due pending rows, so neither ordering can lose data.
+    private func recordForegroundAndClassifyOutcomes() {
+        AppOpenLog.record()
+        NudgeOutcomeClassifier.shared.classifyPending(modelContext: modelContext)
+        #if DEBUG
+        NudgeOutcomeClassifier.shared.debugDumpRecentOutcomes(modelContext: modelContext)
+        #endif
     }
 
     /// Creates a default UserProfile if none exists

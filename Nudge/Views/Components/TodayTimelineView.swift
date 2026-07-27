@@ -73,7 +73,9 @@ struct TodayTimelineView: View {
     private let markerTop: CGFloat = 112
     private let totalHeight: CGFloat = 156
     private let defaultTaskMinutes = 30
-    private let defaultEventMinutes = 60
+    /// Same fallback the busy gate uses — an inline 60 here was a second
+    /// copy of the constant the two would have had to keep in sync by hand.
+    private let defaultEventMinutes = NudgeConfig.defaultEventDurationMinutes
 
     // MARK: - Time window
 
@@ -144,9 +146,24 @@ struct TodayTimelineView: View {
         }
     }
 
+    /// Event duration, mirroring `BusyWindowResolver.resolveDurationMinutes`
+    /// step for step: explicit `estimatedMinutes` (written by the calendar /
+    /// screenshot import from the event's real end time), then the learned
+    /// `EventDurationStats` row, then the shared default.
+    ///
+    /// The order is load-bearing, not incidental. This view and the busy
+    /// gate must not disagree about how long an event is — a three-hour lab
+    /// drawn 60 minutes wide while the arbiter suppresses nudges across the
+    /// full three hours reads as a bug in whichever one the user checks
+    /// second. If you change the resolution order in one place, change it
+    /// in the other.
     private func eventMinutes(for task: NudgeTask) -> Int {
+        if let explicit = task.estimatedMinutes, explicit > 0 { return explicit }
         let key = EventDurationStats.normalize(task.title)
-        return eventDurations.first(where: { $0.titleKey == key })?.durationMinutes ?? defaultEventMinutes
+        if let learned = eventDurations.first(where: { $0.titleKey == key }) {
+            return learned.durationMinutes
+        }
+        return defaultEventMinutes
     }
 
     private func taskMinutes(for task: NudgeTask) -> Int {

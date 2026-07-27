@@ -304,43 +304,63 @@ final class NudgeArbiter: NudgeArbitering {
             eventReminderHistory = pruned
         }
 
-        // Also drop any pending NudgeOutcome audit rows from previous runs
-        // so per-task fatigue and stats don't inflate over time.
-        let descriptor = FetchDescriptor<NudgeOutcome>(
-            predicate: #Predicate<NudgeOutcome> { $0.resultRaw == "pending" }
+        // Pending NudgeOutcome rows split into two populations, and only
+        // ONE of them is garbage. This used to delete both, which is why
+        // `.ignored` had no writer and the fatigue gate could never trip:
+        // the evidence was destroyed on the very next reevaluate, minutes
+        // after the notification went out.
+        //
+        //   • fireDate in the FUTURE — the request we removed above was
+        //     still pending with the OS, so it never reached the user. The
+        //     row is an artifact of this rebuild and is deleted here; the
+        //     rebuild below re-inserts a row for whatever it schedules.
+        //     This is what keeps the declarative rebuild honest — the set
+        //     of future pending rows always mirrors the set of scheduled
+        //     notifications, exactly as before.
+        //
+        //   • fireDate in the PAST — the OS already DELIVERED this
+        //     notification and the user simply hasn't answered it. This row
+        //     is the only record that the nudge happened, so it survives
+        //     until `NudgeOutcomeClassifier` resolves it into
+        //     acted / engaged / ignored once the grace period elapses.
+        //     (A tap resolves it sooner, via the delegate.)
+        let now = Date()
+        let futurePendingDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> {
+                $0.resultRaw == "pending" && $0.scheduledFor > now
+            }
         )
-        if let pending = try? modelContext.fetch(descriptor), !pending.isEmpty {
-            for row in pending { modelContext.delete(row) }
+        if let futurePending = try? modelContext.fetch(futurePendingDescriptor),
+           !futurePending.isEmpty {
+            for row in futurePending { modelContext.delete(row) }
             try? modelContext.save()
         }
 
-        // Prune ACTED-UPON outcomes older than the 14-day fatigue window.
-        // Without this, every `.tappedStart` / `.tappedSnooze` /
-        // `.tappedBreakDown` / `.ignored` / `.dismissed` row persisted
-        // forever (only `.pending` was cleaned above), so the database
-        // grew monotonically and `buildBreakItDownCandidates` /
-        // `taskFatigueCount` reloaded ever-larger result sets into the
-        // shared SwiftData identity map on every reevaluate. This was
-        // a confirmed contributor to the rapid-cycling memory jetsam.
+        // Prune outcomes older than the 14-day fatigue window. Without
+        // this, every resolved row persisted forever, so the database grew
+        // monotonically and `buildBreakItDownCandidates` / `taskFatigueCount`
+        // reloaded ever-larger result sets into the shared SwiftData
+        // identity map on every reevaluate. This was a confirmed
+        // contributor to the rapid-cycling memory jetsam.
         //
         // Cleanup rule (chosen to keep fatigue tracking correct):
         //   - Cutoff: 14 days ago (same window the fatigue fetch uses).
-        //   - Delete: any non-pending outcome with `scheduledFor` older
-        //     than the cutoff.
-        //   - Keep: ALL outcomes within the last 14 days (so the
-        //     per-task ignored/dismissed counters in
-        //     `buildBreakItDownCandidates` see complete recent history)
-        //     AND all `pending` rows regardless of age (those are
-        //     managed by the block above).
+        //   - Delete: ANY outcome with `scheduledFor` older than the
+        //     cutoff, pending included. Pending is no longer excluded
+        //     because past-due pending rows now SURVIVE the block above —
+        //     without this they'd be the one population with no ceiling.
+        //     In practice the classifier resolves them within 90 minutes;
+        //     this is the backstop for rows that somehow never got swept.
+        //   - Keep: ALL outcomes within the last 14 days, so the per-task
+        //     counters in `buildBreakItDownCandidates` see complete recent
+        //     history.
         //
         // Uses `delete(model:where:)` so rows are removed by predicate
         // without first loading them into the context.
         let staleCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
         try? modelContext.delete(
             model: NudgeOutcome.self,
-            where: #Predicate<NudgeOutcome> {
-                $0.scheduledFor < staleCutoff && $0.resultRaw != "pending"
-            }
+            where: #Predicate<NudgeOutcome> { $0.scheduledFor < staleCutoff }
         )
         try? modelContext.save()
 
@@ -962,6 +982,17 @@ final class NudgeArbiter: NudgeArbitering {
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
+        // Break-it-down is the OTHER half of the fatigue system: it fires
+        // precisely when a task crosses `perTaskMaxNudges` ignored nudges.
+        // Same kill switch as the gate in `passesGates` — with real
+        // `.ignored` rows now being written, this builder would otherwise
+        // start firing a notification kind that has never fired before.
+        guard NudgeConfig.fatigueGateEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] breakDown: SKIP — fatigueGateEnabled is off (recording outcomes only).")
+            #endif
+            return []
+        }
         guard profile.deadlinePrepNotificationsEnabled else { return [] }
         // Scope to the fatigue window — fetching every NudgeOutcome ever
         // recorded grew the shared SwiftData identity map unboundedly on
@@ -1082,7 +1113,14 @@ final class NudgeArbiter: NudgeArbitering {
         // times without action, suppress further pushes for it. The break-
         // it-down offer is the only candidate that's still allowed for that
         // task at that point.
-        if candidate.kind != .breakItDown,
+        //
+        // GATED OFF (`NudgeConfig.fatigueGateEnabled`). The outcome
+        // classifier now writes real `.ignored` rows, which this predicate
+        // already matches — so without the flag, landing the classifier
+        // would have immediately changed which notifications fire. The
+        // recorded classifications get observed first.
+        if NudgeConfig.fatigueGateEnabled,
+           candidate.kind != .breakItDown,
            let taskID = candidate.taskID,
            taskFatigueCount(taskID: taskID, context: context) >= NudgeConfig.perTaskMaxNudges {
             return false

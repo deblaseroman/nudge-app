@@ -73,11 +73,24 @@ enum NudgeNotificationCategories {
             options: [.foreground]
         )
 
+        // `.customDismissAction` on EVERY category. Without it iOS never
+        // delivers `UNNotificationDismissActionIdentifier`, so the
+        // delegate's `.dismissed` branch — which has existed all along —
+        // was dead code and `NudgeOutcome.dismissed` was unreachable.
+        // An explicit swipe-away is a much stronger negative signal than
+        // "the app wasn't opened", and it's the only one the user makes
+        // deliberately, so it's worth capturing distinctly rather than
+        // letting the classifier fold it into `.ignored`.
+        //
+        // Recording only: nothing reads `.dismissed` while
+        // `NudgeConfig.fatigueGateEnabled` is off.
+        let dismissible: UNNotificationCategoryOptions = [.customDismissAction]
+
         let eventBlock = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.eventBlock.rawValue,
             actions: [startSession],
             intentIdentifiers: [],
-            options: []
+            options: dismissible
         )
         // Idle is now a "Checking in" yes/no question — the old start/
         // snooze/break-down trio was assumptive ("you've done nothing").
@@ -86,25 +99,25 @@ enum NudgeNotificationCategories {
             identifier: NudgeNotificationCategoryID.idle.rawValue,
             actions: [idleYesGood, idleNotYet],
             intentIdentifiers: [],
-            options: []
+            options: dismissible
         )
         let getAhead = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.getAhead.rawValue,
             actions: [startSession, snooze30, breakItDown],
             intentIdentifiers: [],
-            options: []
+            options: dismissible
         )
         let breakDown = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.breakDown.rawValue,
             actions: [breakItDown, snooze30],
             intentIdentifiers: [],
-            options: []
+            options: dismissible
         )
         let morningPrompt = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.morningPrompt.rawValue,
             actions: [],
             intentIdentifiers: [],
-            options: []
+            options: dismissible
         )
 
         UNUserNotificationCenter.current().setNotificationCategories([

@@ -27,7 +27,24 @@ enum NudgeOutcomeResult: String, Codable {
     case tappedSnooze     // user tapped "Snooze 30 min"
     case tappedBreakDown  // user tapped "Break it down"
     case dismissed        // user explicitly cleared the notification
-    case ignored          // notification was delivered but no action taken
+    case ignored          // delivered, app never opened in the response window
+
+    // ── Swept results (written by `NudgeOutcomeClassifier`) ──────────────
+    // The `tapped*` cases above are written by the notification delegate
+    // and mean "the user touched the notification itself". These two are
+    // inferred AFTER the fact, from what the user did in the app, for rows
+    // the delegate never heard about. Additive on purpose — no existing
+    // case changed meaning.
+
+    /// Delivered, not tapped, but the user did the thing it asked for
+    /// inside the response window (started a session, completed the task,
+    /// or — for the morning prompt — captured something).
+    case acted
+
+    /// Delivered, not tapped; the user opened the app inside the response
+    /// window but did not do the thing. The interesting middle case:
+    /// the nudge reached them and moved them, just not to the action.
+    case engaged
 }
 
 @Model
@@ -40,6 +57,12 @@ final class NudgeOutcome {
     var scheduledFor: Date
     var firedAt: Date?
     var actedAt: Date?
+
+    /// When `NudgeOutcomeClassifier` resolved this row out of `pending`.
+    /// Nil for rows the notification delegate answered directly (a tap
+    /// stamps `actedAt` instead) and for rows still awaiting the sweep.
+    /// Additive optional — existing rows migrate as nil.
+    var classifiedAt: Date?
 
     /// What `DurationModel.estimate` thought the task would take when the
     /// nudge was scheduled. Lets us compare predicted vs actual after the

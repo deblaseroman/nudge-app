@@ -10,17 +10,17 @@ This is a map, not documentation — read the files for detail.
 3. **SwiftData** — parsed items persist as `@Model`s (`NudgeTask`, `UserProfile`, `NudgeOutcome`, …) in the app-group container from `SharedModelContainer`.
 4. **Enrichment** — `NudgeIntelligence` caches per-task AI signals (`TaskIntelligence`); `TasksTabView.planMyDay()` (deterministic) or `DayPlanRefiner` (AI) place tasks onto today's timeline.
 5. **Arbiter** — on data change / foreground, `NudgeArbiter.reevaluate` reads the data, applies gates (`BusyWindowResolver`, `NudgeConfig`), and decides which notifications should exist.
-6. **Notifications** — `NudgeArbiter` registers every `UNNotificationRequest` (categories from `NudgeNotificationCategories`), the morning prompt included; `NudgeNotificationService` handles taps/actions and writes back `NudgeOutcome`.
+6. **Notifications** — `NudgeArbiter` registers every `UNNotificationRequest` (categories from `NudgeNotificationCategories`), the morning prompt included; `NudgeNotificationService` handles taps/actions/dismissals and writes back `NudgeOutcome`. Nudges the user never touches are resolved later by `NudgeOutcomeClassifier` on foreground.
 7. **Sessions** — `SessionCoordinator` runs focus sessions and drives `LiveActivityManager` (Live Activity).
 8. **Widgets** — the widget extension reads the shared store and renders task/companion widgets + Live Activities; App Intents write back completions.
-9. **Feedback loop** — `NudgeOutcome` (tapped/ignored) and `CategoryDurationStats` feed future scoring/estimates.
+9. **Feedback loop** — `NudgeOutcome` (tapped / dismissed / acted / engaged / ignored) and `CategoryDurationStats` feed future scoring/estimates. **The outcome half is RECORDING ONLY right now**: `NudgeConfig.fatigueGateEnabled` is `false`, so neither the per-task fatigue gate nor the break-it-down builder reads the data it collects.
 10. **Reevaluation is data-driven** — UI never schedules notifications directly; it mutates data and calls the arbiter.
 
 ---
 
 ## Cross-cutting invariants
 
-Three things you cannot reconstruct by reading any single file. Read these first.
+Four things you cannot reconstruct by reading any single file. Read these first.
 
 ### 1. Ordered plans: stated order outranks Eisenhower score
 
@@ -78,12 +78,44 @@ per-file `membershipExceptions` list in `project.pbxproj` ("Exceptions for
 widget until added to that list — the failure mode is a widget-only build
 error naming the missing type.
 
+### 4. NudgeOutcome lifecycle: `cancelAll` keeps past-due pending rows
+
+`NudgeArbiter.cancelAll` runs on **every** reevaluate and used to delete
+every `pending` outcome row. That destroyed the record of a delivered
+notification minutes after it fired — which is why `.ignored` had no
+writer anywhere and the fatigue gate could never trip. The rule now
+splits on the fire time:
+
+| `scheduledFor` | `cancelAll` | Why |
+|---|---|---|
+| **future** | deleted | The request it mirrors was still pending with the OS and was just removed. Deleting keeps the declarative rebuild honest: future pending rows always mirror the currently-scheduled set. |
+| **past** | **kept** | The OS already delivered it. This row is the only evidence the nudge happened; `NudgeOutcomeClassifier` resolves it. |
+| older than 14 days | deleted (any result, pending included) | Backstop so retained pending rows can't accumulate without a ceiling. |
+
+A row leaves `pending` by one of two paths:
+
+- **synchronously**, via `NudgeNotificationService` — the user tapped an
+  action, tapped the body, or swiped it away (`.tapped*` / `.dismissed`).
+- **later**, via `NudgeOutcomeClassifier` on foreground — for rows the
+  user never touched. Grace period elapsed → look at the response window
+  `[fireDate, fireDate + outcomeActionWindowMinutes]` → `.acted` (did the
+  thing) / `.engaged` (opened the app, didn't) / `.ignored` (never opened).
+
+`outcomeClassificationGraceMinutes` **must stay greater than**
+`outcomeActionWindowMinutes`: that's what guarantees every window being
+judged is already closed, so the foreground that runs the sweep can't be
+counted as engagement with the row it's classifying.
+
+Because past-due rows survive, one `notificationID` can match more than
+one row (break-it-down's ID has no day stamp). The delegate resolves this
+by taking the newest still-pending match.
+
 ---
 
 ## App entry & root views
 
 - `Nudge/NudgeApp.swift` — `@main` App: builds the SwiftData container, sets the notification delegate, registers background refresh, kicks off `StakesBackfill`. Hosts `ContentView`.
-- `Nudge/ContentView.swift` — Root router (onboarding vs `MainTabView`); handles deep links, scene-phase, and the debounced `NudgeArbiter.reevaluate`.
+- `Nudge/ContentView.swift` — Root router (onboarding vs `MainTabView`); handles deep links, scene-phase, the debounced `NudgeArbiter.reevaluate`, and `recordForegroundAndClassifyOutcomes()` (`AppOpenLog` stamp → `NudgeOutcomeClassifier` sweep → DEBUG dump) on both cold launch and foreground.
 - `Nudge/Views/Tabs/MainTabView.swift` — Tab shell owning `selectedTab`; reacts to `deepLinkTab` to switch tabs from notification taps.
 - `Nudge/NudgeTheme.swift` — Central colors + Lexend fonts; used by every view.
 - `Nudge/NudgeFeedback.swift` — Haptics (`NudgeHaptics`), animation constants (`NudgeAnimation`), AND the completion-effect visual system: `TaskCompletionEffect`, `CheckboxBounceEffect`, `AnimatedStrikethrough`, `ParticleBurstView`, exposed as `.taskCompletionEffect(isComplete:)` / `.checkboxBounce(isComplete:)`. Used by task rows and timeline blocks.
@@ -123,7 +155,7 @@ error naming the missing type.
 - `Nudge/Views/Components/AppTabBar.swift` — Custom floating tab bar; morphs into a send button via `ChatComposerStore`.
 - `Nudge/Views/Components/CountdownLabel.swift` — Task deadline display + `CountdownState` (pure countdown/urgency/date-line + event-line logic); used by task/event rows and the timeline.
 - `Nudge/Views/Components/ScreenHeader.swift` — Reusable tab header (title + subtitle).
-- `Nudge/Views/Components/TodayTimelineView.swift` — Horizontal day timeline (events, placed tasks, notification markers, now-line); reads SwiftData, calls back into `TasksTabView` for open/place/**complete** (long-press a placed block completes it via `.taskCompletionEffect`; tap still opens — simultaneous gestures). Blocks are `Button`s and the empty-space tap gesture sits on the *container*, because a parent gesture is lower priority than the child buttons. Its `@Query`s are **bounded in a custom `init`** (tasks capped 300; outcomes predicated to `resultRaw == "pending"`, capped 60): *"This view is ALWAYS mounted in the Tasks tab and re-reads on every 60s clock tick, so unbounded `@Query` here fetches the full task/outcome history into the main context on a hot path."*
+- `Nudge/Views/Components/TodayTimelineView.swift` — Horizontal day timeline (events, placed tasks, notification markers, now-line); reads SwiftData, calls back into `TasksTabView` for open/place/**complete** (long-press a placed block completes it via `.taskCompletionEffect`; tap still opens — simultaneous gestures). Blocks are `Button`s and the empty-space tap gesture sits on the *container*, because a parent gesture is lower priority than the child buttons. Its `@Query`s are **bounded in a custom `init`** (tasks capped 300; outcomes predicated to `resultRaw == "pending"`, capped 60): *"This view is ALWAYS mounted in the Tasks tab and re-reads on every 60s clock tick, so unbounded `@Query` here fetches the full task/outcome history into the main context on a hot path."* `eventMinutes` **mirrors `BusyWindowResolver.resolveDurationMinutes` step for step** (explicit `estimatedMinutes` → learned `EventDurationStats` → `NudgeConfig.defaultEventDurationMinutes`) — the drawn block and the arbiter's busy window must agree on an event's length; change the order in one and change it in the other.
 
 ## Services
 
@@ -140,8 +172,10 @@ error naming the missing type.
 - `Nudge/Services/DayPlanner.swift` — **Dead code.** Referenced by zero call sites; only two stale comments elsewhere still name it (`TaskActivityAttributes.swift`, `TaskLiveActivityView.swift`). The real deterministic planner is `TasksTabView.planMyDay()`.
 - `Nudge/Services/NotificationScheduler.swift` — **Retired as a scheduler** (Jul 2026): bedtime planning removed, morning kickoff reborn as the arbiter's morning prompt. What remains: `lastFocusSessionStartedAtKey` (shared UserDefaults key SessionCoordinator writes / arbiter reads) and `cancelRetiredDailyNotifications()` — one-time sweep of the old `nudge.daily.*` REPEATING requests, which outlive the code that scheduled them and which the arbiter's `nudge.arb.`-scoped cancel never touches. Do not add scheduling back here.
 - `Nudge/Services/NudgeNotificationService.swift` — `UNUserNotificationCenterDelegate`: handles taps/actions, routes to tabs/sheets, writes `NudgeOutcome`. `pickTopOpenTask` prefers the **plan's next item** over score. The idle-"Not yet" intent is made durable by writing `pendingIdleTaskIDKey`/`pendingIdleTaskDateKey` to the app group (consumed by `TasksTabView` on appear/active) because *"The transient `.nudgeIdleNotYetTapped` post is only caught if TasksTabView is already mounted and subscribed — which it is NOT on a COLD LAUNCH from the notification tap."*
-- `Nudge/Services/NudgeNotificationCategories.swift` — Defines `UNNotificationCategory` + action buttons used by every arbiter notification.
-- `Nudge/Services/CalendarService.swift` — Apple Calendar / Canvas iCal import into `NudgeTask` events; rolling-window sync + past-event purge. Stamps deterministic stakes at import (`inferStakes`: keyword scan via `isHighPriorityEvent`, then category ladder) — synchronous and offline on purpose; no Claude call.
+- `Nudge/Services/NudgeNotificationCategories.swift` — Defines `UNNotificationCategory` + action buttons used by every arbiter notification. Every category carries `.customDismissAction`, without which iOS never delivers `UNNotificationDismissActionIdentifier` and the delegate's long-standing `.dismissed` branch is dead code.
+- `Nudge/Services/NudgeOutcomeClassifier.swift` — The launch/scene-active sweep that resolves delivered-but-untouched `NudgeOutcome` rows into `.acted` / `.engaged` / `.ignored` (see Cross-cutting invariant 4). Also owns the DEBUG 7-day outcome dump. Recording only — `NudgeConfig.fatigueGateEnabled` decides whether anything consumes it. Driven from `ContentView.recordForegroundAndClassifyOutcomes()`.
+- `Nudge/Services/AppOpenLog.swift` — Capped, self-pruning array of app-foreground timestamps in App Group `UserDefaults`. Exists solely so the classifier can answer "was the app open during *this* window". Deliberately NOT a `@Model` (would be a fourth hand-synced schema list + a fetch on the foreground hot path) and deliberately not `EngagementState`, whose `lastAppOpenDate` is a single overwritten value and whose `preferredHours` carries no dates. Written from both `ContentView.onAppear` and the scene-active handler; opens within 60s collapse.
+- `Nudge/Services/CalendarService.swift` — Apple Calendar / Canvas iCal import into `NudgeTask` events; rolling-window sync + past-event purge. Stamps deterministic stakes at import (`inferStakes`: keyword scan via `isHighPriorityEvent`, then category ladder) — synchronous and offline on purpose; no Claude call. Also stamps the event's **real duration** into `estimatedMinutes` via `importedDurationMinutes` (end − start, capped at `NudgeConfig.maxImportedEventDurationMinutes`, nil for all-day / zero-length) — before this, every imported event landed with no duration and `BusyWindowResolver` read a three-hour lab as 60 minutes busy.
 - `Nudge/Services/ScreenshotCalendarImporter.swift` — Vision OCR → `ClaudeService` → `NudgeTask` events from a schedule screenshot.
 - `Nudge/Services/StakesBackfill.swift` — One-shot repair of the stakes signal on EXISTING rows, kicked off fire-and-forget from `NudgeApp`'s delegate. Two populations, both excluding completed rows: `stakesRaw == nil` (never classified) and `source == "calendar"` (stamped by `CalendarService.inferStakes`, whose category ladder sends anything non-school to "low" — a flight or a visa deadline reads as low stakes). Never touches `stakesIsUserSet` rows; every write goes through `setStakesFromAutomation`. Dedupes titles via `EventDurationStats.normalize` before classifying, so ~100 rows collapse to ~15 titles = one chunked `ClaudeService.classifyStakes` call. **Atomic**: all titles are classified before anything is written, and any failure (no API key, offline, a 429 surviving its one backoff retry, mangled JSON) abandons the pass having written nothing — stakes is an enhancement, never a blocker. `Mode` is the stage switch: `.dryRun` prints a per-row table to the DEBUG console and writes nothing at all (including the completion marker, so it repeats freely); `.apply` writes and records `nudge.stakesBackfill.completedVersion` in the app group. Scope boundary: calendar events imported *after* a successful pass still get the deterministic `inferStakes` value.
 - `Nudge/Services/SessionCoordinator.swift` — Runs a single focus session (state, timers, widget publish); drives `LiveActivityManager`, calls the arbiter.
@@ -159,7 +193,7 @@ error naming the missing type.
 
 - `Nudge/Models/NudgeTask.swift` — Core task/event record (title, due, category, `isInformationalEvent`); the central entity most services read/write. Two independent scheduling concepts live here: **placement** — `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto` (a slot on today's timeline; `plannedIsAuto` distinguishes "Plan my day" placements from manual ones, so `clearPlan()` can remove only the auto ones) — and **plan order** — `sequenceIndex` (see Cross-cutting invariant 1). Neither implies the other, and neither touches `dueDate`/`specificTime`, which remain the deadline. Also carries the canonical stakes signal — `stakesRaw`/`stakes` + `stakesIsUserSet`; every non-user writer must go through `setStakesFromAutomation` (deliberately absent from the init), which refuses to overwrite a hand-set value.
 - `Nudge/Models/UserProfile.swift` — User settings/preferences (wake/bedtime, toggles, Pro/trial); read by arbiter, scheduler, tabs.
-- `Nudge/Models/NudgeOutcome.swift` — Audit log of each emitted notification and the user's response; feeds fatigue/scoring.
+- `Nudge/Models/NudgeOutcome.swift` — Audit log of each emitted notification and the user's response. `result` is written by two different owners with two different lifetimes — see Cross-cutting invariant 4 for which, and for what `cancelAll` does and doesn't delete.
 - `Nudge/Models/TaskIntelligence.swift` — Cached AI signals per task (statedUrgency, suggestedFirstStep); written by `NudgeIntelligence`.
 - `Nudge/Models/StatedUrgency.swift` — Enum (none/explicit) for language-derived urgency.
 - `Nudge/Models/TaskCategory.swift` — Enum of task categories + helpers used across scoring/config.

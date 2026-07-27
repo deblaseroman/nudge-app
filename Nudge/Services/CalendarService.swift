@@ -262,6 +262,11 @@ final class CalendarService {
                 priority: "medium",
                 category: category,
                 source: "calendar",
+                estimatedMinutes: importedDurationMinutes(
+                    start: event.startDate,
+                    end: event.endDate,
+                    isAllDay: event.isAllDay
+                ),
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
             task.setStakesFromAutomation(inferStakes(title: title, category: category))
@@ -348,6 +353,11 @@ final class CalendarService {
                 priority: inferPriorityFromCanvas(title: title),
                 category: "school",
                 source: "calendar",
+                estimatedMinutes: importedDurationMinutes(
+                    start: startDate,
+                    end: event.endDate,
+                    isAllDay: event.isAllDay
+                ),
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
             task.setStakesFromAutomation(inferStakes(title: title, category: "school"))
@@ -362,6 +372,35 @@ final class CalendarService {
 
         lastImportError = nil
         return CalendarImportResult(importedCount: importedCount, skippedDuplicates: skippedDuplicates, errors: [])
+    }
+
+    // MARK: - Imported duration
+
+    /// Real duration for an imported event, taken from the end time both
+    /// import paths already have and used to throw away. Without this,
+    /// every imported event arrived with `estimatedMinutes == nil` and
+    /// `BusyWindowResolver` fell back to `defaultEventDurationMinutes` —
+    /// a three-hour lab and a six-hour shift both read as 60 minutes busy.
+    ///
+    /// Returns nil (leaving the old fallback in place) when:
+    ///   - the event is all-day — it has no `specificTime`, so the busy
+    ///     gate never asks about it in the first place;
+    ///   - there is no end time;
+    ///   - the span is zero or negative — an iCal deadline entry where
+    ///     DTEND == DTSTART carries no duration information at all, and
+    ///     writing 0 would be read as "unset" downstream anyway
+    ///     (`BusyWindowResolver` requires `explicit > 0`).
+    ///
+    /// Capped at `NudgeConfig.maxImportedEventDurationMinutes`.
+    private func importedDurationMinutes(
+        start: Date,
+        end: Date?,
+        isAllDay: Bool
+    ) -> Int? {
+        guard !isAllDay, let end else { return nil }
+        let minutes = Int(end.timeIntervalSince(start) / 60)
+        guard minutes > 0 else { return nil }
+        return min(minutes, NudgeConfig.maxImportedEventDurationMinutes)
     }
 
     // MARK: - Deduplication

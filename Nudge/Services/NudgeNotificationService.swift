@@ -157,10 +157,20 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
         let context = ModelContext(SharedModelContainer.container)
 
         // Resolve outcome row up-front so every branch can update it.
-        let outcomeDescriptor = FetchDescriptor<NudgeOutcome>(
-            predicate: #Predicate<NudgeOutcome> { $0.notificationID == notificationID }
+        //
+        // A notification ID can now match MORE than one row: `cancelAll`
+        // retains pending rows whose fire time has already passed (they're
+        // awaiting classification), so a rebuilt candidate that reuses its
+        // ID — break-it-down keys on task ID alone, with no day stamp —
+        // can insert a second row alongside the delivered one. Take the
+        // newest still-pending row, falling back to the newest row at all.
+        var outcomeDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> { $0.notificationID == notificationID },
+            sortBy: [SortDescriptor(\.scheduledFor, order: .reverse)]
         )
-        let outcome = (try? context.fetch(outcomeDescriptor))?.first
+        outcomeDescriptor.fetchLimit = 10
+        let matches = (try? context.fetch(outcomeDescriptor)) ?? []
+        let outcome = matches.first(where: { $0.resultRaw == "pending" }) ?? matches.first
 
         switch actionID {
         case UNNotificationDismissActionIdentifier:

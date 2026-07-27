@@ -39,6 +39,19 @@ enum NudgeConfig {
     /// a break-it-down offer (or back off entirely).
     static let perTaskMaxNudges: Int = 3
 
+    /// MASTER SWITCH for everything that ACTS on `NudgeOutcome` history:
+    /// the per-task fatigue gate in `NudgeArbiter.passesGates` and the
+    /// `buildBreakItDownCandidates` builder that fires once a task crosses
+    /// `perTaskMaxNudges`.
+    ///
+    /// Deliberately OFF. `NudgeOutcomeClassifier` now writes real `.ignored`
+    /// rows, which the fatigue predicates already match — so leaving this
+    /// implicit ("the data just happens not to line up yet") would have
+    /// silently changed which notifications fire the moment the sweep
+    /// landed. An explicit flag keeps both consumers readable and armed by
+    /// a one-word diff once the recorded classifications have been reviewed.
+    static let fatigueGateEnabled: Bool = false
+
     // MARK: - Quiet hours
     /// No discretionary nudges before this many minutes after wake.
     /// (Lets the user actually wake up before being pestered.)
@@ -55,6 +68,33 @@ enum NudgeConfig {
     /// bed−quiet) is already committed to events. A day that's half booked
     /// doesn't need an open-ended planning ask on top.
     static let morningPromptBusyDayThreshold: Double = 0.5
+
+    // MARK: - Outcome classification
+    //
+    // Drives `NudgeOutcomeClassifier`, the launch/foreground sweep that
+    // turns delivered-but-unanswered `NudgeOutcome` rows into
+    // acted / engaged / ignored. Recording only — `fatigueGateEnabled`
+    // above decides whether anything acts on the result.
+
+    /// How long after a nudge's fire time the sweep waits before judging it.
+    /// MUST stay greater than `outcomeActionWindowMinutes`: that guarantees
+    /// the response window is already closed when we classify, so the very
+    /// app-open that runs the sweep can never count as engagement with the
+    /// row it is classifying.
+    static let outcomeClassificationGraceMinutes: Int = 90
+
+    /// The response window a delivered nudge gets. An app open, a session
+    /// start, or the task action itself inside
+    /// [fireDate, fireDate + this] is attributed to the nudge.
+    static let outcomeActionWindowMinutes: Int = 60
+
+    /// How long `AppOpenLog` keeps foreground timestamps. Matches the
+    /// 14-day fatigue window — nothing looks further back than that.
+    static let appOpenLogRetentionDays: Int = 14
+
+    /// Hard cap on stored app-open timestamps regardless of age, so a heavy
+    /// user can't grow the shared-defaults array without bound.
+    static let appOpenLogMaxEntries: Int = 400
 
     // MARK: - Cache lifetimes
     /// TaskIntelligence is re-analyzed if older than this many days.
@@ -159,6 +199,15 @@ enum NudgeConfig {
     /// Capture flow (step 6) will ask the user instead of guessing, but
     /// this keeps the gate safe in the meantime.
     static let defaultEventDurationMinutes: Int = 60
+
+    /// Upper bound on the duration a calendar / iCal import may write to
+    /// `NudgeTask.estimatedMinutes`. Real end times are honored up to this
+    /// cap; anything longer is almost always a multi-day span entered as a
+    /// single timed event, and letting that through would turn the busy
+    /// gate into a multi-day notification blackout — strictly worse than
+    /// the 60-minute guess it replaced. 12h covers a double shift and every
+    /// realistic single-day commitment.
+    static let maxImportedEventDurationMinutes: Int = 12 * 60
 
     // MARK: - StartByPlanner
     //
