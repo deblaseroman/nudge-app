@@ -98,6 +98,27 @@ struct SettingsTabView: View {
                 }
 
                 settingsCard(title: "Calendar source", value: profile.calendarSource.isEmpty ? "Not connected yet" : profile.calendarSource)
+
+                #if DEBUG
+                // Debug builds only — stripped from Release. Nothing in the
+                // shipping app writes `isPro` or `trialStartDate` yet, so the
+                // `isPro || isInTrial` gate on AI Refine (DayPlanRefiner,
+                // TasksTabView, HomeTabView) is unreachable without these.
+                // Remove once real entitlement logic exists.
+                settingsSection(title: "Debug — entitlements") {
+                    toggleSettingsRow(
+                        title: "Pro access",
+                        subtitle: "Sets profile.isPro. Unlocks AI Refine in the Tasks tab and “plan my day” in Home chat.",
+                        isOn: $profile.isPro
+                    )
+                    toggleSettingsRow(
+                        title: "14-day trial",
+                        subtitle: "Sets trialStartDate to now (clearing it turns the trial off). Expires 14 days after the date it writes.",
+                        isOn: debugTrialBinding
+                    )
+                    settingsCard(title: "Entitlement now", value: debugEntitlementSummary)
+                }
+                #endif
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -302,6 +323,27 @@ struct SettingsTabView: View {
     private func persistSettings() {
         try? modelContext.save()
     }
+
+    #if DEBUG
+    /// `trialStartDate` is a `Date?`, so it needs a derived Bool binding to
+    /// drive a toggle. Reads back through `isInTrial` rather than a plain
+    /// nil-check so a stale (>14 day old) start date shows as off, matching
+    /// what the gate actually sees.
+    private var debugTrialBinding: Binding<Bool> {
+        Binding(
+            get: { profile.isInTrial },
+            set: { profile.trialStartDate = $0 ? Date() : nil }
+        )
+    }
+
+    /// Mirrors the `isPro || isInTrial` expression the gates evaluate, so the
+    /// row shows why AI Refine is on or off right now.
+    private var debugEntitlementSummary: String {
+        if profile.isPro { return "Pro — AI Refine unlocked" }
+        if profile.isInTrial { return "Trial — AI Refine unlocked" }
+        return "Free — AI Refine gated"
+    }
+    #endif
 }
 
 // MARK: - Time Setting Sheet
