@@ -205,7 +205,15 @@ struct ContentView: View {
             profile.taskDueSoonNotificationsEnabled.description,
             profile.sessionStarterNotificationsEnabled.description,
             profile.deadlinePrepNotificationsEnabled.description,
-            profile.floaterCheckInNotificationsEnabled.description
+            profile.floaterCheckInNotificationsEnabled.description,
+            // Quiet hours. All three, not just the toggle: with custom hours
+            // active, moving a time is the whole change and the toggle never
+            // moves — a token that only watched the switch would leave the
+            // gate running on the old window until something else happened
+            // to trigger a reevaluate.
+            profile.quietHoursFollowSleepSchedule.description,
+            profile.quietHoursStartTime?.timeIntervalSinceReferenceDate.description ?? "nil",
+            profile.quietHoursEndTime?.timeIntervalSinceReferenceDate.description ?? "nil"
         ].joined(separator: "-")
     }
 

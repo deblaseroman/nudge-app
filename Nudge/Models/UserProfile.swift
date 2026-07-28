@@ -54,6 +54,38 @@ final class UserProfile {
     /// row. Not a build error. Keep the default here, not just in `init`.
     var floaterCheckInNotificationsEnabled: Bool = true
 
+    // MARK: - Quiet hours
+    //
+    // "When do I not want to be interrupted?" — deliberately SEPARATE from
+    // the sleep schedule. `insideAwakeWindow` used to derive quiet hours
+    // from `bedtime`/`wakeTime` directly, which conflated two different
+    // things: a student with an 11pm bedtime who studies until 12:30 got
+    // nothing after 10pm, the exact hours they were working.
+    //
+    // PROPERTY-LEVEL DEFAULTS, for the same reason as
+    // `floaterCheckInNotificationsEnabled` above — no VersionedSchema here,
+    // so a defaultless non-optional attribute fails at LAUNCH on an
+    // existing store, not at build.
+
+    /// When true (the default, and where every pre-existing store lands),
+    /// quiet hours are derived from the sleep schedule exactly as before:
+    /// `bedtime − preBedtimeQuietMinutes` → `wakeTime + postWakeQuietMinutes`.
+    /// Behavior is unchanged for anyone who never touches the setting.
+    var quietHoursFollowSleepSchedule: Bool = true
+
+    /// Clock time quiet hours BEGIN. Only hour/minute are read; the date
+    /// component is meaningless. Consumed only when
+    /// `quietHoursFollowSleepSchedule` is false — and if either this or
+    /// `quietHoursEndTime` is nil, the resolver falls back to the derived
+    /// window rather than guessing.
+    var quietHoursStartTime: Date? = nil
+
+    /// Clock time quiet hours END. Same reading rules as
+    /// `quietHoursStartTime`. May be numerically LESS than the start (the
+    /// normal case — the window wraps midnight); the resolver handles that
+    /// explicitly instead of collapsing.
+    var quietHoursEndTime: Date? = nil
+
     // MARK: - Deprecated notification fields
     //
     // The fields below are kept on the model purely so SwiftData can read
@@ -69,6 +101,13 @@ final class UserProfile {
     var monthlyCheckInNotificationsEnabled: Bool
     var smartNotificationsEnabled: Bool
     var maxSmartNotificationsPerDay: Int
+    /// SUPERSEDED by `quietHoursStartTime` / `quietHoursEndTime` above, and
+    /// never read by anything at any point — these were written in `init`
+    /// and consumed nowhere. Not reused for the Jul 2026 quiet-hours work
+    /// for two reasons: `Int` hours can't express `bedtime − 60m` off a
+    /// 23:30 bedtime, and every existing store already holds the init
+    /// defaults (22 / 8), so consuming them would have silently CHANGED the
+    /// window for every current user instead of preserving it.
     var quietHoursStart: Int
     var quietHoursEnd: Int
     var streakNotificationsEnabled: Bool
@@ -108,6 +147,9 @@ final class UserProfile {
         deadlinePrepNotificationsEnabled: Bool = true,
         sessionStarterNotificationsEnabled: Bool = true,
         floaterCheckInNotificationsEnabled: Bool = true,
+        quietHoursFollowSleepSchedule: Bool = true,
+        quietHoursStartTime: Date? = nil,
+        quietHoursEndTime: Date? = nil,
         smartNotificationsEnabled: Bool = true,
         maxSmartNotificationsPerDay: Int = 3,
         quietHoursStart: Int = 22,
@@ -148,6 +190,9 @@ final class UserProfile {
         self.deadlinePrepNotificationsEnabled = deadlinePrepNotificationsEnabled
         self.sessionStarterNotificationsEnabled = sessionStarterNotificationsEnabled
         self.floaterCheckInNotificationsEnabled = floaterCheckInNotificationsEnabled
+        self.quietHoursFollowSleepSchedule = quietHoursFollowSleepSchedule
+        self.quietHoursStartTime = quietHoursStartTime
+        self.quietHoursEndTime = quietHoursEndTime
         self.smartNotificationsEnabled = smartNotificationsEnabled
         self.maxSmartNotificationsPerDay = maxSmartNotificationsPerDay
         self.quietHoursStart = quietHoursStart

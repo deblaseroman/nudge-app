@@ -252,6 +252,7 @@ final class NudgeArbiter: NudgeArbitering {
         #if DEBUG
         print("[NudgeArbiter] \(eligible.count) candidates passed the gates.")
         debugStakesImpact(all: candidates, eligible: eligible, context: gateContext)
+        debugQuietHoursImpact(all: candidates, context: gateContext)
         #endif
 
         // 3. Pick winners — exactly one discretionary nudge per fire-time
@@ -1297,8 +1298,9 @@ final class NudgeArbiter: NudgeArbitering {
             return false
         }
 
-        // Quiet hours
-        if candidate.countsAgainstBudget && !insideAwakeWindow(
+        // Quiet hours — the user's own "don't interrupt me" window, which is
+        // NOT the same thing as their sleep schedule (it only defaults to it).
+        if candidate.countsAgainstBudget && !passesQuietHours(
             fireDate: candidate.fireDate,
             profile: context.profile
         ) { return false }
@@ -1360,26 +1362,123 @@ final class NudgeArbiter: NudgeArbitering {
         return false
     }
 
-    private func insideAwakeWindow(fireDate: Date, profile: UserProfile) -> Bool {
+    // MARK: - Quiet hours
+
+    /// The quiet window as CLOCK MINUTES-OF-DAY (0...1439), not as absolute
+    /// dates on a particular day.
+    ///
+    /// Minutes-of-day rather than `Date`s is the whole fix. The previous
+    /// implementation pinned wake and bedtime onto the fire date's calendar
+    /// day and asked `fire >= wake+30 && fire <= bed−60`. That silently
+    /// assumes the awake window doesn't cross midnight — so a bedtime at or
+    /// past 00:00 put `bed−60` an hour into the PREVIOUS day, made the
+    /// window empty, and the gate failed CLOSED: every discretionary
+    /// candidate suppressed, all day, with no diagnostic.
+    /// `BusyWindowResolver.dayLoad` hits the same degeneracy and returns nil
+    /// so callers fail OPEN; this gate had no such guard.
+    ///
+    /// A wrapping interval has no such blind spot: `start > end` is the
+    /// NORMAL case (quiet 22:00 → 07:30), not an error, and quiet hours that
+    /// sit inside one day (a 13:00–14:00 nap) are just the other branch.
+    private struct QuietWindow {
+        /// Clock minute quiet BEGINS.
+        let startMinute: Int
+        /// Clock minute quiet ENDS.
+        let endMinute: Int
+        /// `"sleep"` or `"custom"` — DEBUG labelling only.
+        let source: String
+
+        /// Whether `date`'s clock time falls inside quiet hours.
+        ///
+        /// Both comparisons are STRICT, so a fire time landing exactly on a
+        /// boundary minute is treated as awake. That's deliberate: the old
+        /// gate's `fire >= quietUntil && fire <= quietFrom` passed both
+        /// boundaries, and this preserves it minute-for-minute so the
+        /// default-configuration before/after is a true no-op.
+        func contains(_ date: Date) -> Bool {
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+            let minute = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+            if startMinute > endMinute {
+                // Wraps midnight — the normal overnight case.
+                return minute > startMinute || minute < endMinute
+            }
+            return minute > startMinute && minute < endMinute
+        }
+
+        var description: String {
+            func hhmm(_ m: Int) -> String { String(format: "%02d:%02d", m / 60, m % 60) }
+            return "\(hhmm(startMinute))→\(hhmm(endMinute)) (\(source)"
+                + (startMinute > endMinute ? ", wraps midnight)" : ")")
+        }
+    }
+
+    private static func minuteOfDay(_ date: Date) -> Int {
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+    }
+
+    /// Wraps a possibly out-of-range minute count back into 0...1439, so
+    /// `bedtime − 60m` off a 00:30 bedtime lands on 23:30 instead of −30.
+    private static func wrapMinute(_ minute: Int) -> Int {
+        ((minute % 1440) + 1440) % 1440
+    }
+
+    /// The quiet window the sleep schedule implies. Also what Settings seeds
+    /// the custom times from, so flipping the toggle alone changes nothing.
+    static func sleepDerivedQuietHours(for profile: UserProfile) -> (start: Date, end: Date) {
         let calendar = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
-        let bedtime = profile.bedtime
+        let startMinute = wrapMinute(minuteOfDay(profile.bedtime) - NudgeConfig.preBedtimeQuietMinutes)
+        let endMinute = wrapMinute(minuteOfDay(wake) + NudgeConfig.postWakeQuietMinutes)
+        let today = calendar.startOfDay(for: Date())
+        return (
+            start: calendar.date(byAdding: .minute, value: startMinute, to: today) ?? today,
+            end: calendar.date(byAdding: .minute, value: endMinute, to: today) ?? today
+        )
+    }
 
-        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
-        let bedComps  = calendar.dateComponents([.hour, .minute], from: bedtime)
-        var dayComps  = calendar.dateComponents([.year, .month, .day], from: fireDate)
+    /// Resolves the profile's quiet window, or nil when it can't be
+    /// expressed — which the caller must treat as FAIL OPEN.
+    ///
+    /// The only nil case is a zero-length window (`start == end`), which is
+    /// genuinely ambiguous: it reads equally as "never quiet" and "always
+    /// quiet". Silencing every discretionary nudge on an ambiguous setting
+    /// is the failure mode this whole change exists to remove, so it
+    /// resolves the other way.
+    private func quietWindow(for profile: UserProfile) -> QuietWindow? {
+        let startMinute: Int
+        let endMinute: Int
+        let source: String
 
-        dayComps.hour = wakeComps.hour
-        dayComps.minute = wakeComps.minute
-        guard let wakeOnDay = calendar.date(from: dayComps) else { return true }
-        let quietUntil = wakeOnDay.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
+        // Custom needs BOTH ends. A half-configured window falls back to the
+        // derived one rather than pairing a user value with a guess.
+        if !profile.quietHoursFollowSleepSchedule,
+           let customStart = profile.quietHoursStartTime,
+           let customEnd = profile.quietHoursEndTime {
+            startMinute = Self.minuteOfDay(customStart)
+            endMinute = Self.minuteOfDay(customEnd)
+            source = "custom"
+        } else {
+            let derived = Self.sleepDerivedQuietHours(for: profile)
+            startMinute = Self.minuteOfDay(derived.start)
+            endMinute = Self.minuteOfDay(derived.end)
+            source = "sleep"
+        }
 
-        dayComps.hour = bedComps.hour
-        dayComps.minute = bedComps.minute
-        guard let bedOnDay = calendar.date(from: dayComps) else { return true }
-        let quietFrom = bedOnDay.addingTimeInterval(-Double(NudgeConfig.preBedtimeQuietMinutes) * 60)
+        guard startMinute != endMinute else { return nil }
+        return QuietWindow(startMinute: startMinute, endMinute: endMinute, source: source)
+    }
 
-        return fireDate >= quietUntil && fireDate <= quietFrom
+    /// Whether `fireDate` is clear of quiet hours. Fails OPEN — an
+    /// unresolvable window permits the nudge.
+    private func passesQuietHours(fireDate: Date, profile: UserProfile) -> Bool {
+        guard let window = quietWindow(for: profile) else {
+            #if DEBUG
+            print("[NudgeArbiter] quiet hours: UNRESOLVABLE (zero-length window) — failing OPEN.")
+            #endif
+            return true
+        }
+        return !window.contains(fireDate)
     }
 
     private func taskFatigueCount(taskID: UUID, context: GateContext) -> Int {
@@ -1626,6 +1725,127 @@ final class NudgeArbiter: NudgeArbitering {
         )
     }
 
+    // MARK: - DEBUG: quiet-hours decoupling impact
+
+    /// The gate EXACTLY as it stood before quiet hours were decoupled from
+    /// the sleep schedule. Copied verbatim, not re-expressed — the point of
+    /// the comparison is to catch a difference I didn't intend, and a
+    /// "tidied" baseline can't do that.
+    ///
+    /// Note what it does on a past-midnight bedtime: `bedOnDay` lands at
+    /// e.g. 00:30 on the FIRE day, so `quietFrom` is 23:30 the day BEFORE,
+    /// `quietUntil` is that morning, and `fire >= quietUntil && fire <=
+    /// quietFrom` is unsatisfiable. Every discretionary candidate, blocked,
+    /// every day. That's the failure this reproduces on purpose.
+    private func legacyInsideAwakeWindow(fireDate: Date, profile: UserProfile) -> Bool {
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let bedtime = profile.bedtime
+
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        let bedComps  = calendar.dateComponents([.hour, .minute], from: bedtime)
+        var dayComps  = calendar.dateComponents([.year, .month, .day], from: fireDate)
+
+        dayComps.hour = wakeComps.hour
+        dayComps.minute = wakeComps.minute
+        guard let wakeOnDay = calendar.date(from: dayComps) else { return true }
+        let quietUntil = wakeOnDay.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
+
+        dayComps.hour = bedComps.hour
+        dayComps.minute = bedComps.minute
+        guard let bedOnDay = calendar.date(from: dayComps) else { return true }
+        let quietFrom = bedOnDay.addingTimeInterval(-Double(NudgeConfig.preBedtimeQuietMinutes) * 60)
+
+        return fireDate >= quietUntil && fireDate <= quietFrom
+    }
+
+    /// Before/after for the quiet-hours decoupling, per the "any change that
+    /// alters what the arbiter does gets a DEBUG comparison on real data"
+    /// rule. Read-only: it re-derives into locals and schedules nothing.
+    ///
+    /// OLD is `legacyInsideAwakeWindow` above. NEW is `passesQuietHours`.
+    /// Only budget-counting candidates are compared, because that's the only
+    /// population the gate has ever been applied to — event blocks and the
+    /// morning prompt are `countsAgainstBudget: false` and skip it entirely,
+    /// so listing them as "unchanged" would pad the diff with rows that
+    /// could never differ.
+    ///
+    /// On a default profile (`quietHoursFollowSleepSchedule == true`, an
+    /// evening bedtime) this MUST print no differences — that is the
+    /// "nothing changes for existing users" claim, checked rather than
+    /// asserted. A diff here on a default profile is a bug in this change.
+    private func debugQuietHoursImpact(all: [NudgeCandidate], context: GateContext) {
+        let profile = context.profile
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE h:mm a"
+
+        let derived = Self.sleepDerivedQuietHours(for: profile)
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        print("[QuietHours] mode=\(profile.quietHoursFollowSleepSchedule ? "sleep schedule" : "custom")"
+            + "  wake=\(fmt.string(from: wake)) bedtime=\(fmt.string(from: profile.bedtime))")
+        print("  OLD rule: awake window = wake+\(NudgeConfig.postWakeQuietMinutes)m → "
+            + "bed−\(NudgeConfig.preBedtimeQuietMinutes)m, pinned to the fire date's own day.")
+        if let window = quietWindow(for: profile) {
+            print("  NEW rule: quiet = \(window.description); everything else passes.")
+        } else {
+            print("  NEW rule: quiet window UNRESOLVABLE (zero-length) — gate fails OPEN.")
+        }
+        print("  derived-from-sleep window would be \(fmt.string(from: derived.start))"
+            + " → \(fmt.string(from: derived.end)) (what Settings seeds custom times with).")
+
+        // Does the OLD rule degenerate on this profile? Answered structurally
+        // rather than inferred from the per-candidate rows, since on a
+        // degenerate window EVERY row blocks and the cause isn't obvious.
+        let bedMinute = Self.wrapMinute(
+            Self.minuteOfDay(profile.bedtime) - NudgeConfig.preBedtimeQuietMinutes
+        )
+        let wakeMinute = Self.wrapMinute(
+            Self.minuteOfDay(wake) + NudgeConfig.postWakeQuietMinutes
+        )
+        if bedMinute <= wakeMinute {
+            print("  ⚠︎ OLD rule DEGENERATE on this profile: bed−\(NudgeConfig.preBedtimeQuietMinutes)m "
+                + "(\(bedMinute / 60):\(String(format: "%02d", bedMinute % 60))) is not after "
+                + "wake+\(NudgeConfig.postWakeQuietMinutes)m "
+                + "(\(wakeMinute / 60):\(String(format: "%02d", wakeMinute % 60))). "
+                + "The awake window is empty and the old gate blocks EVERY discretionary "
+                + "candidate all day. The new rule treats this as a midnight-wrapping quiet "
+                + "window instead.")
+        }
+
+        let discretionary = all.filter(\.countsAgainstBudget)
+        guard !discretionary.isEmpty else {
+            print("  → no budget-counting candidates this run — nothing to compare.")
+            return
+        }
+
+        print("  \(padc("KIND", 13))\(padc("FIRE", 16))\(padc("OLD", 7))\(padc("NEW", 7))TITLE")
+        var flippedOpen = 0
+        var flippedClosed = 0
+        for cand in discretionary.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let old = legacyInsideAwakeWindow(fireDate: cand.fireDate, profile: profile)
+            let new = passesQuietHours(fireDate: cand.fireDate, profile: profile)
+            if old != new { new ? (flippedOpen += 1) : (flippedClosed += 1) }
+            print("  " + padc(cand.kind.rawValue, 13)
+                + padc(fmt.string(from: cand.fireDate), 16)
+                + padc(old ? "pass" : "BLOCK", 7)
+                + padc(new ? "pass" : "BLOCK", 7)
+                + (old == new ? "" : "⇄ ") + cand.title)
+        }
+
+        if flippedOpen == 0 && flippedClosed == 0 {
+            print("  → NO CHANGE across \(discretionary.count) candidate(s). Expected whenever "
+                + "the profile still follows its sleep schedule AND that schedule doesn't "
+                + "cross midnight — the new rule reduces to the old one there, boundaries "
+                + "included.")
+        } else {
+            print("  → \(flippedOpen) candidate(s) NEWLY PASS, \(flippedClosed) newly BLOCKED "
+                + "(of \(discretionary.count)). Note this is the gate verdict only — a newly "
+                + "passing candidate still has to survive the busy-window gate, min-spacing, "
+                + "and the daily budget of \(NudgeConfig.dailyNudgeBudget) before it reaches "
+                + "the user.")
+        }
+    }
+
     // MARK: - DEBUG: floater rollover impact
 
     /// Before/after for the floater check-in fix, per the "any change that
@@ -1753,9 +1973,10 @@ final class NudgeArbiter: NudgeArbitering {
                 + "\(NudgeConfig.recentActivityCooldownMinutes)m of NOW (this gate reads "
                 + "`now`, not the fire date, so the next reevaluate can rebuild it)."
         }
-        if !insideAwakeWindow(fireDate: candidate.fireDate, profile: context.profile) {
-            return "fire time is outside the awake window "
-                + "(wake+\(NudgeConfig.postWakeQuietMinutes)m → bed−\(NudgeConfig.preBedtimeQuietMinutes)m)."
+        if !passesQuietHours(fireDate: candidate.fireDate, profile: context.profile) {
+            let window = quietWindow(for: context.profile)
+            return "fire time falls inside quiet hours "
+                + (window.map { $0.description } ?? "(unresolvable — should have failed open)") + "."
         }
         if BusyWindowResolver.shared.isBusy(at: candidate.fireDate, modelContext: context.modelContext) {
             return "fire time lands inside a busy window. Note this includes merged "

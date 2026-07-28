@@ -40,6 +40,32 @@ struct SettingsTabView: View {
                     destination: .bedtime
                 )
 
+                settingsSection(title: "Quiet hours") {
+                    // Quiet hours default to the sleep schedule but are no
+                    // longer BOUND to it — bedtime is when you go to bed, not
+                    // necessarily when you want to stop being interrupted.
+                    toggleSettingsRow(
+                        title: "Match my sleep schedule",
+                        subtitle: "Quiet from 1 hr before bedtime until 30 min after wake. Turn off to set your own hours.",
+                        isOn: quietHoursFollowSleepBinding
+                    )
+
+                    if !profile.quietHoursFollowSleepSchedule {
+                        timeSettingsRow(
+                            title: "Quiet hours start",
+                            subtitle: "When Nudge should stop sending discretionary nudges.",
+                            value: timeValue(for: .quietHoursStart).formatted(date: .omitted, time: .shortened),
+                            destination: .quietHoursStart
+                        )
+                        timeSettingsRow(
+                            title: "Quiet hours end",
+                            subtitle: "When Nudge can start again. Earlier than the start time means the window runs overnight.",
+                            value: timeValue(for: .quietHoursEnd).formatted(date: .omitted, time: .shortened),
+                            destination: .quietHoursEnd
+                        )
+                    }
+                }
+
                 settingsSection(title: "Notifications") {
                     notificationPermissionCard
 
@@ -180,6 +206,10 @@ struct SettingsTabView: View {
                         profile.eveningCheckInTime = newValue
                     case .bedtime:
                         profile.bedtime = newValue
+                    case .quietHoursStart:
+                        profile.quietHoursStartTime = newValue
+                    case .quietHoursEnd:
+                        profile.quietHoursEndTime = newValue
                     }
                     persistSettings()
                 }
@@ -351,7 +381,38 @@ struct SettingsTabView: View {
             return profile.eveningCheckInTime
         case .bedtime:
             return profile.bedtime
+        case .quietHoursStart:
+            // Falls back to the sleep-derived window rather than "now" — an
+            // unset custom time is what the arbiter itself falls back on, so
+            // the row shows the hours actually in force.
+            return profile.quietHoursStartTime
+                ?? NudgeArbiter.sleepDerivedQuietHours(for: profile).start
+        case .quietHoursEnd:
+            return profile.quietHoursEndTime
+                ?? NudgeArbiter.sleepDerivedQuietHours(for: profile).end
         }
+    }
+
+    /// Drives the "Match my sleep schedule" toggle, seeding the custom times
+    /// from the derived window on the way OFF.
+    ///
+    /// Seeding matters: without it, turning the toggle off leaves both times
+    /// nil, `quietWindow` falls back to the derived window anyway, and the
+    /// two rows below would show hours the user never picked while the
+    /// toggle claims they're custom. Seeded, flipping the switch is a
+    /// genuine no-op until the user actually moves one.
+    private var quietHoursFollowSleepBinding: Binding<Bool> {
+        Binding(
+            get: { profile.quietHoursFollowSleepSchedule },
+            set: { follows in
+                if !follows {
+                    let derived = NudgeArbiter.sleepDerivedQuietHours(for: profile)
+                    if profile.quietHoursStartTime == nil { profile.quietHoursStartTime = derived.start }
+                    if profile.quietHoursEndTime == nil { profile.quietHoursEndTime = derived.end }
+                }
+                profile.quietHoursFollowSleepSchedule = follows
+            }
+        )
     }
 
     private func persistSettings() {
@@ -448,6 +509,8 @@ enum TimeSettingDestination: String, Identifiable {
     case morningCheckIn
     case eveningCheckIn
     case bedtime
+    case quietHoursStart
+    case quietHoursEnd
 
     var id: String { rawValue }
 
@@ -459,6 +522,10 @@ enum TimeSettingDestination: String, Identifiable {
             return "Evening Check-in"
         case .bedtime:
             return "Bedtime"
+        case .quietHoursStart:
+            return "Quiet Hours Start"
+        case .quietHoursEnd:
+            return "Quiet Hours End"
         }
     }
 }
