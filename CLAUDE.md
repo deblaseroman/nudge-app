@@ -25,6 +25,7 @@ Sequencing constraints in force right now. Each is a deliberate state, not an ov
 
 Unlike the items above, these are wrong — they're listed so they aren't mistaken for deliberate state, and so their noise isn't misread as signal.
 
+- **`deadlinePrepNotificationsEnabled` is misnamed** — it gates `buildBreakItDownCandidates`, not any deadline-prep feature (get-ahead reads `taskDueSoonNotificationsEnabled`), so the Settings "Break it down" row that binds it behaves correctly and only the field name lies. Renaming it means a store migration for a toggle whose feature is item 4 above, so read the name as a trap, not a spec.
 - **`hadRecentActivity` in `passesGates` evaluates against `now`, not the candidate's fire date.** A focus session started within `recentActivityCooldownMinutes` drops every budget-counting candidate in that reevaluate — including ones scheduled for tomorrow, which the session has no bearing on. Not fatal (the next reevaluate rebuilds them), but it produces intermittent gate blocks unrelated to any candidate's own timing, and it will muddy the floater baseline data item 2 is waiting on.
 
 ## Build & verify
