@@ -140,6 +140,48 @@ enum NudgeConfig {
     /// uses its own entry above.
     static let defaultCategoryImportance: Double = 0.4
 
+    // MARK: - Stakes → importance
+    //
+    // `TaskStakes` is the CONSEQUENCE signal — how bad is it if this is
+    // missed. Category alone can't express it: a job interview and a
+    // routine reading are both 0.70, so the tie breaks on deadline
+    // proximity and consequence is ignored.
+    //
+    // ── WHY `.medium` IS ZERO AND `.low` IS NEGATIVE ────────────────────
+    // `.medium` is the modal classification — treating it as a bonus would
+    // shift almost everything equally and separate nothing. `.low` pushes
+    // DOWN rather than letting `.high` push up alone: the importance sum is
+    // clamped to 0...1 and the interesting tasks already crowd the top, so
+    // buying separation at the bottom (where there is headroom) beats
+    // buying it at the top (where the clamp eats it). `nil` — never
+    // classified, which `StakesBackfill` hasn't necessarily reached — is
+    // absence of evidence and scores 0.
+
+    /// Additive importance term per stakes level. Applied in
+    /// `EisenhowerScorer.importance`; `nil` stakes contributes nothing.
+    static let stakesImportanceBonus: [TaskStakes: Double] = [
+        .high:    0.20,
+        .medium:  0.0,
+        .low:    -0.15
+    ]
+
+    /// Ceiling on the SUM of the two "the user signalled this matters"
+    /// bonuses — explicit `statedUrgency` (0.25) and a positive stakes
+    /// term.
+    ///
+    /// They are not independent. A task someone flagged as urgent in the
+    /// brain dump is very often the same task the classifier rates high
+    /// stakes, so adding both naively counts one belief twice and pushes
+    /// the pair straight into the 0...1 clamp — compressing exactly the
+    /// high end the stakes signal exists to separate. Capping at 0.30
+    /// means high stakes adds only +0.05 on top of an explicit urgency
+    /// flag, while still contributing its full 0.20 on the (common) task
+    /// that carries no stated urgency at all.
+    ///
+    /// The cap covers POSITIVE terms only. A `.low` penalty is independent
+    /// evidence pointing the other way, so it always applies in full.
+    static let stakesSignalCombinedCap: Double = 0.30
+
     // MARK: - Duration model
     //
     // Drives `DurationModel.estimate(for:)`. The static priors below are
@@ -262,6 +304,35 @@ enum NudgeConfig {
     /// the intended resolution: a nudge naming a specific dated task should
     /// beat a generic "have you started anything?".
     static let getAheadAnchorHoursAfterWake: Double = 2
+
+    // MARK: - Floater check-in fire time
+
+    /// Hours after wake at which the mid-day "are you working on something?"
+    /// check-in for OPEN UNDATED tasks fires. Was an inline `6 * 60 * 60`
+    /// literal in `buildFloaterCheckInCandidates`; the value is unchanged.
+    ///
+    /// ── KNOWN COLLISION — DELIBERATELY NOT RETUNED YET ──────────────────
+    /// wake+6h lands in the middle of a committed afternoon: with the
+    /// default wake (`morningCheckInTime`, 08:00) the anchor is 14:00. Any
+    /// event starting roughly 12:30–15:30 suppresses the check-in, by one of
+    /// two independent routes:
+    ///
+    ///   • The fire time falls inside a busy window. Note this includes
+    ///     events that don't themselves cover 14:00 — `BusyWindowResolver`
+    ///     merges gaps ≤ `interEventGapToleranceMinutes`, so a 12:00 class
+    ///     and a 14:30 class become one window that swallows it.
+    ///
+    ///   • The event's own heads-up fires `eventReminderLeadMinutes` (60)
+    ///     ahead and is seeded into `pickWinners`' winner set BEFORE any
+    ///     discretionary candidate is considered — so a class at 15:00 puts
+    ///     a reminder at exactly 14:00 and the floater loses min-spacing.
+    ///     Clearing that needs a ≥ 17:00 event.
+    ///
+    /// The result is that the check-in fires on a free day and stays silent
+    /// on a class day. That is accepted FOR NOW: the offset can't be retuned
+    /// against evidence until `.floater` outcome rows exist, and they don't
+    /// yet (see the rollover note on `buildFloaterCheckInCandidates`).
+    static let floaterCheckInHoursAfterWake: Double = 6
 
     // MARK: - Stakes backfill
     //

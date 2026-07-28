@@ -21,6 +21,12 @@ Sequencing constraints in force right now. Each is a deliberate state, not an ov
 4. **Break-it-down is paused pending removal.** Don't build on it.
 5. **Any change that alters what the arbiter does gets a DEBUG before/after comparison on real data before it goes live.** This has caught several wrong assumptions already.
 
+### Known bugs, not yet fixed
+
+Unlike the items above, these are wrong — they're listed so they aren't mistaken for deliberate state, and so their noise isn't misread as signal.
+
+- **`hadRecentActivity` in `passesGates` evaluates against `now`, not the candidate's fire date.** A focus session started within `recentActivityCooldownMinutes` drops every budget-counting candidate in that reevaluate — including ones scheduled for tomorrow, which the session has no bearing on. Not fatal (the next reevaluate rebuilds them), but it produces intermittent gate blocks unrelated to any candidate's own timing, and it will muddy the floater baseline data item 2 is waiting on.
+
 ## Build & verify
 
 There are no test targets and no linter config — verification is building both schemes:
