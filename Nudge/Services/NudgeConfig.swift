@@ -231,6 +231,38 @@ enum NudgeConfig {
     /// task with multiplier = 1.0 → startBy = due − 60 min.
     static let shallowBufferMultiplier: Double = 1.0
 
+    // MARK: - Get-ahead fire time
+    //
+    // `StartByPlanner` answers WHICH DAY the user should start. It does not
+    // answer WHAT TIME OF DAY the nudge should arrive, and it was being
+    // used for both — so the nudge inherited the deadline's clock time.
+    // Bare due dates normalize to 23:59, which meant every deep-work
+    // get-ahead fired at 23:59 (always inside quiet hours, so it never
+    // fired at all) and shallow ones fired at due − effort×2, i.e. 21:59
+    // for a 60-minute task — the night the thing was due, for a nudge whose
+    // entire job is prompting an early start.
+    //
+    // The day now comes from the planner; the hour comes from here.
+
+    /// Hours after wake at which a get-ahead nudge fires on its anchor day.
+    ///
+    /// 2h is the EARLIEST offset that fits the existing gate structure:
+    ///   • It clears the post-wake quiet floor (`postWakeQuietMinutes`, 30)
+    ///     by 90 minutes.
+    ///   • It sits exactly `minNudgeSpacingMinutes` (90) after the morning
+    ///     prompt at wake+30, and `pickWinners` treats "too close" as
+    ///     strictly less than that — so the two coexist instead of one
+    ///     evicting the other. Anything earlier collides with the prompt.
+    ///
+    /// It does NOT clear the idle nudge at wake+`idleThresholdHours` (3h);
+    /// nothing can, since the wake+1.5h → wake+7.5h band is fully occupied
+    /// by the morning prompt, idle, break-it-down (wake+4h) and the floater
+    /// check-in (wake+6h). When a get-ahead and an idle candidate land on
+    /// the same day, min-spacing keeps whichever scores higher — which is
+    /// the intended resolution: a nudge naming a specific dated task should
+    /// beat a generic "have you started anything?".
+    static let getAheadAnchorHoursAfterWake: Double = 2
+
     // MARK: - Stakes backfill
     //
     // Drives `StakesBackfill`, the one-shot pass that classifies stakes on

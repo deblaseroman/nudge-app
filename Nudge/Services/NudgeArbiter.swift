@@ -830,9 +830,25 @@ final class NudgeArbiter: NudgeArbitering {
             guard let plan = StartByPlanner.plan(for: task, modelContext: modelContext, now: now) else {
                 continue
             }
-            let fireDate = plan.startBy
-            guard fireDate > now else { continue }
             guard let due = task.dueDate else { continue }
+            // The planner picks the DAY; `getAheadFireDate` picks the hour
+            // within it. Using `plan.startBy` directly is what put these
+            // nudges at 21:59–23:59 — see the note on
+            // `NudgeConfig.getAheadAnchorHoursAfterWake`.
+            guard let fireDate = getAheadFireDate(
+                startBy: plan.startBy,
+                due: due,
+                profile: profile,
+                now: now
+            ) else {
+                #if DEBUG
+                print("[NudgeArbiter] getAhead: SKIP '\(task.title)' — no anchored slot left before due \(due) (startBy was \(plan.startBy)).")
+                #endif
+                continue
+            }
+            #if DEBUG
+            print("[NudgeArbiter] getAhead: '\(task.title)' startBy=\(plan.startBy) → fire=\(fireDate) (deep=\(plan.isDeepWork), due=\(due)).")
+            #endif
 
             let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
             let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
@@ -890,6 +906,67 @@ final class NudgeArbiter: NudgeArbitering {
             ))
         }
         return candidates
+    }
+
+    /// Maps `StartByPlanner`'s startBy INSTANT onto a sane hour of the same
+    /// DAY: wake + `getAheadAnchorHoursAfterWake` on the day the planner
+    /// picked. The planner's day math is untouched — only where in the day
+    /// the nudge lands.
+    ///
+    /// ── ROLLOVER ──────────────────────────────────────────────────────
+    /// `buildMorningPromptCandidates`, `buildIdleCandidates` and
+    /// `buildBreakItDownCandidates` all share one idiom: compute today's
+    /// wake-anchored time, and `if fireDate <= now` add exactly one day.
+    /// One day is always enough for them because their anchor day is
+    /// *today* by definition. Get-ahead's anchor day is derived from the
+    /// deadline instead, so this generalises the same idiom into a bounded
+    /// walk forward — same behaviour, just able to step more than once.
+    /// (`buildFloaterCheckInCandidates` is the odd one out: it gives up
+    /// with `guard fireDate > Date()` rather than rolling. Left alone —
+    /// that's the floater work, not this.)
+    ///
+    /// The walk stops at the due date. Rolling past it would schedule a
+    /// "get ahead" nudge for something already overdue, which is a
+    /// different notification with a different message; returning nil lets
+    /// the caller skip the task rather than send the wrong nudge. In
+    /// practice the loop runs at most twice: any day strictly after today
+    /// has its anchor in the future.
+    private func getAheadFireDate(
+        startBy: Date,
+        due: Date,
+        profile: UserProfile,
+        now: Date
+    ) -> Date? {
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        let offset = NudgeConfig.getAheadAnchorHoursAfterWake * 60 * 60
+
+        func anchor(on day: Date) -> Date? {
+            var comps = calendar.dateComponents([.year, .month, .day], from: day)
+            comps.hour = wakeComps.hour
+            comps.minute = wakeComps.minute
+            guard let dayWake = calendar.date(from: comps) else { return nil }
+            return dayWake.addingTimeInterval(offset)
+        }
+
+        let lastDay = calendar.startOfDay(for: due)
+        // `StartByPlanner` already clamps startBy to `now`, so this is
+        // normally a no-op — but the walk's bound reads clearer when the
+        // start can't be in the past regardless of what the planner did.
+        var day = max(calendar.startOfDay(for: startBy), calendar.startOfDay(for: now))
+
+        while day <= lastDay {
+            // `< due` matters on the due date itself: a task due at 08:00
+            // has no useful anchor at wake+2h, and firing after the
+            // deadline would be actively wrong.
+            if let candidate = anchor(on: day), candidate > now, candidate < due {
+                return candidate
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return nil }
+            day = next
+        }
+        return nil
     }
 
     /// Mid-day check-in for OPEN UNDATED tasks. Get-ahead nudges require a
