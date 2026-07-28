@@ -40,6 +40,20 @@ final class UserProfile {
     var deadlinePrepNotificationsEnabled: Bool
     var sessionStarterNotificationsEnabled: Bool
 
+    /// Gates the arbiter's floater check-in (`buildFloaterCheckInCandidates`).
+    /// Split out of `taskDueSoonNotificationsEnabled` in Jul 2026, alongside
+    /// `NudgeOutcomeKind.floater` — that toggle gated two unrelated features,
+    /// so opting out of mid-day check-ins also killed deadline-driven
+    /// get-ahead nudges, the more valuable half.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, unlike every field above it (they're assigned
+    /// in `init` only). This project has no `VersionedSchema` / migration
+    /// plan, so SwiftData's lightweight migration is what has to open an
+    /// existing store — and a new non-optional attribute with no default
+    /// makes that FAIL AT LAUNCH on any device that already has a profile
+    /// row. Not a build error. Keep the default here, not just in `init`.
+    var floaterCheckInNotificationsEnabled: Bool = true
+
     // MARK: - Deprecated notification fields
     //
     // The fields below are kept on the model purely so SwiftData can read
@@ -93,6 +107,7 @@ final class UserProfile {
         monthlyCheckInNotificationsEnabled: Bool = true,
         deadlinePrepNotificationsEnabled: Bool = true,
         sessionStarterNotificationsEnabled: Bool = true,
+        floaterCheckInNotificationsEnabled: Bool = true,
         smartNotificationsEnabled: Bool = true,
         maxSmartNotificationsPerDay: Int = 3,
         quietHoursStart: Int = 22,
@@ -132,6 +147,7 @@ final class UserProfile {
         self.monthlyCheckInNotificationsEnabled = monthlyCheckInNotificationsEnabled
         self.deadlinePrepNotificationsEnabled = deadlinePrepNotificationsEnabled
         self.sessionStarterNotificationsEnabled = sessionStarterNotificationsEnabled
+        self.floaterCheckInNotificationsEnabled = floaterCheckInNotificationsEnabled
         self.smartNotificationsEnabled = smartNotificationsEnabled
         self.maxSmartNotificationsPerDay = maxSmartNotificationsPerDay
         self.quietHoursStart = quietHoursStart

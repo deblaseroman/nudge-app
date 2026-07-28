@@ -902,11 +902,18 @@ final class NudgeArbiter: NudgeArbitering {
     /// Fires at today's wake + 6 hours for every undated open task; the
     /// daily budget + min-spacing in `pickWinners` collapses it to the
     /// top-scoring one.
+    ///
+    /// Emits `.floater`, NOT `.getAhead`. It used to emit `.getAhead` — same
+    /// kind, same category as `buildGetAheadCandidates` — which meant the two
+    /// features' rows were indistinguishable in `NudgeOutcome` and neither
+    /// could be measured. Its toggle was split off the same way: this reads
+    /// `floaterCheckInNotificationsEnabled`, where it used to share
+    /// `taskDueSoonNotificationsEnabled` with get-ahead.
     private func buildFloaterCheckInCandidates(
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
-        guard profile.taskDueSoonNotificationsEnabled else { return [] }
+        guard profile.floaterCheckInNotificationsEnabled else { return [] }
         let calendar = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
         let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
@@ -955,11 +962,11 @@ final class NudgeArbiter: NudgeArbitering {
             let body = "'\(task.title)' is still open. Just \(min(estimatedMinutes, 25)) min — start there?"
             candidates.append(NudgeCandidate(
                 id: "\(prefix)floater.\(stamp(calendar.startOfDay(for: fireDate))).\(task.id.uuidString)",
-                kind: .getAhead,
+                kind: .floater,
                 fireDate: fireDate,
                 title: "Are you working on something?",
                 body: body,
-                categoryID: .getAhead,
+                categoryID: .floater,
                 interruption: cTier.interruption,
                 taskID: task.id,
                 tier: cTier,
@@ -1011,6 +1018,14 @@ final class NudgeArbiter: NudgeArbitering {
         var ignoredCountByTask: [UUID: Int] = [:]
         for outcome in outcomes {
             guard let taskID = outcome.taskID else { continue }
+            // Same correctness exemption as the gate in `passesGates`: a
+            // kind whose success leaves no in-app trace produces `.ignored`
+            // on its GOOD days, so its rows are not evidence of anything.
+            // Counting them here would be the more visible half of the bug —
+            // three read-and-obeyed reminders for a recurring class would
+            // cross `perTaskMaxNudges` and offer to "break down" a calendar
+            // event. See `NudgeOutcomeKind.successIsObservableInApp`.
+            guard outcome.kind.successIsObservableInApp else { continue }
             if outcome.result == .ignored || outcome.result == .dismissed {
                 ignoredCountByTask[taskID, default: 0] += 1
             } else if outcome.result == .tappedStart {
@@ -1119,8 +1134,22 @@ final class NudgeArbiter: NudgeArbitering {
         // already matches — so without the flag, landing the classifier
         // would have immediately changed which notifications fire. The
         // recorded classifications get observed first.
+        //
+        // TWO exemptions, for two unrelated reasons — don't collapse them:
+        //
+        //  • `.breakItDown` — a POLICY exemption. It's the escape hatch the
+        //    gate hands the user once a task is fatigued, so gating it would
+        //    suppress the one nudge that's supposed to survive.
+        //
+        //  • `!kind.successIsObservableInApp` (today: `.eventBlock`) — a
+        //    CORRECTNESS exemption. Those kinds' success case produces no
+        //    app open, so the classifier logs `.ignored` for a reminder that
+        //    worked exactly as intended. Counting that as fatigue would
+        //    silence event reminders for the user who reads every one of
+        //    them and shows up on time. See `successIsObservableInApp`.
         if NudgeConfig.fatigueGateEnabled,
            candidate.kind != .breakItDown,
+           candidate.kind.successIsObservableInApp,
            let taskID = candidate.taskID,
            taskFatigueCount(taskID: taskID, context: context) >= NudgeConfig.perTaskMaxNudges {
             return false
@@ -1171,10 +1200,16 @@ final class NudgeArbiter: NudgeArbitering {
         // returns more rows over time forever, and is called once per
         // gate-evaluated candidate per reevaluate.
         let fatigueCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
+        // Rows whose kind can't distinguish success from silence are
+        // excluded at the predicate level, not filtered afterwards — the
+        // fetchLimit below is what keeps this cheap, and post-filtering a
+        // limited fetch would undercount. See `successIsObservableInApp`.
+        let blindKinds = NudgeOutcomeKind.fatigueBlindRawValues
         var descriptor = FetchDescriptor<NudgeOutcome>(
             predicate: #Predicate<NudgeOutcome> {
                 $0.taskID == taskID
                     && $0.scheduledFor >= fatigueCutoff
+                    && !blindKinds.contains($0.kindRaw)
                     && ($0.resultRaw == "ignored" || $0.resultRaw == "dismissed")
             }
         )

@@ -204,7 +204,8 @@ struct ContentView: View {
             profile.morningCheckInNotificationsEnabled.description,
             profile.taskDueSoonNotificationsEnabled.description,
             profile.sessionStarterNotificationsEnabled.description,
-            profile.deadlinePrepNotificationsEnabled.description
+            profile.deadlinePrepNotificationsEnabled.description,
+            profile.floaterCheckInNotificationsEnabled.description
         ].joined(separator: "-")
     }
 

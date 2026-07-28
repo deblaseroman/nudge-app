@@ -388,6 +388,7 @@ struct TodayTimelineView: View {
         case .getAhead:      return "get ahead"
         case .breakItDown:   return "break it down"
         case .morningPrompt: return "morning check-in"
+        case .floater:       return "open work check-in"
         }
     }
 }

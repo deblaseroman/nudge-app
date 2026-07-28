@@ -35,6 +35,19 @@
 //  is already closed, so the foreground that RUNS the sweep can never be
 //  mistaken for engagement with the row it is classifying.
 //
+//  ── WHAT `.ignored` DOES NOT MEAN ──────────────────────────────────────
+//  `.ignored` is written for EVERY kind, including the ones whose success
+//  case never touches the app. A "Class in 1 hour" reminder that worked
+//  perfectly lands here as `.ignored`, because the user read it and went to
+//  class. That is recorded faithfully and is not a bug in this file — it IS
+//  what happened as far as the app can see. The bug would be treating it as
+//  failure, so `NudgeOutcomeKind.successIsObservableInApp` marks those kinds
+//  and both fatigue consumers in `NudgeArbiter` skip their rows.
+//
+//  `NudgeOutcome.feedback` (the 👍/👎 notification actions) is the channel
+//  built to break the tie behaviour can't. It lives in its own column so a
+//  row can say `.ignored` and `markedHelpful` at once.
+//
 
 import Foundation
 import SwiftData
@@ -189,11 +202,17 @@ final class NudgeOutcomeClassifier {
         fmt.dateFormat = "MMM d HH:mm"
         fmt.locale = Locale(identifier: "en_US_POSIX")
 
-        print("  \(pad("RESULT", 14))\(pad("KIND", 15))\(pad("SCHEDULED", 14))TASK")
+        // FEEDBACK is a separate column because it's a separate signal —
+        // `result` is what the user DID (tapped, or inferred from behaviour),
+        // `feedback` is what they SAID via the 👍/👎 notification actions.
+        // A row carrying `ignored` + `helpful` is the interesting one: it
+        // means the silence-means-failure inference was wrong for that nudge.
+        print("  \(pad("RESULT", 14))\(pad("FEEDBACK", 12))\(pad("KIND", 15))\(pad("SCHEDULED", 14))TASK")
         for row in rows {
             let task = row.taskID.flatMap { titles[$0] } ?? "—"
             print("  "
                 + pad(row.resultRaw, 14)
+                + pad(feedbackLabel(row), 12)
                 + pad(row.kindRaw, 15)
                 + pad(fmt.string(from: row.scheduledFor), 14)
                 + task)
@@ -206,6 +225,67 @@ final class NudgeOutcomeClassifier {
             .map { "\($0.key)=\($0.value)" }
             .joined(separator: "  ")
         print("  → \(tally)")
+
+        // Same tally, split by KIND. The aggregate above answers "are nudges
+        // working?"; this answers "WHICH nudges are working?", which is the
+        // only form of the question you can act on — and the reason
+        // `.floater` was split out of `.getAhead` (they were one kind, so
+        // their rows summed into a single uninterpretable row here).
+        //
+        // Iterates `allCases` rather than the rows so a kind that produced
+        // NOTHING in the window is visible as an absence instead of just
+        // missing — "the floater check-in never fired" and "the floater
+        // check-in fired and was ignored" are very different findings.
+        print("  → by kind:")
+        for kind in NudgeOutcomeKind.allCases {
+            let ofKind = rows.filter { $0.kindRaw == kind.rawValue }
+            guard !ofKind.isEmpty else {
+                print("      \(pad(kind.rawValue, 15))—")
+                continue
+            }
+            let kindTally = Dictionary(grouping: ofKind, by: { $0.resultRaw })
+                .mapValues { $0.count }
+                .sorted { $0.value > $1.value }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: "  ")
+            print("      \(pad(kind.rawValue, 15))\(pad("n=\(ofKind.count)", 7))\(kindTally)")
+        }
+
+        // Explicit feedback, tallied on its own. Rated rows are expected to
+        // be a small minority, so folding them into the line above would
+        // hide them; and their whole value is in being cross-referenced
+        // against the inferred result rather than summed with it.
+        let rated = rows.filter { $0.feedback != nil }
+        if rated.isEmpty {
+            print("  → feedback: none given yet")
+        } else {
+            let feedbackTally = Dictionary(grouping: rated, by: { $0.feedback?.rawValue ?? "—" })
+                .mapValues { $0.count }
+                .sorted { $0.value > $1.value }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: "  ")
+            // The cross-tab is the point: which inferred results the user
+            // disagrees with.
+            let crossTab = Dictionary(grouping: rated, by: {
+                "\($0.resultRaw)+\($0.feedback?.rawValue ?? "—")"
+            })
+                .mapValues { $0.count }
+                .sorted { $0.value > $1.value }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: "  ")
+            print("  → feedback: \(feedbackTally)   (\(rated.count)/\(rows.count) rated)")
+            print("  → inferred+stated: \(crossTab)")
+        }
+    }
+
+    /// Short column label for the explicit rating, or "—" when the user
+    /// never pressed a feedback button (the common case).
+    private func feedbackLabel(_ row: NudgeOutcome) -> String {
+        switch row.feedback {
+        case .markedHelpful:   return "👍 helpful"
+        case .markedUnhelpful: return "👎 useless"
+        default:               return "—"
+        }
     }
 
     private func pad(_ text: String, _ width: Int) -> String {

@@ -270,6 +270,12 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
                 }
             }
 
+        case NudgeNotificationActionID.markHelpful.rawValue:
+            recordFeedback(.markedHelpful, on: outcome)
+
+        case NudgeNotificationActionID.markUnhelpful.rawValue:
+            recordFeedback(.markedUnhelpful, on: outcome)
+
         case UNNotificationDefaultActionIdentifier:
             // User tapped the notification body itself (not a button).
             outcome?.result = .tappedStart
@@ -295,6 +301,31 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
         }
 
         try? context.save()
+    }
+
+    /// Records an explicit 👍/👎 on the nudge, and touches NOTHING else.
+    ///
+    /// Every other branch above writes `result` + `actedAt`. This one
+    /// deliberately does not, in either direction:
+    ///
+    ///   • It leaves `result` alone, so a row the user already acted on
+    ///     keeps its behavioural record alongside the rating.
+    ///   • It leaves a `pending` row PENDING, so `NudgeOutcomeClassifier`
+    ///     still sweeps it later and we end up with both readings on the
+    ///     same row — the inferred one and the stated one. Stamping a
+    ///     result here would take the row out of the sweep's predicate and
+    ///     destroy the comparison the feedback exists to enable.
+    ///
+    /// The feedback actions are non-`.foreground` (see
+    /// `NudgeNotificationCategories`) so pressing one doesn't stamp
+    /// `AppOpenLog` either. The two signals stay independent end to end.
+    ///
+    /// Nothing consumes `feedback` yet — this is collection only.
+    @MainActor
+    private func recordFeedback(_ value: NudgeOutcomeResult, on outcome: NudgeOutcome?) {
+        guard let outcome else { return }
+        outcome.feedback = value
+        outcome.feedbackAt = Date()
     }
 
     /// Returns the highest-priority open task per `TaskSortComparator`.

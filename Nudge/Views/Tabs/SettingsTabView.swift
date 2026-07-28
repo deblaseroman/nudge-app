@@ -82,8 +82,17 @@ struct SettingsTabView: View {
                     )
                     toggleSettingsRow(
                         title: "Task due soon",
-                        subtitle: "Get-ahead reminders for tasks with deadlines, plus mid-day check-ins on open work.",
+                        subtitle: "Get-ahead reminders for tasks with deadlines — fires when it's time to start so the deadline doesn't arrive first.",
                         isOn: $profile.taskDueSoonNotificationsEnabled
+                    )
+                    // Was folded into "Task due soon" until Jul 2026. One
+                    // switch for two features meant silencing the mid-day
+                    // check-in also silenced every deadline-driven get-ahead
+                    // nudge — the more valuable half.
+                    toggleSettingsRow(
+                        title: "Open work check-in",
+                        subtitle: "A mid-day nudge about an undated task you haven't gotten to, 6 hrs after wake.",
+                        isOn: $profile.floaterCheckInNotificationsEnabled
                     )
                     toggleSettingsRow(
                         title: "Session starter",
