@@ -120,6 +120,14 @@ struct SettingsTabView: View {
                         subtitle: "A mid-day nudge about an undated task you haven't gotten to, 6 hrs after wake.",
                         isOn: $profile.floaterCheckInNotificationsEnabled
                     )
+                    // Added Jul 2026. Event blocks were the only kind with no
+                    // switch of their own, so the only way to stop them was
+                    // the master toggle above.
+                    toggleSettingsRow(
+                        title: "Event reminders",
+                        subtitle: "A heads-up before a block of calendar events, so the first one doesn't start without you.",
+                        isOn: $profile.eventReminderNotificationsEnabled
+                    )
                     toggleSettingsRow(
                         title: "Session starter",
                         subtitle: "A morning paralysis nudge if you haven't started anything 3 hrs after wake.",

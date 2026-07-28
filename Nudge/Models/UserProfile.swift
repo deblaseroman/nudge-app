@@ -54,6 +54,19 @@ final class UserProfile {
     /// row. Not a build error. Keep the default here, not just in `init`.
     var floaterCheckInNotificationsEnabled: Bool = true
 
+    /// Gates the arbiter's event-block reminders (`buildEventBlockCandidates`).
+    /// Added Jul 2026: event blocks were the ONLY notification kind with no
+    /// per-kind toggle, so silencing the heads-up before a class or meeting
+    /// meant turning off `notificationsEnabled` and losing everything else
+    /// with it.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, for the same reason as
+    /// `floaterCheckInNotificationsEnabled` above — no `VersionedSchema`
+    /// here, so a defaultless non-optional attribute fails at LAUNCH on an
+    /// existing store, not at build. Defaulting to `true` also means every
+    /// current user's behavior is unchanged.
+    var eventReminderNotificationsEnabled: Bool = true
+
     // MARK: - Quiet hours
     //
     // "When do I not want to be interrupted?" — deliberately SEPARATE from
@@ -147,6 +160,7 @@ final class UserProfile {
         deadlinePrepNotificationsEnabled: Bool = true,
         sessionStarterNotificationsEnabled: Bool = true,
         floaterCheckInNotificationsEnabled: Bool = true,
+        eventReminderNotificationsEnabled: Bool = true,
         quietHoursFollowSleepSchedule: Bool = true,
         quietHoursStartTime: Date? = nil,
         quietHoursEndTime: Date? = nil,
@@ -190,6 +204,7 @@ final class UserProfile {
         self.deadlinePrepNotificationsEnabled = deadlinePrepNotificationsEnabled
         self.sessionStarterNotificationsEnabled = sessionStarterNotificationsEnabled
         self.floaterCheckInNotificationsEnabled = floaterCheckInNotificationsEnabled
+        self.eventReminderNotificationsEnabled = eventReminderNotificationsEnabled
         self.quietHoursFollowSleepSchedule = quietHoursFollowSleepSchedule
         self.quietHoursStartTime = quietHoursStartTime
         self.quietHoursEndTime = quietHoursEndTime

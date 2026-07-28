@@ -383,10 +383,22 @@ final class NudgeArbiter: NudgeArbitering {
     /// Event-block reminders: one notification per block of events spaced
     /// within `eventBlockGapHours` of each other, fired
     /// `eventReminderLeadMinutes` before the FIRST event of the block.
+    ///
+    /// Budget-exempt, so — like the morning prompt — `passesGates` skips the
+    /// shared quiet-hours/busy gates for these and the per-kind toggle has to
+    /// be checked here. `eventReminderNotificationsEnabled` was added Jul
+    /// 2026; this was the last builder with no switch of its own, so the only
+    /// way to stop event heads-ups was the master `notificationsEnabled`.
     private func buildEventBlockCandidates(
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
+        guard profile.eventReminderNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] event: SKIP — eventReminderNotificationsEnabled is off.")
+            #endif
+            return []
+        }
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: Date())
         let horizonEnd = calendar.date(byAdding: .day, value: 14, to: todayStart) ?? .distantFuture
