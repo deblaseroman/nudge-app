@@ -1564,11 +1564,12 @@ final class NudgeArbiter: NudgeArbitering {
             + "\(padc("score→", 8))\(padc("score+", 8))\(padc("quad→", 9))\(padc("quad+", 9))TASK")
 
         var adjustedByID: [String: Double] = [:]
-        /// Eligible, budget-competing candidates carrying a NON-ZERO stakes
-        /// term. Only these can move anything: a `.medium` or `nil` task
-        /// contributes 0.0, and a budget-exempt candidate doesn't compete on
-        /// score at all.
-        var movable = 0
+        /// Eligible, budget-competing candidates and the stakes term each
+        /// would receive — the raw material for the contest test below.
+        /// Budget-exempt candidates are excluded because they don't compete
+        /// on score at all, and gate-blocked ones because they're already
+        /// out before scoring matters.
+        var contenders: [(fireDate: Date, term: Double, title: String, kind: String)] = []
         for entry in scored {
             let cand = entry.cand
             guard let inputs = entry.inputs else { continue }
@@ -1616,7 +1617,9 @@ final class NudgeArbiter: NudgeArbitering {
 
             let builtMatches = abs(cand.importance - without) < 0.0005
             let stakesTerm = inputs.stakes.flatMap { NudgeConfig.stakesImportanceBonus[$0] } ?? 0.0
-            if gated && cand.countsAgainstBudget && stakesTerm != 0 { movable += 1 }
+            if gated && cand.countsAgainstBudget {
+                contenders.append((cand.fireDate, stakesTerm, inputs.title, cand.kind.rawValue))
+            }
 
             print("  " + padc(cand.kind.rawValue, 13)
                 + padc(inputs.stakes?.rawValue ?? "—", 8)
@@ -1664,14 +1667,63 @@ final class NudgeArbiter: NudgeArbitering {
             // are too weak to matter, OR that nothing in today's data could
             // have moved regardless. Those call for opposite responses, so
             // say which one this is.
-            if movable == 0 {
-                print("  → NO FLIP — but VACUOUSLY: no eligible budget-competing candidate "
-                    + "carries a non-zero stakes term. Every one is medium/unclassified "
-                    + "(bonus 0.0), or is gate-blocked, or is budget-exempt. This run "
-                    + "exercised nothing — it is not evidence the weights are too small.")
+            //
+            // A non-zero stakes term is NOT enough to make a run
+            // informative, which is what this used to claim. Stakes only
+            // ever changes an outcome by REORDERING two candidates that
+            // contest the same slot — and `pickWinners` only ever compares
+            // candidates within `minNudgeSpacingMinutes` of each other. Four
+            // `.low` floaters at one fire time all shift by the same amount:
+            // their relative order is arithmetically fixed no matter what
+            // the weights are, so "the winner didn't change" was guaranteed
+            // before the data was read. Claiming that as evidence the
+            // weights are too small would be reading a tautology as a
+            // measurement.
+            //
+            // So evidence requires a genuine contest: two eligible,
+            // budget-competing candidates within the spacing window of each
+            // other carrying DIFFERENT terms. ("Different" implies at least
+            // one is non-zero, so that condition is subsumed.)
+            let sorted = contenders.sorted { $0.fireDate < $1.fireDate }
+            var contests: [(String, String)] = []
+            for i in sorted.indices {
+                for j in sorted.index(after: i)..<sorted.endIndex {
+                    let gap = sorted[j].fireDate.timeIntervalSince(sorted[i].fireDate)
+                    // Sorted by fire date, so once one pair is out of range
+                    // every later one is too.
+                    guard gap < Double(NudgeConfig.minNudgeSpacingMinutes) * 60 else { break }
+                    guard abs(sorted[i].term - sorted[j].term) > 0.0005 else { continue }
+                    contests.append((
+                        "\(sorted[i].kind)/\(sorted[i].title) (\(f(sorted[i].term)))",
+                        "\(sorted[j].kind)/\(sorted[j].title) (\(f(sorted[j].term)))"
+                    ))
+                }
+            }
+
+            if contests.isEmpty {
+                let nonZero = contenders.filter { $0.term != 0 }.count
+                let detail: String
+                if nonZero == 0 {
+                    detail = "no eligible budget-competing candidate carries a non-zero "
+                        + "stakes term — every one is medium/unclassified (bonus 0.0), "
+                        + "gate-blocked, or budget-exempt"
+                } else {
+                    detail = "\(nonZero) eligible candidate(s) carry a non-zero stakes term, "
+                        + "but no two candidates within \(NudgeConfig.minNudgeSpacingMinutes)m "
+                        + "of each other carry DIFFERENT terms. Every group that competes "
+                        + "shifts by the same amount, so its internal order can't change at "
+                        + "any weight"
+                }
+                print("  → NO FLIP — but VACUOUSLY: \(detail). This run exercised nothing — "
+                    + "it is not evidence the weights are too small.")
             } else {
-                print("  → NO FLIP — \(movable) eligible candidate(s) carried a non-zero "
-                    + "stakes term and the winner still didn't change. This one IS evidence.")
+                print("  → NO FLIP — and this one IS evidence: \(contests.count) real "
+                    + "contest(s) — candidates within \(NudgeConfig.minNudgeSpacingMinutes)m "
+                    + "of each other with different stakes terms — and the winner still "
+                    + "didn't change.")
+                for (a, b) in contests.prefix(5) {
+                    print("       ↳ contested: \(a)  vs  \(b)")
+                }
             }
         } else {
             for lost in winnersNow where !idsWith.contains(lost.id) {
