@@ -127,6 +127,31 @@ struct SettingsTabView: View {
                     )
                     settingsCard(title: "Entitlement now", value: debugEntitlementSummary)
                 }
+
+                settingsSection(title: "Debug — classifier harness") {
+                    Text("Seeds backdated NudgeOutcome rows covering every branch NudgeOutcomeClassifier distinguishes, runs the real decision logic over them, and prints expected vs actual to the Xcode console. Deletes everything it created afterward.")
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button(action: {
+                        NudgeHaptics.medium()
+                        NudgeOutcomeClassifierHarness.run(modelContext: modelContext)
+                    }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "testtube.2")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("Run classifier harness")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(NudgeTheme.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                    }
+                    .buttonStyle(.plain)
+                }
                 #endif
             }
             .padding(.horizontal, 20)

@@ -77,4 +77,20 @@ enum AppOpenLog {
             forKey: key
         )
     }
+
+    // MARK: - DEBUG
+
+    #if DEBUG
+    /// Replaces the whole log, bypassing `record`'s 60s-collapse and
+    /// `prune`'s retention window — the harness needs backdated stamps at
+    /// exact instants, which neither would preserve.
+    ///
+    /// Destructive by design: the harness snapshots `timestamps()` first and
+    /// restores it in a `defer`. Real opens are therefore invisible for the
+    /// duration of one synchronous run, which is also what keeps them from
+    /// contaminating the fixtures.
+    static func debugReplaceAll(with stamps: [Date]) {
+        write(stamps.sorted())
+    }
+    #endif
 }

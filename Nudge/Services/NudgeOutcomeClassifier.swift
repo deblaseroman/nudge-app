@@ -66,6 +66,25 @@ final class NudgeOutcomeClassifier {
     @discardableResult
     func classifyPending(modelContext: ModelContext) -> Int {
         let now = Date()
+        let rows = sweepableRows(now: now, modelContext: modelContext)
+        guard !rows.isEmpty else { return 0 }
+
+        let count = resolve(rows, now: now, modelContext: modelContext)
+        #if DEBUG
+        print("[NudgeOutcomeClassifier] Classified \(count) delivered nudge(s).")
+        #endif
+        return count
+    }
+
+    /// The pending rows a sweep running at `now` would resolve: past the
+    /// grace period, still `pending`.
+    ///
+    /// Split out of `classifyPending` so the DEBUG harness can ask "would
+    /// this row be picked up?" without running a sweep — that predicate is
+    /// itself a behaviour worth testing (a row inside the grace period must
+    /// stay pending), and it's the half the harness can't exercise by
+    /// calling `resolve` directly.
+    private func sweepableRows(now: Date, modelContext: ModelContext) -> [NudgeOutcome] {
         let graceCutoff = now.addingTimeInterval(
             -Double(NudgeConfig.outcomeClassificationGraceMinutes) * 60
         )
@@ -81,11 +100,22 @@ final class NudgeOutcomeClassifier {
             sortBy: [SortDescriptor(\.scheduledFor)]
         )
         descriptor.fetchLimit = 200
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
 
-        guard let rows = try? modelContext.fetch(descriptor), !rows.isEmpty else {
-            return 0
-        }
-
+    /// Applies the acted / engaged / ignored decision to `rows` and saves.
+    ///
+    /// Takes rows as a parameter rather than fetching them so the DEBUG
+    /// harness can run the REAL decision logic over its own seeded rows
+    /// only — a harness that called `classifyPending` would sweep the
+    /// user's genuine pending rows too, and would judge them against the
+    /// fake session-start / app-open state the harness has to inject.
+    @discardableResult
+    private func resolve(
+        _ rows: [NudgeOutcome],
+        now: Date,
+        modelContext: ModelContext
+    ) -> Int {
         for row in rows {
             let windowEnd = row.scheduledFor.addingTimeInterval(
                 Double(NudgeConfig.outcomeActionWindowMinutes) * 60
@@ -105,12 +135,31 @@ final class NudgeOutcomeClassifier {
             row.classifiedAt = now
         }
         try? modelContext.save()
-
-        #if DEBUG
-        print("[NudgeOutcomeClassifier] Classified \(rows.count) delivered nudge(s).")
-        #endif
         return rows.count
     }
+
+    // MARK: - DEBUG seams
+    //
+    // Thin wrappers so `NudgeOutcomeClassifierHarness` (a separate file,
+    // hence no access to the privates above) can drive the real logic.
+    // Neither adds behaviour; production paths are unchanged.
+
+    #if DEBUG
+    /// Runs the real classification decision over exactly these rows.
+    @discardableResult
+    func debugResolve(
+        _ rows: [NudgeOutcome],
+        now: Date,
+        modelContext: ModelContext
+    ) -> Int {
+        resolve(rows, now: now, modelContext: modelContext)
+    }
+
+    /// IDs of the rows a sweep at `now` would resolve.
+    func debugSweepableIDs(now: Date, modelContext: ModelContext) -> Set<UUID> {
+        Set(sweepableRows(now: now, modelContext: modelContext).map(\.id))
+    }
+    #endif
 
     // MARK: - "Did they do the thing?"
 
