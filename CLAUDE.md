@@ -11,6 +11,16 @@ Nudge is an iOS app (SwiftUI + SwiftData) that turns brain-dumped tasks into sch
 
 iOS deployment target is 26.4 — a build failure about the deployment target means the local Xcode is too old, not broken code. No SPM/CocoaPods dependencies; the Anthropic API is called directly over URLSession.
 
+## Current work order
+
+Sequencing constraints in force right now. Each is a deliberate state, not an oversight — don't "fix" one without being asked.
+
+1. **Stakes is NOT wired into scoring.** `EisenhowerScorer.importance` accepts an optional `stakes:` param, but no production call site passes it, so the number is identical to the pre-stakes one. Do not arm it without explicit instruction.
+2. **Before arming stakes, the floater check-in must actually fire and produce baseline outcome data.** It never has — `.floater` shows `—` in every by-kind outcome dump, because `buildFloaterCheckInCandidates` has no next-day rollover. Arming stakes first would hand floaters a −0.15 penalty and suppress the very thing `.floater` was split out to measure.
+3. **`NudgeConfig.fatigueGateEnabled` is false deliberately.** Outcomes are being recorded and observed before anything consumes them.
+4. **Break-it-down is paused pending removal.** Don't build on it.
+5. **Any change that alters what the arbiter does gets a DEBUG before/after comparison on real data before it goes live.** This has caught several wrong assumptions already.
+
 ## Build & verify
 
 There are no test targets and no linter config — verification is building both schemes:
