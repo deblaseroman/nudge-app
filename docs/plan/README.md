@@ -10,6 +10,10 @@ loop, not to remove the human from it.
 
 ---
 
+**New planning conversation?** Read [`CONTEXT.md`](CONTEXT.md) first — it
+orients you on how the arbiter works and what's deliberately not armed, since
+you can't reach the root docs from here.
+
 ## The three roles
 
 | Role | Who | Writes | Reads |
