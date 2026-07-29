@@ -38,6 +38,12 @@ Because step 1 always runs first, a builder that fails to rebuild something
 Every discretionary nudge fires at an offset from **wake**, not a fixed clock
 time. Each has its own on/off toggle in Settings, plus a master switch.
 
+> **This table drifts.** Nothing keeps it in agreement with the code — a
+> builder added, removed, or re-anchored leaves it silently wrong, and
+> break-it-down is already scheduled to disappear from it. Treat it as a shape
+> to reason about, and ask for `ARCHITECTURE.md` to be relayed before relying
+> on any specific row.
+
 | Builder | Fires | Notes |
 |---|---|---|
 | Event blocks | lead time before the first event of a cluster | budget-exempt; 14-day horizon |
@@ -112,8 +118,10 @@ You cannot read these. Ask for the relevant one to be relayed.
   what stakes means, the two feedback channels (behavior and explicit opinion,
   never a survey), and the no-shaming rule. **Ask before proposing anything
   user-facing** — copy, what the user is told, when they're interrupted.
-- **`ROADMAP.md`** — **does not exist.** If future direction matters to a plan,
-  ask for it directly; there is no file to relay.
+- **`ROADMAP.md`** — the index of outstanding work: what's queued and under
+  consideration, as distinct from `CLAUDE.md`, which holds the constraints in
+  force right now. Ask for it when a plan needs to fit alongside work already
+  intended, or before proposing something new that may already be on it.
 
 Reports in `reports/` are the other half of your context: they carry what
 actually happened, including deviations and things noticed but deliberately not
