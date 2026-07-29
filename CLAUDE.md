@@ -11,6 +11,10 @@ Nudge is an iOS app (SwiftUI + SwiftData) that turns brain-dumped tasks into sch
 
 iOS deployment target is 26.4 — a build failure about the deployment target means the local Xcode is too old, not broken code. No SPM/CocoaPods dependencies; the Anthropic API is called directly over URLSession.
 
+`docs/plan/README.md` is the planning bus: a separate planning agent writes the current work item to `docs/plan/NEXT.md`, Claude Code archives the approved plan and writes a report to `docs/plan/reports/`. Read it at session start — if `NEXT.md` holds an approved item, that's the work. The planner's filesystem access is scoped to `docs/plan/`, so Claude Code stays the only writer to source.
+
+`DESIGN.md` is the product intent — positioning, what the arbiter is for, where AI is allowed, tone rules. Read it before any change that touches product behavior (copy, what the user is told, when they're interrupted, what the app decides for them); a change can compile, fit `ARCHITECTURE.md`, and still be wrong there.
+
 ## Current work order
 
 Sequencing constraints in force right now. Each is a deliberate state, not an oversight — don't "fix" one without being asked.
