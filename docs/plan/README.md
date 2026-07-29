@@ -47,7 +47,8 @@ the audit trail is genuinely unprotected.
 ## The cycle
 
 1. **Planner writes `NEXT.md`**, replacing whatever was there. One work item.
-   The template in that file lists the sections a usable instruction carries.
+   [`_PLAN_TEMPLATE.md`](_PLAN_TEMPLATE.md) lists the sections a usable
+   instruction carries; `NEXT.md` itself is a filled-in example.
 2. **Roman approves.** This is the load-bearing step — see [The approval
    step](#the-approval-step). Nothing proceeds without it.
 3. **Claude Code archives the approved plan first**, before doing any work:
