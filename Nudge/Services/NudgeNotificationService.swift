@@ -225,7 +225,14 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             // User hasn't started yet. Pick the top task for them so they
             // don't have to choose, drop them on the Tasks tab, and let
             // TasksTabView surface a confirmation sheet.
-            outcome?.result = .tappedStart
+            //
+            // `.tappedOpen`, not `.tappedStart` (Aug 2026): "Not yet" is a
+            // deliberate reply that OPENS a proposal sheet — by their own
+            // statement the user hasn't started anything. If they start
+            // from the sheet, the session lands after this row is resolved
+            // and is not re-attributed; under-crediting is the safe
+            // direction while outcomes are observation-only.
+            outcome?.result = .tappedOpen
             outcome?.actedAt = Date()
             let topTask = pickTopOpenTask(context: context)
             // Capture as a sendable value — must not access the SwiftData
@@ -277,7 +284,13 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
 
         case UNNotificationDefaultActionIdentifier:
             // User tapped the notification body itself (not a button).
-            outcome?.result = .tappedStart
+            // `.tappedOpen`, not `.tappedStart` (Aug 2026): a body tap
+            // means "show me", not "I'm starting" — recording it as
+            // tappedStart made the two indistinguishable in the data,
+            // which the fatigue gate must be able to tell apart before it
+            // ever arms. `.tappedStart` now comes only from the explicit
+            // Start action above.
+            outcome?.result = .tappedOpen
             outcome?.actedAt = Date()
             // The morning prompt asks a question the user answers by TYPING —
             // its landing surface is the Home chat, where the reply flows

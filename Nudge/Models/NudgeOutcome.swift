@@ -123,7 +123,21 @@ extension NudgeOutcomeKind {
 
 enum NudgeOutcomeResult: String, Codable {
     case pending          // scheduled but not yet fired / acted upon
-    case tappedStart      // user tapped "Start session"
+    /// User tapped the explicit "Start session" action — and ONLY that.
+    /// Until Aug 2026 (cycle 2026-08-01-03) the delegate also wrote this
+    /// for notification BODY taps and for the idle "Not yet" answer, so
+    /// rows from before that cut date read as "acted on this" when many
+    /// were "opened the app to see what it was". Rows keep their raw
+    /// values — additive split, same convention as the kind splits: pre-cut
+    /// `tappedStart` numbers are a blend, post-cut they mean what they say.
+    case tappedStart
+    /// User tapped the notification body (the default action) — they came
+    /// to look, which is engagement with the nudge but NOT starting work.
+    /// Also written for the idle "Not yet" answer (a deliberate reply that
+    /// opens a proposal sheet without starting anything). Split out of
+    /// `tappedStart`, Aug 2026 — "acted on this" and "opened the app to
+    /// see" must be different values before the fatigue gate ever arms.
+    case tappedOpen
     case tappedSnooze     // user tapped "Snooze 30 min"
     // `tappedBreakDown` left with the `.breakItDown` kind (Jul 2026). Its
     // writer had already been removed, so no row ever carried the raw
