@@ -1,8 +1,8 @@
-# NEXT — Tasks tab: message box and layout reorder
+# NEXT — Message box: sized, bordered, and AI-ready
 
 **Status:** APPROVED
-**Cycle ID:** 2026-08-01-01
-**Source:** design discussion — first version, will be extended
+**Cycle ID:** 2026-08-01-02
+**Source:** design feedback on cycle `2026-08-01-01`
 
 > Still on `automation-run-1`. Commit, do not push, do not merge.
 
@@ -10,100 +10,94 @@
 
 ## What to build
 
-A **read-only message surface** at the top of the Tasks tab, plus a layout
-reorder. This is version one of the app's only place to *speak* — every
-other surface either takes input or shows data.
+Three changes to `TasksMessageBox`. The composer's logic and its four
+states are correct — this is about how it looks and what can plug into it.
 
-### Layout
+### 1 — Form factor
 
-Current order, top to bottom: header + description → Start Session →
-Completed → timeline → sections.
+It should read as **a row in the list, not a banner above it**. Match the
+scheduled-task row: same height, same corner radius, same horizontal
+insets. The difference is a visible border — a task row is a filled card,
+this is an outlined one. Use `NudgeTheme.border`; do not introduce a color.
 
-New order:
+The leading accent bar from the current version goes away — the border is
+the treatment now.
 
-1. Header — **delete the "Overdue tasks rise to the top…" description
-   line.** It explains a sort order the user doesn't need narrated.
-2. **Message box** (new)
-3. Timeline
-4. **Start Session** (moved down from above the timeline)
-5. Everything else unchanged
+### 2 — Room for a character
 
-### The message box
+Reserve a square on the **left**, vertically centred, sized like the
+leading element of a task row so the two align down the tab. For now fill
+it with a plain grey placeholder from `NudgeTheme` — no icon, no glyph, no
+image asset.
 
-- **No text input. None.** No field, no send button, no keyboard. It is a
-  display surface. This is deliberate and not a v1 shortcut — Home already
-  owns capture, and a second capture path doubles where a capture bug can
-  live.
-- Open box styled to read as the app speaking — not a card, not a task row.
-  Use `NudgeTheme`; no new colors.
-- Tappable to expand when there's more detail than fits. Collapsed shows a
-  line or two; expanded shows the full message.
+A mascot goes here later (a messenger pigeon; there will eventually be
+several, one per surface). So: **make the slot a named subview taking a
+single parameter**, not a rectangle inlined into the layout. Swapping the
+placeholder for an image should be one line and touch nothing else.
 
-### What it says — deterministic, no AI this cycle
+Since the row height is now fixed, say what happens to text that doesn't
+fit — truncation, or does the row grow on expand. Tap-to-expand should
+still work.
 
-Everything below comes from data the app already has. **Do not add a
-`ClaudeService` call in this cycle.** That keeps the box working offline and
-with no API key, and it's the AI-at-the-edges rule in `DESIGN.md`.
+### 3 — An AI seam, unused for now
 
-Priority order — show the first that applies:
+The composer is deterministic and stays that way **in this cycle**. But
+build the surface so an AI-written message can be dropped in without
+restructuring:
 
-1. **A nudge was just tapped.** The user tapped a notification and landed
-   here; the box explains that nudge in more detail than a banner allows.
-   The idle "Not yet" flow already has a durable-intent pattern for exactly
-   this (`pendingIdleTaskIDKey` in App Group defaults, consumed on
-   appear/active) — reuse that mechanism rather than inventing a second one,
-   and say whether it generalises cleanly to other kinds.
-2. **Something is overdue.** Name what and by how long.
-3. **Something high-stakes is approaching.** Name it and the days remaining.
-4. **Resting state.** A plain line about the day — what's open, what's next.
-   Never blank: an empty box at the top of the most-used tab is dead space.
+- The composer should return a message *value* — text plus whatever the
+  view needs — rather than the view deriving strings inline.
+- There should be one obvious place where an AI-written message would take
+  precedence over the deterministic one, marked in a comment. Don't call
+  anything. Don't add a config flag for a feature that doesn't exist.
+- Say in the report exactly what a future cycle would have to change to
+  plug `ClaudeService` in, and what it would *not* have to touch.
 
-### Tone
+**Offline behaviour and token cost are explicitly not concerns this
+cycle** — noted because prior cycles treated them as hard constraints and
+that's now relaxed for this surface. The deterministic composer stays as
+the fallback when an AI message is absent for any reason, which handles it
+anyway.
 
-`DESIGN.md` applies and this is the surface where it bites hardest — it's
-the app's voice. State facts. No verdict on the user, no promise of an
-outcome, no implied failure for missed work. "Two things due today" is
-right; "you're falling behind" is not.
+### 4 — Fold in the rationale banner
+
+Your own report flagged it: the AI Refine rationale strip is a second "app
+speaks" surface on the same tab. Make it a fifth composer state so there's
+one voice in one place. Where it sits in the priority order is your call —
+say which and why.
 
 ## Why
 
-The app has no way to explain itself. Notifications are 60 characters and
-gone; the task list shows state without context. This is the surface for
-the things we've designed but had nowhere to put: what a nudge meant, what
-the app created and why, how a week is shaping up.
-
-Read-only first because the valuable half is the app *speaking*, and that
-half needs none of the capture machinery. Making it conversational later
-means extracting `HomeTabView.sendMessage` into a service — real work, own
-cycle, not this one.
+The box is the app's voice and it currently looks like an announcement
+bolted above the content. Sized like a row with a border, it reads as part
+of the list — something the app added, not something layered on top. The
+character slot is what will eventually carry personality; leaving the seam
+now means the mascot lands without a refactor.
 
 ## Constraints
 
-- **No `ClaudeService` call.** Deterministic content only.
-- **No text input.**
-- No new `@Model` unless the message store genuinely needs persistence —
-  say which you chose and why. If it does need a model, remember the three
-  hand-synced schema lists.
-- `NudgeTheme` only. No new colors, no inline literals.
-- Moving Start Session must not break the session flow or the picker.
-- `ROADMAP.md` §1 untouched.
-- This is a layout and presentation change, not an arbiter change — say so
-  explicitly rather than skipping work-order item 5 silently.
+- `NudgeTheme` only. No new colors, no inline literals, no image assets.
+- No `ClaudeService` call this cycle.
+- No text input. Still display-only.
+- Don't change the composer's four existing states or their priority order
+  beyond inserting the rationale.
+- Presentation-only — say so rather than skipping work-order item 5.
 
 ## Evidence it worked
 
 - Both schemes build.
-- Screenshots or a description of each of the four message states.
-- The resting state is never blank.
-- Start Session still starts a session from its new position.
-- Tapping a notification body lands on Tasks and the box explains it.
+- Description or screenshot of the box beside a task row, showing the
+  height and leading-element alignment match.
+- Each of the five states renders.
+- Tap-to-expand still works at the fixed height.
+- The character slot swaps to an image in one line — show the line.
 
 ## Out of scope
 
-- Any conversational or input capability.
-- Extracting the capture pipeline.
-- AI-generated message text.
-- Retiring the AI Refine button (`ROADMAP.md` §3 — still queued).
-- Study tasks from exam events.
+- The actual mascot asset.
+- Any AI call.
+- Conversational input; extracting the capture pipeline.
+- Retiring AI Refine as a button (`ROADMAP.md` §3) — folding its *rationale*
+  into the box is not the same thing and doesn't do it.
 - The Lexend fonts.
 - Merging or pushing.

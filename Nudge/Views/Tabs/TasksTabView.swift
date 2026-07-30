@@ -232,7 +232,11 @@ struct TasksTabView: View {
                 // it's the tab's voice; Start Session moved below the
                 // timeline so the day's shape reads before the call to act.
                 header
-                TasksMessageBox(tasks: tasks, tappedNudge: tappedNudgeContext)
+                TasksMessageBox(
+                    tasks: tasks,
+                    tappedNudge: tappedNudgeContext,
+                    rationale: refineRationale
+                )
                 HStack(alignment: .center) {
                     sectionLabel("Today")
                     Spacer()
@@ -290,21 +294,8 @@ struct TasksTabView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if let rationale = refineRationale, !rationale.isEmpty {
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(NudgeTheme.primary)
-                        Text(rationale)
-                            .font(.custom(NudgeTheme.fontMedium, size: 13))
-                            .foregroundColor(NudgeTheme.textSecondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(NudgeTheme.primary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
-                }
+                // The AI Refine rationale renders through the message box
+                // above (its fifth composer state) — one voice in one place.
                 TodayTimelineView(
                     profile: profile,
                     onOpenTask: { task in

@@ -76,8 +76,21 @@ enum TasksMessageComposer {
     static func compose(
         tasks: [NudgeTask],
         tappedNudge: TappedNudgeContext?,
+        rationale: String? = nil,
+        aiMessage: TasksMessage? = nil,
         now: Date
     ) -> TasksMessage {
+        // ── AI SEAM (unused as of Aug 2026) ─────────────────────────────
+        // An AI-written message takes precedence over every deterministic
+        // state below. Nothing produces one yet — no call, no flag. The
+        // future cycle that plugs `ClaudeService` in only has to build a
+        // `TasksMessage` and pass it here; the states below then serve as
+        // the fallback whenever it's absent (offline, no key, error), which
+        // is what keeps this surface safe to make non-deterministic.
+        if let aiMessage {
+            return aiMessage
+        }
+
         let open = tasks.filter { !$0.isComplete && !$0.isInformationalEvent }
 
         // 1 — a nudge was just tapped.
@@ -134,7 +147,22 @@ enum TasksMessageComposer {
             )
         }
 
-        // 4 — resting. Never blank.
+        // 4 — the AI Refine rationale (fifth state, Aug 2026 — folded in
+        // from the banner that used to render separately, so the tab has
+        // one voice in one place). Sits BELOW overdue and high-stakes on
+        // purpose: those are the day's actionable facts, while the
+        // rationale is stable all-day context whose visible result — the
+        // placements — already shows on the timeline. In the common
+        // just-refined case (day freshly planned, nothing overdue pressing)
+        // it surfaces immediately anyway.
+        if let rationale, !rationale.trimmingCharacters(in: .whitespaces).isEmpty {
+            return TasksMessage(
+                headline: "Here's the thinking behind today's plan.",
+                detail: rationale
+            )
+        }
+
+        // 5 — resting. Never blank.
         return restingMessage(open: open, allTasks: tasks, now: now)
     }
 
@@ -243,14 +271,49 @@ enum TasksMessageComposer {
     }
 }
 
+// MARK: - Character slot
+
+/// The square on the box's left where a character lands — a messenger
+/// pigeon, eventually one per surface. Sized like a task row's leading
+/// checkbox (28×28) so the two align down the tab. Until an asset exists it
+/// renders a plain grey placeholder from the theme.
+///
+/// One parameter on purpose: dropping the mascot in is ONE line at the call
+/// site — `MessageBoxCharacterSlot(image: Image("pigeon-tasks"))` — and
+/// touches nothing else.
+struct MessageBoxCharacterSlot: View {
+    var image: Image? = nil
+
+    var body: some View {
+        Group {
+            if let image {
+                image
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(NudgeTheme.textPlaceholder)
+            }
+        }
+        .frame(width: 28, height: 28)
+    }
+}
+
 // MARK: - View
 
-/// Open box styled to read as the app speaking — a leading accent bar and
-/// plain text, deliberately NOT a card and NOT a task row. Tap to expand
-/// when there's more detail than the collapsed line or two can hold.
+/// The app speaking as a row IN the list, not a banner above it — same
+/// footprint as a task row (padding, corner radius, the shared horizontal
+/// insets), with one difference carrying the distinction: a task row is a
+/// FILLED card, this is an OUTLINED one (`NudgeTheme.border`, no fill).
+///
+/// Height: collapsed, the headline truncates at two lines — the footprint a
+/// task row with a subtitle has. Expanding GROWS the row in place (same
+/// width, same corners) to the full headline plus detail; tap again to
+/// collapse back.
 struct TasksMessageBox: View {
     let tasks: [NudgeTask]
     let tappedNudge: TappedNudgeContext?
+    var rationale: String? = nil
 
     @State private var isExpanded = false
 
@@ -264,14 +327,13 @@ struct TasksMessageBox: View {
         let message = TasksMessageComposer.compose(
             tasks: tasks,
             tappedNudge: tappedNudge,
+            rationale: rationale,
             now: clock.now
         )
         let expandable = message.detail != nil
 
-        HStack(alignment: .top, spacing: 10) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(NudgeTheme.primary)
-                .frame(width: 3)
+        HStack(alignment: .center, spacing: 14) {
+            MessageBoxCharacterSlot()
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(message.headline)
@@ -297,11 +359,15 @@ struct TasksMessageBox: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(NudgeTheme.textMuted)
                     .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                    .padding(.top, 4)
             }
         }
-        .padding(.vertical, 2)
-        .contentShape(Rectangle())
+        .padding(16)
+        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+        .overlay(
+            RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
+                .stroke(NudgeTheme.border, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
         .onTapGesture {
             guard expandable else { return }
             NudgeHaptics.light()
