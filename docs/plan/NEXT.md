@@ -1,8 +1,8 @@
-# NEXT — Fresh device checklist for the whole branch
+# NEXT — Tasks tab: message box and layout reorder
 
 **Status:** APPROVED
-**Cycle ID:** 2026-07-31-01
-**Source:** fifteen changes across five cycles, none verified on device
+**Cycle ID:** 2026-08-01-01
+**Source:** design discussion — first version, will be extended
 
 > Still on `automation-run-1`. Commit, do not push, do not merge.
 
@@ -10,61 +10,100 @@
 
 ## What to build
 
-One thing: **a new device-verification checklist** covering everything on
-this branch, replacing `DEVICE-CHECK-automation-run-1.md`. Write it fresh
-rather than amending — the old one covers four cycles and the branch now
-carries fifteen changes across five, and a checklist that's been patched
-twice is one nobody trusts.
+A **read-only message surface** at the top of the Tasks tab, plus a layout
+reorder. This is version one of the app's only place to *speak* — every
+other surface either takes input or shows data.
 
-No code changes in this cycle unless the checklist-writing surfaces a bug,
-in which case report it rather than fixing it.
+### Layout
+
+Current order, top to bottom: header + description → Start Session →
+Completed → timeline → sections.
+
+New order:
+
+1. Header — **delete the "Overdue tasks rise to the top…" description
+   line.** It explains a sort order the user doesn't need narrated.
+2. **Message box** (new)
+3. Timeline
+4. **Start Session** (moved down from above the timeline)
+5. Everything else unchanged
+
+### The message box
+
+- **No text input. None.** No field, no send button, no keyboard. It is a
+  display surface. This is deliberate and not a v1 shortcut — Home already
+  owns capture, and a second capture path doubles where a capture bug can
+  live.
+- Open box styled to read as the app speaking — not a card, not a task row.
+  Use `NudgeTheme`; no new colors.
+- Tappable to expand when there's more detail than fits. Collapsed shows a
+  line or two; expanded shows the full message.
+
+### What it says — deterministic, no AI this cycle
+
+Everything below comes from data the app already has. **Do not add a
+`ClaudeService` call in this cycle.** That keeps the box working offline and
+with no API key, and it's the AI-at-the-edges rule in `DESIGN.md`.
+
+Priority order — show the first that applies:
+
+1. **A nudge was just tapped.** The user tapped a notification and landed
+   here; the box explains that nudge in more detail than a banner allows.
+   The idle "Not yet" flow already has a durable-intent pattern for exactly
+   this (`pendingIdleTaskIDKey` in App Group defaults, consumed on
+   appear/active) — reuse that mechanism rather than inventing a second one,
+   and say whether it generalises cleanly to other kinds.
+2. **Something is overdue.** Name what and by how long.
+3. **Something high-stakes is approaching.** Name it and the days remaining.
+4. **Resting state.** A plain line about the day — what's open, what's next.
+   Never blank: an empty box at the top of the most-used tab is dead space.
+
+### Tone
+
+`DESIGN.md` applies and this is the surface where it bites hardest — it's
+the app's voice. State facts. No verdict on the user, no promise of an
+outcome, no implied failure for missed work. "Two things due today" is
+right; "you're falling behind" is not.
 
 ## Why
 
-Everything on this branch was verified by extracted-code harnesses and
-builds. Not one change has run against the real store. That was acceptable
-one cycle in; at fifteen it's the accumulated risk that stands between this
-branch and a merge.
+The app has no way to explain itself. Notifications are 60 characters and
+gone; the task list shows state without context. This is the surface for
+the things we've designed but had nowhere to put: what a nudge meant, what
+the app created and why, how a week is shaping up.
 
-## What it has to cover
+Read-only first because the valuable half is the app *speaking*, and that
+half needs none of the capture machinery. Making it conversational later
+means extracting `HomeTabView.sendMessage` into a service — real work, own
+cycle, not this one.
 
-Every change on the branch. Group them however reads best for someone
-working through it with a phone in one hand and Xcode open — but these
-constraints hold:
+## Constraints
 
-- **Anything order-dependent goes first**, clearly marked as unrecoverable
-  once the app launches. The BEFORE outcome dump is the known case; check
-  whether the placement rollover creates another (it mutates on first
-  launch, so the pre-rollover state is gone once the app opens).
-- **Say which checks need the phone and which need the console.** Mixing
-  them without labels is what makes a checklist tedious.
-- **Quote the expected console output inline** so each check is a
-  comparison rather than a judgement call.
-- **A falsifier per section** — what result would mean it's broken.
-- **Flag the checks that can't be done in one sitting** and say what they
-  need. The morning prompt's no-repeat rule wants three consecutive
-  mornings; say so plainly rather than implying a same-day check proves it.
+- **No `ClaudeService` call.** Deterministic content only.
+- **No text input.**
+- No new `@Model` unless the message store genuinely needs persistence —
+  say which you chose and why. If it does need a model, remember the three
+  hand-synced schema lists.
+- `NudgeTheme` only. No new colors, no inline literals.
+- Moving Start Session must not break the session flow or the picker.
+- `ROADMAP.md` §1 untouched.
+- This is a layout and presentation change, not an arbiter change — say so
+  explicitly rather than skipping work-order item 5 silently.
 
-**Two behavior changes are new noise and should be called out as expected,
-not as faults:** the idle nudge now fires on school days for the first time
-(item 4), and tasks placed on past days will disappear from wherever they
-were and reappear in Unscheduled on first launch (item 1).
+## Evidence it worked
 
-**Two things the old checklist got right — keep them.** The trick of
-temporarily shifting wake time so all the anchors land minutes out, and the
-long-press instruction, since action buttons don't render on an unexpanded
-banner and a glance proves nothing.
-
-## Realistic time
-
-Say how long it actually takes and don't round down. If it's twenty
-minutes, say twenty. A checklist that claims ten and takes thirty gets
-abandoned halfway.
+- Both schemes build.
+- Screenshots or a description of each of the four message states.
+- The resting state is never blank.
+- Start Session still starts a session from its new position.
+- Tapping a notification body lands on Tasks and the box explains it.
 
 ## Out of scope
 
-- Everything in `ROADMAP.md` §1.
-- The Lexend fonts — blocked on files I have to supply.
-- Schedule-based nudge timing; study tasks from exam events.
-- Any code change. Report bugs, don't fix them.
+- Any conversational or input capability.
+- Extracting the capture pipeline.
+- AI-generated message text.
+- Retiring the AI Refine button (`ROADMAP.md` §3 — still queued).
+- Study tasks from exam events.
+- The Lexend fonts.
 - Merging or pushing.

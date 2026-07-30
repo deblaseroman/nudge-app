@@ -42,6 +42,10 @@ struct TasksTabView: View {
     /// we show `IdleStartConfirmationSheet` offering to start a session
     /// on this task with a "pick something else" escape hatch.
     @State private var idleProposedTaskID: UUID?
+    /// The nudge the user arrived from (body tap → Tasks), read from the
+    /// app-group keys on appear/active — the message box's top-priority
+    /// state. Nil once the context has expired.
+    @State private var tappedNudgeContext: TappedNudgeContext?
 
     private var coordinator: SessionCoordinator { SessionCoordinator.shared }
 
@@ -223,9 +227,12 @@ struct TasksTabView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                // Order (2026-08-01-01): header → message box → timeline →
+                // Start Session → everything else. The box leads because
+                // it's the tab's voice; Start Session moved below the
+                // timeline so the day's shape reads before the call to act.
                 header
-                startSessionButton
-                completedButton
+                TasksMessageBox(tasks: tasks, tappedNudge: tappedNudgeContext)
                 HStack(alignment: .center) {
                     sectionLabel("Today")
                     Spacer()
@@ -312,6 +319,8 @@ struct TasksTabView: View {
                     onTapEmpty: { placement = PlacementContext(time: $0) },
                     onCompleteTask: { toggleCompletion(for: $0) }
                 )
+                startSessionButton
+                completedButton
                 tasksContent
                     .padding(.top, 8)
             }
@@ -328,11 +337,17 @@ struct TasksTabView: View {
             // Durable idle "Not yet" intent — present the sheet whenever the
             // Tasks tab appears, including a cold launch from the tap.
             consumePendingIdleTask()
+            // Durable tapped-nudge context for the message box — same
+            // launch-path independence, but read-while-fresh, not one-shot.
+            tappedNudgeContext = TappedNudgeContext.read()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Also consume when returning to the foreground while the Tasks
             // tab is already on screen (onAppear won't re-fire then).
-            if newPhase == .active { consumePendingIdleTask() }
+            if newPhase == .active {
+                consumePendingIdleTask()
+                tappedNudgeContext = TappedNudgeContext.read()
+            }
         }
         .sheet(item: $placement) { ctx in
             placementSheet(for: ctx)
@@ -517,7 +532,10 @@ struct TasksTabView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             AccountShortcutButton(selectedTab: $selectedTab)
-            ScreenHeader(title: "Tasks", subtitle: "Overdue tasks rise to the top, then everything else sorts by due date.")
+            // No description line: it narrated the sort order, which the
+            // list itself makes obvious. The message box below the header
+            // is the tab's voice now.
+            ScreenHeader(title: "Tasks")
 
             Spacer()
 

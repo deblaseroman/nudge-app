@@ -53,6 +53,19 @@ enum NudgeConfig {
     /// a one-word diff once the recorded classifications have been reviewed.
     static let fatigueGateEnabled: Bool = false
 
+    // MARK: - Tasks message box
+    /// How long after a notification body tap the Tasks tab's message box
+    /// keeps explaining that nudge before falling through to the ordinary
+    /// states (overdue → high-stakes → resting). Long enough to survive the
+    /// tap→read gap comfortably; short enough that a lunchtime tap isn't
+    /// still narrating itself at dinner.
+    static let messageBoxTapContextMinutes: Int = 30
+
+    /// The message box's "something high-stakes is approaching" state only
+    /// looks this many days ahead. Beyond it, a high-stakes task is real
+    /// but not *approaching*, and the resting state reads better.
+    static let messageBoxHighStakesHorizonDays: Int = 7
+
     // MARK: - Quiet hours
     /// No discretionary nudges before this many minutes after wake.
     /// (Lets the user actually wake up before being pestered.)

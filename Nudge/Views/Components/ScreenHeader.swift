@@ -9,7 +9,10 @@ import SwiftUI
 
 struct ScreenHeader: View {
     let title: String
-    let subtitle: String
+    /// Optional since Jul 2026 — the Tasks tab dropped its description line
+    /// (it narrated a sort order the user doesn't need explained) and the
+    /// message box speaks under the title instead.
+    var subtitle: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -17,9 +20,11 @@ struct ScreenHeader: View {
                 .font(.custom(NudgeTheme.fontSemiBold, size: 28))
                 .foregroundColor(NudgeTheme.textPrimary)
 
-            Text(subtitle)
-                .font(.custom(NudgeTheme.fontBody, size: 15))
-                .foregroundColor(NudgeTheme.textMuted)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.custom(NudgeTheme.fontBody, size: 15))
+                    .foregroundColor(NudgeTheme.textMuted)
+            }
         }
     }
 }

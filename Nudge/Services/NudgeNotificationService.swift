@@ -39,6 +39,19 @@ final class NudgeNotificationService: NSObject {
     static let pendingIdleTaskIDKey = "nudge.pendingIdleTaskID"
     static let pendingIdleTaskDateKey = "nudge.pendingIdleTaskDate"
 
+    /// App-group keys for "the user tapped a nudge BODY and landed on the
+    /// Tasks tab" — the same durable pattern as the idle keys above (a
+    /// transient post dies on cold launch), consumed by the Tasks tab's
+    /// message box via `TappedNudgeContext.read()`. NOT one-shot: the box
+    /// is passive display, so the context stays readable for its freshness
+    /// window (`NudgeConfig.messageBoxTapContextMinutes`) and expires by
+    /// age. Written only on body taps that route to Tasks — action buttons
+    /// carry their own flows (Start starts a session, idle "Not yet" has
+    /// its sheet), and morning-prompt taps land in Home chat.
+    static let tappedNudgeKindKey = "nudge.tappedNudgeKind"
+    static let tappedNudgeTaskIDKey = "nudge.tappedNudgeTaskID"
+    static let tappedNudgeDateKey = "nudge.tappedNudgeDate"
+
     enum AuthorizationState {
         case notDetermined
         case denied
@@ -272,6 +285,20 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             // home remains the Tasks tab.
             let kindRaw = requestContent.userInfo[NudgeNotificationUserInfoKey.kind] as? String
             let tab = (kindRaw == NudgeOutcomeKind.morningPrompt.rawValue) ? "home" : "tasks"
+            // Durable context for the Tasks tab's message box: which nudge
+            // the user arrived from, so the box can explain it in more room
+            // than a banner has. Same survives-cold-launch reasoning as the
+            // idle "Not yet" keys above.
+            if tab == "tasks", let kindRaw {
+                let defaults = SharedModelContainer.appGroupDefaults
+                defaults.set(kindRaw, forKey: Self.tappedNudgeKindKey)
+                if let taskID {
+                    defaults.set(taskID.uuidString, forKey: Self.tappedNudgeTaskIDKey)
+                } else {
+                    defaults.removeObject(forKey: Self.tappedNudgeTaskIDKey)
+                }
+                defaults.set(Date(), forKey: Self.tappedNudgeDateKey)
+            }
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: .nudgeNotificationOpenTab,
