@@ -44,9 +44,12 @@
 //  failure, so `NudgeOutcomeKind.successIsObservableInApp` marks those kinds
 //  and both fatigue consumers in `NudgeArbiter` skip their rows.
 //
-//  `NudgeOutcome.feedback` (the 👍/👎 notification actions) is the channel
-//  built to break the tie behaviour can't. It lives in its own column so a
-//  row can say `.ignored` and `markedHelpful` at once.
+//  `NudgeOutcome.feedback` (the 👎 notification action) is the channel built
+//  to break the tie behaviour can't. It lives in its own column so a row can
+//  say `.acted` and `markedUnhelpful` at once. It only speaks in the
+//  negative — the 👍 half was removed Jul 2026, since nothing read it and
+//  `DESIGN.md` puts positive opinion in chat — so it can flag a nudge the
+//  user rejects, not confirm one that quietly worked.
 //
 
 import Foundation
@@ -253,9 +256,9 @@ final class NudgeOutcomeClassifier {
 
         // FEEDBACK is a separate column because it's a separate signal —
         // `result` is what the user DID (tapped, or inferred from behaviour),
-        // `feedback` is what they SAID via the 👍/👎 notification actions.
-        // A row carrying `ignored` + `helpful` is the interesting one: it
-        // means the silence-means-failure inference was wrong for that nudge.
+        // `feedback` is what they SAID via the 👎 notification action.
+        // A row carrying `acted` + `useless` is the interesting one: the user
+        // did the thing and still didn't want to be asked.
         print("  \(pad("RESULT", 14))\(pad("FEEDBACK", 12))\(pad("KIND", 15))\(pad("SCHEDULED", 14))TASK")
         for row in rows {
             let task = row.taskID.flatMap { titles[$0] } ?? "—"
@@ -331,7 +334,6 @@ final class NudgeOutcomeClassifier {
     /// never pressed a feedback button (the common case).
     private func feedbackLabel(_ row: NudgeOutcome) -> String {
         switch row.feedback {
-        case .markedHelpful:   return "👍 helpful"
         case .markedUnhelpful: return "👎 useless"
         default:               return "—"
         }

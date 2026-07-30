@@ -199,17 +199,6 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             outcome?.actedAt = Date()
             rescheduleSnoozed(requestContent: requestContent, originalID: notificationID)
 
-        case NudgeNotificationActionID.breakItDown.rawValue:
-            outcome?.result = .tappedBreakDown
-            outcome?.actedAt = Date()
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .nudgeNotificationOpenTab,
-                    object: nil,
-                    userInfo: ["tab": "tasks"]
-                )
-            }
-
         case NudgeNotificationActionID.idleYesGood.rawValue:
             // User said they're already on it. Leave them alone for the
             // rest of today — write a per-day marker the arbiter checks
@@ -270,9 +259,6 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
                 }
             }
 
-        case NudgeNotificationActionID.markHelpful.rawValue:
-            recordFeedback(.markedHelpful, on: outcome)
-
         case NudgeNotificationActionID.markUnhelpful.rawValue:
             recordFeedback(.markedUnhelpful, on: outcome)
 
@@ -303,7 +289,7 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
         try? context.save()
     }
 
-    /// Records an explicit 👍/👎 on the nudge, and touches NOTHING else.
+    /// Records an explicit 👎 on the nudge, and touches NOTHING else.
     ///
     /// Every other branch above writes `result` + `actedAt`. This one
     /// deliberately does not, in either direction:
@@ -316,8 +302,8 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
     ///     result here would take the row out of the sweep's predicate and
     ///     destroy the comparison the feedback exists to enable.
     ///
-    /// The feedback actions are non-`.foreground` (see
-    /// `NudgeNotificationCategories`) so pressing one doesn't stamp
+    /// The feedback action is non-`.foreground` (see
+    /// `NudgeNotificationCategories`) so pressing it doesn't stamp
     /// `AppOpenLog` either. The two signals stay independent end to end.
     ///
     /// Nothing consumes `feedback` yet — this is collection only.

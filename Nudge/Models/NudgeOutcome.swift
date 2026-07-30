@@ -60,11 +60,15 @@ extension NudgeOutcomeKind {
     /// errand offline and never opens the app logs `.ignored` too. That's
     /// NOISE — a success path through the app exists and is what the nudge
     /// asks for — where `.eventBlock` is a structural impossibility. The
-    /// explicit-feedback channel (`markedHelpful` / `markedUnhelpful`) is
-    /// what will eventually let us measure that noise. `.floater` sits in
+    /// explicit-feedback channel (`markedUnhelpful`) is what will
+    /// eventually let us measure that noise. `.floater` sits in
     /// exactly the same place as `.getAhead`: it names a specific task and
     /// asks the user to start it, which is a session start or a completion —
     /// both visible to the app.
+    ///
+    /// (`markedHelpful` was removed Jul 2026 — the remaining feedback
+    /// channel is 👎 only, so it can flag noise but not confirm success.
+    /// `DESIGN.md` puts the positive half in chat.)
     var successIsObservableInApp: Bool {
         switch self {
         case .eventBlock:
@@ -88,7 +92,11 @@ enum NudgeOutcomeResult: String, Codable {
     case pending          // scheduled but not yet fired / acted upon
     case tappedStart      // user tapped "Start session"
     case tappedSnooze     // user tapped "Snooze 30 min"
-    case tappedBreakDown  // user tapped "Break it down"
+    /// User tapped "Break it down". NO WRITER as of Jul 2026 — that action
+    /// was removed from every category. Kept only because the `.breakItDown`
+    /// KIND is still here (paused pending removal, `CLAUDE.md` work order
+    /// item 4); it should leave with the kind, not before it.
+    case tappedBreakDown
     case dismissed        // user explicitly cleared the notification
     case ignored          // delivered, app never opened in the response window
 
@@ -112,19 +120,23 @@ enum NudgeOutcomeResult: String, Codable {
     // ── Explicit feedback (written by the notification delegate) ─────────
     // Stored in `NudgeOutcome.feedbackRaw`, NEVER in `resultRaw`. Behaviour
     // can't separate "this nudge was useless" from "this nudge worked and I
-    // didn't need the app" — both are silence. These two cases are the user
-    // saying which it was, in their own words rather than ours.
-
-    /// User tapped the 👍 action on the notification itself.
-    case markedHelpful
+    // didn't need the app" — both are silence. This case is the user saying
+    // it was the former, in their own words rather than ours.
+    //
+    // There was a `markedHelpful` counterpart until Jul 2026. Nothing ever
+    // read it, no row ever carried it, and `DESIGN.md` puts the positive
+    // half of the opinion channel in chat rather than on a banner button.
+    // The `feedback` getter runs `NudgeOutcomeResult(rawValue:)` inside a
+    // `guard`, so were a stored `"markedHelpful"` string to exist it now
+    // reads as nil rather than crashing.
 
     /// User tapped the 👎 action on the notification itself.
     case markedUnhelpful
 
-    /// True for the two cases above — the ones that belong in the feedback
+    /// True for the case above — the one that belongs in the feedback
     /// column rather than the result column.
     var isExplicitFeedback: Bool {
-        self == .markedHelpful || self == .markedUnhelpful
+        self == .markedUnhelpful
     }
 }
 
@@ -170,16 +182,17 @@ final class NudgeOutcome {
     //
     // They are deliberately NOT the same field. Folding feedback into
     // `resultRaw` would make the two signals destroy each other in both
-    // directions: a 👍 on a delivered nudge would erase the behavioural
+    // directions: a 👎 on a delivered nudge would erase the behavioural
     // record, and — worse — writing anything into `resultRaw` takes the row
     // out of `pending`, which is the ONLY thing the classifier sweeps. The
-    // row would then never be classified at all, so pressing 👍 would cost
+    // row would then never be classified at all, so pressing 👎 would cost
     // us the inferred reading we're trying to compare it against.
     //
-    // With two columns a row can carry `result == .ignored` AND
-    // `feedback == .markedHelpful` simultaneously — which is exactly the
-    // combination that proves the classifier's silence-means-failure
-    // inference wrong for that nudge, and the reason to collect this at all.
+    // With two columns a row can carry `result == .acted` AND
+    // `feedback == .markedUnhelpful` simultaneously — the user did the thing
+    // and still didn't want to be asked — which is exactly the combination
+    // no behavioural reading can express, and the reason to collect this at
+    // all.
     //
     // Additive optionals — existing rows migrate as nil (no feedback given).
 
@@ -204,7 +217,7 @@ final class NudgeOutcome {
     }
 
     /// The user's explicit rating of this nudge, if they gave one. Only
-    /// `.markedHelpful` / `.markedUnhelpful` are storable here; the setter
+    /// `.markedUnhelpful` is storable here; the setter
     /// refuses anything else so a behavioural case can never leak into the
     /// opinion column (or vice versa — see the comment on `feedbackRaw`).
     var feedback: NudgeOutcomeResult? {
