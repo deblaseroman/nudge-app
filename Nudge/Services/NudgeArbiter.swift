@@ -1026,12 +1026,22 @@ final class NudgeArbiter: NudgeArbitering {
     /// Idle / paralysis nudge — fires at wake+idleThreshold and asks "Have
     /// you gotten started on anything today?" with yes/no buttons.
     ///
-    /// Suppressed when ANY of the following happened in the 3-hour window
-    /// leading up to the fire time:
+    /// Suppressed when EITHER of the following happened in the 3-hour
+    /// window leading up to the fire time:
     ///   1. A focus session was started
     ///   2. A task was completed (CompletedTaskRecord row in window)
-    ///   3. A calendar event happened (informational event with
-    ///      specificTime in window)
+    ///
+    /// Both measure something the user actually DID. A third check — "a
+    /// calendar event falls in the window" — was removed (Jul 2026): an
+    /// event's existence is not evidence of activity, and with any morning
+    /// class inside wake→wake+3h it suppressed the check-in on every
+    /// school day — exactly the days a student needs it. After the
+    /// day-rollover below it was worse still: TOMORROW'S class suppressed
+    /// tomorrow's nudge during today's reevaluate, which the two real
+    /// activity signals can't do (sessions and completions only exist in
+    /// the past). "Don't fire during or right before class" was never this
+    /// check's to enforce — the busy-window gate in `passesGates` does
+    /// that against the candidate's fire date.
     ///
     /// Also suppressed for the rest of today if the user already tapped
     /// "Yes, I'm good" on a prior idle nudge — see `idleDismissedToday`.
@@ -1069,9 +1079,9 @@ final class NudgeArbiter: NudgeArbitering {
             return []
         }
 
-        // Three-condition window check — if the user has clearly been
-        // active in the 3 hours leading up to the fire time, don't ask
-        // the question at all.
+        // Activity window check — if the user has clearly been active in
+        // the 3 hours leading up to the fire time, don't ask the question
+        // at all. Both checks measure things the user actually did.
         let windowStart = fireDate.addingTimeInterval(-NudgeConfig.idleThresholdHours * 60 * 60)
         let windowEnd = fireDate
         if hadSessionStarted(in: windowStart...windowEnd) {
@@ -1086,12 +1096,14 @@ final class NudgeArbiter: NudgeArbitering {
             #endif
             return []
         }
+        #if DEBUG
+        // Before/after seam for the removed event-window rule (work-order
+        // item 5): replay the old check and say when the two rules would
+        // have disagreed, without letting it decide anything.
         if hadCalendarEvent(in: windowStart...windowEnd, modelContext: modelContext) {
-            #if DEBUG
-            print("[NudgeArbiter] idle: SKIP — a calendar event falls in the pre-fire window.")
-            #endif
-            return []
+            print("[NudgeArbiter] idle: BEFORE/AFTER — old event-window rule would have SUPPRESSED this candidate; new rule builds it (busy-window gate still applies at the fire moment).")
         }
+        #endif
 
         // Find the highest-priority unstarted task to attach to the
         // outcome row. The notification copy itself doesn't name the task
@@ -1191,6 +1203,10 @@ final class NudgeArbiter: NudgeArbitering {
         return !hits.isEmpty
     }
 
+    #if DEBUG
+    /// DEBUG-only since Jul 2026: survives solely as the before/after seam
+    /// for the removed idle event-window rule. Nothing may consult it for a
+    /// real decision — an event's existence is not evidence of activity.
     private func hadCalendarEvent(
         in window: ClosedRange<Date>,
         modelContext: ModelContext
@@ -1204,6 +1220,7 @@ final class NudgeArbiter: NudgeArbitering {
             return window.contains(start)
         }
     }
+    #endif
 
     /// True if the user already tapped "Yes, I'm good" on today's idle
     /// nudge — the marker lives in shared UserDefaults and is keyed by
