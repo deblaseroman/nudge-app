@@ -992,11 +992,14 @@ final class NudgeArbiter: NudgeArbitering {
     ///   • **State the fact, don't ask.** The old copy asked a question and
     ///     spent the slot on it.
     ///   • **Propose, never promise.** No "do this and you'll be fine".
-    ///   • **Never imply failure.** Hence the deadline clause is dropped
-    ///     entirely for anything already past due at the fire time — "due
-    ///     yesterday at 5 PM" is factually correct and reads as an
-    ///     accusation before the user is out of bed. The task still gets
-    ///     named; it just doesn't get dated.
+    ///   • **Never imply failure — but never hide the situation either.**
+    ///     Until Aug 2026 the deadline clause was dropped entirely for
+    ///     anything already past due at the fire time, on the accusation
+    ///     reasoning — but a device pass showed the result: the prompt
+    ///     named a task due the previous day with no deadline clause at
+    ///     all, hiding a fact the user needs. The clause is now a neutral
+    ///     past-tense marker ("was due yesterday" / "was due Tuesday"):
+    ///     factual, no verdict, no clock time rubbed in.
     private static func morningPromptBody(for task: NudgeTask, fireDate: Date) -> String {
         let base = "Biggest thing on your list: \"\(task.title)\""
         guard let phrase = morningDeadlinePhrase(for: task, fireDate: fireDate) else {
@@ -1006,12 +1009,25 @@ final class NudgeArbiter: NudgeArbitering {
     }
 
     /// "due today at 5:00 PM" / "due tomorrow" / "due Thu at 9:00 AM" /
-    /// "due Aug 14". Nil when the task has no deadline, or when the deadline
-    /// has already passed by the time the notification fires.
+    /// "due Aug 14" — and, since Aug 2026, past tense for a deadline that
+    /// has already passed: "was due earlier today" / "was due yesterday" /
+    /// "was due Tuesday" / "was due Jul 20". Nil only when the task has no
+    /// deadline at all.
     ///
-    /// A clock time is only ever shown when the task carries a
-    /// `specificTime`; a bare `dueDate` is a day, and rendering its midnight
-    /// as "at 12:00 AM" would invent a precision the task doesn't have.
+    /// The past-tense marker replaced total silence (cycle 2026-08-01-03).
+    /// Dropping the clause was designed to avoid an accusation before the
+    /// user is out of bed, but it hid a fact the user needs — the last
+    /// device pass named a task due the previous day with no clause at
+    /// all. `DESIGN.md`'s honest-about-the-situation rule is the spec:
+    /// state the fact, never the judgment. Past tense, no verdict — and
+    /// deliberately NO clock time on past phrases ("was due yesterday at
+    /// 5:00 PM" is precision in service of nothing; the plan's own
+    /// examples carry none).
+    ///
+    /// A clock time is only ever shown (on FUTURE phrases) when the task
+    /// carries a `specificTime`; a bare `dueDate` is a day, and rendering
+    /// its midnight as "at 12:00 AM" would invent a precision the task
+    /// doesn't have.
     private static func morningDeadlinePhrase(for task: NudgeTask, fireDate: Date) -> String? {
         guard let deadline = task.specificTime ?? task.dueDate else { return nil }
 
@@ -1019,13 +1035,12 @@ final class NudgeArbiter: NudgeArbitering {
         // "Already passed" is measured at the deadline's OWN granularity.
         // A bare `dueDate` is a DAY, and its `Date` is that day's midnight —
         // so an instant comparison calls anything due today "overdue" from
-        // 00:01 onwards and silently drops the clause for the single most
-        // common case there is. Only a `specificTime` gets compared as an
-        // instant.
+        // 00:01 onwards, which would put "was due earlier today" on the
+        // single most common case there is while its day is still in
+        // progress. Only a `specificTime` gets compared as an instant.
         let stillAhead = task.specificTime != nil
             ? deadline > fireDate
             : calendar.startOfDay(for: deadline) >= calendar.startOfDay(for: fireDate)
-        guard stillAhead else { return nil }
 
         let timeFmt = DateFormatter()
         timeFmt.dateFormat = "h:mm a"
@@ -1038,18 +1053,30 @@ final class NudgeArbiter: NudgeArbitering {
             to: calendar.startOfDay(for: deadline)
         ).day ?? 0
 
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "EEEE"
+        dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        let dateFmt = DateFormatter()
+        dateFmt.dateFormat = "MMM d"
+        dateFmt.locale = Locale(identifier: "en_US_POSIX")
+
+        guard stillAhead else {
+            // Same granularity ladder as the future branch, past tense,
+            // no clock.
+            switch days {
+            case 0:        return "was due earlier today"
+            case -1:       return "was due yesterday"
+            case -6...(-2): return "was due \(dayFmt.string(from: deadline))"
+            default:       return "was due \(dateFmt.string(from: deadline))"
+            }
+        }
+
         switch days {
         case 0:  return "due today\(clock)"
         case 1:  return "due tomorrow\(clock)"
         case 2...6:
-            let dayFmt = DateFormatter()
-            dayFmt.dateFormat = "EEEE"
-            dayFmt.locale = Locale(identifier: "en_US_POSIX")
             return "due \(dayFmt.string(from: deadline))\(clock)"
         default:
-            let dateFmt = DateFormatter()
-            dateFmt.dateFormat = "MMM d"
-            dateFmt.locale = Locale(identifier: "en_US_POSIX")
             return "due \(dateFmt.string(from: deadline))"
         }
     }
