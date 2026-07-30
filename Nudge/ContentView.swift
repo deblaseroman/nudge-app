@@ -205,6 +205,7 @@ struct ContentView: View {
             profile.notificationsEnabled.description,
             profile.morningCheckInNotificationsEnabled.description,
             profile.taskDueSoonNotificationsEnabled.description,
+            profile.dueSoonReminderNotificationsEnabled.description,
             profile.sessionStarterNotificationsEnabled.description,
             profile.floaterCheckInNotificationsEnabled.description,
             profile.eventReminderNotificationsEnabled.description,

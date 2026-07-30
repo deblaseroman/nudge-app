@@ -66,6 +66,22 @@ final class UserProfile {
     /// current user's behavior is unchanged.
     var eventReminderNotificationsEnabled: Bool = true
 
+    /// Gates the arbiter's due-soon reminders (`buildDueSoonCandidates`) —
+    /// the "this is landing" half of the Aug 2026 get-ahead split. The
+    /// other half (`.prep`, "start early") keeps
+    /// `taskDueSoonNotificationsEnabled`, the toggle the whole get-ahead
+    /// feature always read: a user who silenced get-ahead nudges was
+    /// silencing the start-early pushes that actually fired, so intent
+    /// continuity beats the (now unfortunate) field name. Same split
+    /// convention as `floaterCheckInNotificationsEnabled` above — the
+    /// direct descendant keeps the old field, the split-out feature gets a
+    /// fresh one.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block: no `VersionedSchema`, so a defaultless non-optional
+    /// attribute fails at LAUNCH on an existing store, not at build.
+    var dueSoonReminderNotificationsEnabled: Bool = true
+
     // MARK: - Quiet hours
     //
     // "When do I not want to be interrupted?" — deliberately SEPARATE from

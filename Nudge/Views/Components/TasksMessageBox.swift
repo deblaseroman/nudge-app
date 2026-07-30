@@ -187,7 +187,9 @@ enum TasksMessageComposer {
                 headline: "That check-in asks whether today has gotten started.",
                 detail: "It goes out a few hours after wake when no session has been started and nothing has been checked off yet."
             )
-        case .getAhead:
+        // `.getAhead` survives for rows written before the Aug 2026 split;
+        // `.prep` is its direct descendant and shares the explanation.
+        case .getAhead, .prep:
             if let task {
                 let dueLine = CountdownState.dueDateLine(
                     dueDate: task.dueDate, specificTime: task.specificTime
@@ -201,6 +203,21 @@ enum TasksMessageComposer {
             return TasksMessage(
                 headline: "That nudge was about getting ahead of a deadline.",
                 detail: "It fires when starting now still leaves room before a task's due date."
+            )
+        case .dueSoon:
+            if let task {
+                let dueLine = CountdownState.dueDateLine(
+                    dueDate: task.dueDate, specificTime: task.specificTime
+                )
+                return TasksMessage(
+                    headline: "That was a heads-up that a deadline is close.",
+                    detail: "Due-soon reminders go out about two hours before something is due"
+                        + (dueLine.map { " — “\(task.title)” is due \($0)." } ?? ".")
+                )
+            }
+            return TasksMessage(
+                headline: "That was a heads-up that a deadline is close.",
+                detail: "Due-soon reminders go out about two hours before something is due. Things due within the same hour share one reminder."
             )
         case .floater:
             if let task {

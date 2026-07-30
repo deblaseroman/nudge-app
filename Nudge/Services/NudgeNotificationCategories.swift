@@ -18,7 +18,21 @@ enum NudgeNotificationCategoryID: String {
     /// actions) are the whole interaction surface.
     case eventBlock = "category.event"
     case idle       = "category.idle"
+    /// LEGACY — no scheduled request has carried this since the Aug 2026
+    /// get-ahead split (`prep` / `dueSoon` below). Still REGISTERED, unlike
+    /// `breakDown` (which never shipped a request): a delivered get-ahead
+    /// notification can sit in Notification Center across the upgrade, and
+    /// unregistering its category would strip its action buttons.
     case getAhead   = "category.getAhead"
+    /// "Start early" — the direct descendant of `getAhead`, same action set
+    /// (Start / Snooze / 👎): it asks the user to start a specific task.
+    case prep       = "category.prep"
+    /// "This is landing" — factual reminder ~2h before a deadline, possibly
+    /// naming several batched tasks. NO action buttons, same reasoning as
+    /// `eventBlock`: it states a fact rather than asking for a decision,
+    /// and a Start button is ambiguous on a batch. Tap-to-open and
+    /// swipe-to-dismiss are the whole interaction surface.
+    case dueSoon    = "category.dueSoon"
     // `breakDown` ("category.breakDown") was removed Jul 2026 with the
     // break-it-down kind. A category identifier is only meaningful on a
     // scheduled request, and no request ever carried this one — the
@@ -158,10 +172,31 @@ enum NudgeNotificationCategories {
             options: dismissible
         )
         // Used to sit at the 4-action ceiling; dropping Break it down leaves
-        // it a slot under.
+        // it a slot under. Registered for LEGACY delivered notifications
+        // only — nothing schedules this category since the Aug 2026 split.
         let getAhead = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.getAhead.rawValue,
             actions: [startSession, snooze30, markUnhelpful],
+            intentIdentifiers: [],
+            options: dismissible
+        )
+        // Prep inherits get-ahead's action set unchanged — it is the same
+        // *shape* of ask ("start this task"), under its own analytics
+        // identity.
+        let prep = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.prep.rawValue,
+            actions: [startSession, snooze30, markUnhelpful],
+            intentIdentifiers: [],
+            options: dismissible
+        )
+        // Due-soon follows the event-block precedent: NO actions. It states
+        // a fact ("this is due at 4 PM"), possibly about several batched
+        // tasks — a Start button on a batch is ambiguous, and the success
+        // case is handling the thing wherever it lives, not opening this
+        // app. `dismissible` stays so `.dismissed` rows get written.
+        let dueSoon = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.dueSoon.rawValue,
+            actions: [],
             intentIdentifiers: [],
             options: dismissible
         )
@@ -184,7 +219,7 @@ enum NudgeNotificationCategories {
         )
 
         UNUserNotificationCenter.current().setNotificationCategories([
-            eventBlock, idle, getAhead, morningPrompt, floater
+            eventBlock, idle, getAhead, prep, dueSoon, morningPrompt, floater
         ])
     }
 }

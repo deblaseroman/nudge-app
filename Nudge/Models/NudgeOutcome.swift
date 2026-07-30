@@ -13,7 +13,26 @@ import SwiftData
 enum NudgeOutcomeKind: String, Codable, CaseIterable {
     case eventBlock
     case idle
+    /// LEGACY — no builder emits this since Aug 2026 (cycle 2026-08-01-03),
+    /// when the get-ahead builder split into `.prep` ("start early") and
+    /// `.dueSoon` ("this is landing"). One builder had been serving both
+    /// jobs under this kind, so its rows measured neither. The case stays,
+    /// additively, so pre-split rows keep their raw value and their
+    /// attribution — anyone reading kind-level baselines should treat
+    /// `getAhead` numbers as ending at that cut date, with `prep` and
+    /// `dueSoon` starting fresh after it (same convention as the
+    /// `.floater` split, Jul 2026).
     case getAhead
+    /// "Start early." Fires days ahead of a deadline on the day
+    /// `StartByPlanner` picks, at the wake+2h anchor. Discretionary in
+    /// every dimension: budget, quiet hours, spacing, fatigue (when armed).
+    /// One per task per day at most. Split out of `.getAhead`, Aug 2026.
+    case prep
+    /// "This is landing." Fires ~2 hours before a deadline, once per task.
+    /// Factual and budget-exempt like `.eventBlock` — a deadline is a fact,
+    /// not a suggestion — but tasks due within the same hour batch into ONE
+    /// notification. Split out of `.getAhead`, Aug 2026.
+    case dueSoon
     // `breakItDown` was removed Jul 2026 along with its builder, category,
     // and toggle. No store ever held a row with that raw value — the
     // builder was gated behind `fatigueGateEnabled`, which has never been
@@ -78,7 +97,16 @@ extension NudgeOutcomeKind {
         switch self {
         case .eventBlock:
             return false
-        case .idle, .getAhead, .morningPrompt, .floater:
+        // `.dueSoon` is the second structural exemption (Aug 2026). Its
+        // success case is HANDLING the thing that's due — submitting the
+        // form, turning in the essay — which happens wherever the work
+        // lives, not necessarily in this app. Like the event heads-up,
+        // success and failure are behaviourally identical in the record,
+        // so counting its `.ignored` rows as fatigue would penalise the
+        // user for a reminder that worked.
+        case .dueSoon:
+            return false
+        case .idle, .getAhead, .prep, .morningPrompt, .floater:
             return true
         }
     }

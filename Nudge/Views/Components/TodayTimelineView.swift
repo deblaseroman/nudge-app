@@ -374,7 +374,11 @@ struct TodayTimelineView: View {
         switch kind {
         case .eventBlock:    return "event reminder"
         case .idle:          return "check-in"
+        // Legacy rows only — no builder emits `.getAhead` since the Aug
+        // 2026 split into `.prep` / `.dueSoon`.
         case .getAhead:      return "get ahead"
+        case .prep:          return "start early"
+        case .dueSoon:       return "due soon"
         case .morningPrompt: return "morning check-in"
         case .floater:       return "open work check-in"
         }

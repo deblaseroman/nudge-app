@@ -106,10 +106,23 @@ struct SettingsTabView: View {
                         subtitle: "Asks what you want to get done today, 30 min after wake. Skipped when your day is already packed.",
                         isOn: $profile.morningCheckInNotificationsEnabled
                     )
+                    // The field name is historical: `taskDueSoonNotificationsEnabled`
+                    // has always gated the start-early pushes (the getAhead
+                    // builder, now prep), so it keeps doing that after the
+                    // Aug 2026 split — a user who turned it off silenced
+                    // exactly these.
                     toggleSettingsRow(
-                        title: "Task due soon",
-                        subtitle: "Get-ahead reminders for tasks with deadlines — fires when it's time to start so the deadline doesn't arrive first.",
+                        title: "Start early",
+                        subtitle: "A push to start a deadline task days ahead, on the day there's still room to get ahead of it.",
                         isOn: $profile.taskDueSoonNotificationsEnabled
+                    )
+                    // Split out of get-ahead in Aug 2026: a factual reminder
+                    // ~2 hours before something is due. Its own field —
+                    // see the note on `UserProfile`.
+                    toggleSettingsRow(
+                        title: "Due soon",
+                        subtitle: "A heads-up about 2 hours before a deadline. Things due within the same hour share one reminder.",
+                        isOn: $profile.dueSoonReminderNotificationsEnabled
                     )
                     // Was folded into "Task due soon" until Jul 2026. One
                     // switch for two features meant silencing the mid-day

@@ -242,6 +242,29 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    /// App Group key for the due-soon "already scheduled once" map — the
+    /// same delivered-marker pattern as `eventReminderHistory`, for the same
+    /// reason: `cancelAll` wipes a pending request that has already been
+    /// delivered, and without a marker the next reevaluate re-adds it with
+    /// the same ID and refires via the ASAP fallback. This is what makes
+    /// the due-soon reminder ONCE per task.
+    private let dueSoonHistoryKey = "nudge.arb.dueSoonHistory"
+
+    /// Candidate ID → epoch fire time we last handed to the OS. Written in
+    /// `schedule()`, checked in `buildDueSoonCandidates`, pruned in
+    /// `cancelAll` alongside the event map.
+    private var dueSoonHistory: [String: TimeInterval] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: dueSoonHistoryKey)?
+                .compactMapValues { $0 as? TimeInterval } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: dueSoonHistoryKey)
+        }
+    }
+
     // MARK: - Entry point
 
     func reevaluate(
@@ -283,10 +306,11 @@ final class NudgeArbiter: NudgeArbitering {
         candidates.append(contentsOf: buildEventBlockCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildMorningPromptCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildIdleCandidates(profile: profile, modelContext: modelContext))
-        candidates.append(contentsOf: buildGetAheadCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildPrepCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildDueSoonCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildFloaterCheckInCandidates(profile: profile, modelContext: modelContext))
         #if DEBUG
-        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + getAhead + floater).")
+        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater).")
         #endif
 
         // 2. Run gates
@@ -358,6 +382,13 @@ final class NudgeArbiter: NudgeArbitering {
         let pruned = eventReminderHistory.filter { $0.value > cutoff }
         if pruned.count != eventReminderHistory.count {
             eventReminderHistory = pruned
+        }
+
+        // Same prune for the due-soon delivered markers — same map shape,
+        // same growth problem.
+        let prunedDueSoon = dueSoonHistory.filter { $0.value > cutoff }
+        if prunedDueSoon.count != dueSoonHistory.count {
+            dueSoonHistory = prunedDueSoon
         }
 
         // Same treatment for the morning prompt's named-task history. Kept
@@ -541,12 +572,17 @@ final class NudgeArbiter: NudgeArbitering {
         return candidates
     }
 
-    /// Clusters today's events into blocks. Public-ish (internal static)
-    /// so it can be unit-tested.
-    static func clusterEvents(_ sorted: [(NudgeTask, Date)]) -> [[(NudgeTask, Date)]] {
+    /// Clusters (task, date) pairs into blocks by chained gap. Public-ish
+    /// (internal static) so it can be unit-tested. The default gap is the
+    /// event-block one; `buildDueSoonCandidates` reuses the same chaining
+    /// with `dueSoonBatchWindowMinutes` to batch same-hour deadlines.
+    static func clusterEvents(
+        _ sorted: [(NudgeTask, Date)],
+        gapSeconds: TimeInterval = NudgeConfig.eventBlockGapHours * 60 * 60
+    ) -> [[(NudgeTask, Date)]] {
         guard !sorted.isEmpty else { return [] }
         var blocks: [[(NudgeTask, Date)]] = [[sorted[0]]]
-        let gap = NudgeConfig.eventBlockGapHours * 60 * 60
+        let gap = gapSeconds
         for i in 1..<sorted.count {
             let prevStart = blocks[blocks.count - 1].last!.1
             let currStart = sorted[i].1
@@ -1240,7 +1276,28 @@ final class NudgeArbiter: NudgeArbitering {
 
     /// Get-ahead nudge — for each open task with a `recommendedStartBy` in
     /// the future, schedule a nudge at that time.
-    private func buildGetAheadCandidates(
+    /// "Start early" — the prep nudge. Fires days ahead of a deadline, on
+    /// the day `StartByPlanner` picks, at the wake+`prepAnchorHoursAfterWake`
+    /// hour. Discretionary in every dimension: counts against budget,
+    /// respects quiet hours, spacing, and fatigue (when armed). One per
+    /// task per day at most — the builder emits at most one candidate per
+    /// task, and the anchor walk lands it on a single day.
+    ///
+    /// Emitted `.getAhead` until Aug 2026, when that kind split into
+    /// `.prep` (this builder, the direct descendant) and `.dueSoon`
+    /// (`buildDueSoonCandidates` — "this is landing", ~2h before the
+    /// deadline). One builder had been serving both jobs and doing
+    /// neither well: the anchor walk meant a task due tomorrow morning
+    /// often got NO nudge at all (no anchor slot left before the due
+    /// time), while the "get ahead" framing was wrong for anything
+    /// imminent.
+    ///
+    /// Keeps `taskDueSoonNotificationsEnabled` deliberately — that toggle
+    /// has always gated this code path, so a user who turned it off was
+    /// turning off exactly these pushes. The field name now lies (the
+    /// due-soon kind reads `dueSoonReminderNotificationsEnabled`); see the
+    /// note on `UserProfile`.
+    private func buildPrepCandidates(
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
@@ -1261,23 +1318,23 @@ final class NudgeArbiter: NudgeArbitering {
                 continue
             }
             guard let due = task.dueDate else { continue }
-            // The planner picks the DAY; `getAheadFireDate` picks the hour
+            // The planner picks the DAY; `prepFireDate` picks the hour
             // within it. Using `plan.startBy` directly is what put these
             // nudges at 21:59–23:59 — see the note on
-            // `NudgeConfig.getAheadAnchorHoursAfterWake`.
-            guard let fireDate = getAheadFireDate(
+            // `NudgeConfig.prepAnchorHoursAfterWake`.
+            guard let fireDate = prepFireDate(
                 startBy: plan.startBy,
                 due: due,
                 profile: profile,
                 now: now
             ) else {
                 #if DEBUG
-                print("[NudgeArbiter] getAhead: SKIP '\(task.title)' — no anchored slot left before due \(due) (startBy was \(plan.startBy)).")
+                print("[NudgeArbiter] prep: SKIP '\(task.title)' — no anchored slot left before due \(due) (startBy was \(plan.startBy)).")
                 #endif
                 continue
             }
             #if DEBUG
-            print("[NudgeArbiter] getAhead: '\(task.title)' startBy=\(plan.startBy) → fire=\(fireDate) (deep=\(plan.isDeepWork), due=\(due)).")
+            print("[NudgeArbiter] prep: '\(task.title)' startBy=\(plan.startBy) → fire=\(fireDate) (deep=\(plan.isDeepWork), due=\(due)).")
             #endif
 
             let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
@@ -1317,17 +1374,21 @@ final class NudgeArbiter: NudgeArbitering {
                 body = "\"\(task.title)\" needs a start. Just \(min(estimatedMinutes, 25)) min — that's it."
             }
 
-            let getAheadTier = tier(for: task, fireDate: fireDate)
+            let prepTier = tier(for: task, fireDate: fireDate)
             candidates.append(NudgeCandidate(
-                id: "\(prefix)getAhead.\(task.id.uuidString)",
-                kind: .getAhead,
+                // No day stamp, same as the getAhead ID it replaces: the
+                // anchor walk moves the fire date forward day by day under
+                // one stable ID, and the delegate's newest-pending rule
+                // covers the reuse.
+                id: "\(prefix)prep.\(task.id.uuidString)",
+                kind: .prep,
                 fireDate: fireDate,
                 title: "Time to get ahead",
                 body: body,
-                categoryID: .getAhead,
-                interruption: getAheadTier.interruption,
+                categoryID: .prep,
+                interruption: prepTier.interruption,
                 taskID: task.id,
-                tier: getAheadTier,
+                tier: prepTier,
                 urgency: urgency,
                 importance: importance,
                 receptivity: 1.0,
@@ -1338,8 +1399,157 @@ final class NudgeArbiter: NudgeArbitering {
         return candidates
     }
 
+    /// "This is landing" — the due-soon reminder. Fires
+    /// `dueSoonLeadMinutes` (~2h) before a task's deadline, once per task.
+    /// Factual, low-pressure copy: a deadline is a fact, not a suggestion.
+    ///
+    /// **Budget-exempt like event blocks** — which also means every shared
+    /// gate in `passesGates` skips it (they're keyed on
+    /// `countsAgainstBudget`): quiet hours included, so a 4 AM deadline
+    /// produces a 2 AM reminder. Accepted deliberately in cycle
+    /// 2026-08-01-03 — the deadline exists at 4 AM whether or not the app
+    /// mentions it, and the per-kind toggle is the opt-out.
+    ///
+    /// **Batching is the one rule it must NOT skip**: tasks due within
+    /// `dueSoonBatchWindowMinutes` of each other share ONE notification
+    /// ("3 things due by 11:59 PM: …"), via the same chained clustering
+    /// event blocks use. Per-task banners bypassing spacing is the
+    /// swipe-dismiss training the arbiter was designed against.
+    ///
+    /// **Once per task** is enforced the way event blocks enforce it: a
+    /// delivered-marker map (`dueSoonHistory`) keyed by candidate ID, which
+    /// embeds the due day's stamp. `cancelAll` wipes delivered-but-pending
+    /// requests on every reevaluate; without the marker the rebuild would
+    /// re-add the same ID and refire through the ASAP fallback.
+    private func buildDueSoonCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.dueSoonReminderNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] dueSoon: SKIP — dueSoonReminderNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        var openDescriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
+        )
+        openDescriptor.fetchLimit = 50
+        let open = (try? modelContext.fetch(openDescriptor)) ?? []
+        let now = Date()
+        let calendar = Calendar.current
+        let horizonEnd = calendar.date(byAdding: .day, value: 14, to: now) ?? .distantFuture
+
+        // Dated, not yet due, inside the scheduling horizon. `sortDeadline`
+        // is the effective deadline: the explicit clock time when one
+        // exists, else end-of-day for bare due dates.
+        let dated = open
+            .filter { $0.dueDate != nil }
+            .map { ($0, $0.sortDeadline) }
+            .filter { $0.1 > now && $0.1 < horizonEnd }
+            .sorted { $0.1 < $1.1 }
+
+        let clusters = NudgeArbiter.clusterEvents(
+            dated,
+            gapSeconds: Double(NudgeConfig.dueSoonBatchWindowMinutes) * 60
+        )
+
+        var candidates: [NudgeCandidate] = []
+        for cluster in clusters {
+            guard let earliest = cluster.first?.1, let firstTask = cluster.first?.0 else { continue }
+
+            // Fire ahead of the EARLIEST deadline in the batch. If the lead
+            // window has already started but the deadline is still > 5 min
+            // out, fire ASAP — same fallback as event blocks, and for the
+            // same reason (a task captured inside its own lead window would
+            // otherwise get no reminder at all).
+            let leadFireDate = earliest.addingTimeInterval(
+                -Double(NudgeConfig.dueSoonLeadMinutes) * 60
+            )
+            let fireDate: Date
+            if leadFireDate > now {
+                fireDate = leadFireDate
+            } else if earliest.timeIntervalSince(now) > 5 * 60 {
+                fireDate = now.addingTimeInterval(60)
+            } else {
+                continue
+            }
+
+            let candidateID = "\(prefix)dueSoon."
+                + "\(stamp(calendar.startOfDay(for: earliest)))."
+                + firstTask.id.uuidString
+
+            // Once per task: skip a batch whose reminder was already
+            // DELIVERED (marker fire time in the past). A marker with a
+            // future fire time is a still-pending request `cancelAll` just
+            // wiped — that one must be rebuilt or it never fires.
+            if let markedFire = dueSoonHistory[candidateID],
+               Date(timeIntervalSinceReferenceDate: markedFire) <= now {
+                continue
+            }
+
+            #if DEBUG
+            print("[NudgeArbiter] dueSoon: \(cluster.count) task(s), earliest due \(earliest) → fire=\(fireDate).")
+            #endif
+
+            candidates.append(NudgeCandidate(
+                id: candidateID,
+                kind: .dueSoon,
+                fireDate: fireDate,
+                title: "Due soon",
+                body: NudgeArbiter.dueSoonBody(cluster: cluster),
+                categoryID: .dueSoon,
+                // `.normal` tier ON PURPOSE — no 🔴, no ALL CAPS, `.active`
+                // interruption. The urgency-tier escalation exists for
+                // nudges asking the user to act early; this one states a
+                // fact ~2h out, and "factual, low-pressure" is its spec.
+                interruption: NudgeUrgencyTier.normal.interruption,
+                // First task of the batch, like event blocks — the kind is
+                // structurally fatigue-blind (`successIsObservableInApp ==
+                // false`), so this feeds attribution and tap routing only.
+                taskID: firstTask.id,
+                tier: .normal,
+                urgency: 1.0,
+                importance: 1.0,
+                receptivity: 1.0,
+                countsAgainstBudget: false,
+                estimatedMinutes: nil
+            ))
+        }
+        return candidates
+    }
+
+    /// Body copy for a due-soon reminder. Facts only — the deadline and
+    /// the names. No verdict, no "still time if you hurry".
+    static func dueSoonBody(cluster: [(NudgeTask, Date)]) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "h:mm a"
+        guard let first = cluster.first else { return "" }
+
+        if cluster.count == 1 {
+            return "“\(first.0.title)” is due at \(fmt.string(from: first.1))."
+        }
+
+        // Batch: "3 things due by 11:59 PM: A, B, and C." The "by" time is
+        // the LATEST deadline in the batch, so the sentence stays true for
+        // every task it names.
+        let latest = cluster.map(\.1).max() ?? first.1
+        let titles = cluster.map { "“\($0.0.title)”" }
+        let listed: String
+        switch titles.count {
+        case 2:
+            listed = "\(titles[0]) and \(titles[1])"
+        case 3:
+            listed = "\(titles[0]), \(titles[1]), and \(titles[2])"
+        default:
+            let shown = titles.prefix(3).joined(separator: ", ")
+            listed = "\(shown), and \(titles.count - 3) more"
+        }
+        return "\(cluster.count) things due by \(fmt.string(from: latest)): \(listed)."
+    }
+
     /// Maps `StartByPlanner`'s startBy INSTANT onto a sane hour of the same
-    /// DAY: wake + `getAheadAnchorHoursAfterWake` on the day the planner
+    /// DAY: wake + `prepAnchorHoursAfterWake` on the day the planner
     /// picked. The planner's day math is untouched — only where in the day
     /// the nudge lands.
     ///
@@ -1349,7 +1559,7 @@ final class NudgeArbiter: NudgeArbitering {
     /// today's wake-anchored time, and `if fireDate <= now` add exactly
     /// one day. One day is always enough for them because their anchor day
     /// is *today* by definition.
-    /// Get-ahead's anchor day is derived from the deadline instead, so this
+    /// Prep's anchor day is derived from the deadline instead, so this
     /// generalises the same idiom into a bounded walk forward — same
     /// behaviour, just able to step more than once.
     ///
@@ -1359,7 +1569,7 @@ final class NudgeArbiter: NudgeArbitering {
     /// the caller skip the task rather than send the wrong nudge. In
     /// practice the loop runs at most twice: any day strictly after today
     /// has its anchor in the future.
-    private func getAheadFireDate(
+    private func prepFireDate(
         startBy: Date,
         due: Date,
         profile: UserProfile,
@@ -1368,7 +1578,7 @@ final class NudgeArbiter: NudgeArbitering {
         let calendar = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
         let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
-        let offset = NudgeConfig.getAheadAnchorHoursAfterWake * 60 * 60
+        let offset = NudgeConfig.prepAnchorHoursAfterWake * 60 * 60
 
         func anchor(on day: Date) -> Date? {
             var comps = calendar.dateComponents([.year, .month, .day], from: day)
@@ -1397,9 +1607,9 @@ final class NudgeArbiter: NudgeArbitering {
         return nil
     }
 
-    /// Mid-day check-in for OPEN UNDATED tasks. Get-ahead nudges require a
-    /// `dueDate` (the planner derives `startBy` from it), so chat-captured
-    /// tasks like "study for biology" never produce any get-ahead candidate.
+    /// Mid-day check-in for OPEN UNDATED tasks. Prep and due-soon nudges
+    /// require a `dueDate` (the planner derives `startBy` from it), so
+    /// chat-captured tasks like "study for biology" never produce either.
     /// Without this builder the user gets ONE idle nudge in the morning and
     /// then silence until bedtime — exactly the symptom of "the app doesn't
     /// ask if I'm working on something important."
@@ -1428,9 +1638,9 @@ final class NudgeArbiter: NudgeArbitering {
     /// nudge was unreachable, not merely rare.
     ///
     /// One day is always enough here, same as for morning and idle: the
-    /// anchor day is *today* by definition (unlike get-ahead, whose anchor
+    /// anchor day is *today* by definition (unlike prep, whose anchor
     /// derives from a deadline and so needs the bounded walk in
-    /// `getAheadFireDate`).
+    /// `prepFireDate`).
     ///
     /// Rolling is safe against double-firing without a delivered-marker like
     /// `eventReminderHistory`. The candidate ID embeds the FIRE day's stamp,
@@ -2813,6 +3023,14 @@ final class NudgeArbiter: NudgeArbitering {
             var history = eventReminderHistory
             history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
             eventReminderHistory = history
+        }
+
+        // Same delivered-marker for due-soon reminders — this is what makes
+        // them once-per-task (see `buildDueSoonCandidates`).
+        if candidate.kind == .dueSoon {
+            var history = dueSoonHistory
+            history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
+            dueSoonHistory = history
         }
 
         // Record which task the morning prompt named for its fire day, so
