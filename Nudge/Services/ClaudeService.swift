@@ -73,7 +73,7 @@ class ClaudeService {
     - NEVER ask the user "how long will this take?" or "what time?" — just add it. The user can edit duration or time later if they want to.
     - If the user volunteers a duration (e.g. "an hour", "30 mins"), set estimatedMinutes. Otherwise leave estimatedMinutes null.
     - If the user volunteers a specific time (e.g. "at 3 PM", "tomorrow at 9"), set dueTime to that time string ("3:00 PM") AND set dueDate. Otherwise leave dueTime null and only set dueDate if a date was mentioned.
-    - Assign priority: "urgent", "high", "medium", or "low" (default "medium")
+    - Assign priority: "high", "medium", or "low" (default "medium")
     - Categorize: "exam", "school", "work", "health", "personal", "errand", or "other". Use "exam" for tests/midterms/finals/quizzes; "school" for any other coursework (assignments, readings, papers); "work" for jobs/shifts/meetings; "health" for doctor/gym/therapy/medication; "personal" for friends/family/hobbies; "errand" for quick utilitarian tasks (pick up, return, pay).
     - Assign stakes: "high", "medium", or "low" on EVERY item. \(ClaudeService.stakesRuleText)
 

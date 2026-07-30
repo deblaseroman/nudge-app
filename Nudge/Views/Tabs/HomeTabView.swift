@@ -332,7 +332,7 @@ struct HomeTabView: View {
                         else { continue }
 
                         if let mins = update.estimatedMinutes { existingTask.estimatedMinutes = mins }
-                        if let priority = update.priority     { existingTask.priority = priority }
+                        if let priority = update.priority     { existingTask.priority = normalizedPriority(priority) }
                         if let title = update.title          { existingTask.title = title }
                         if let category = update.category    { existingTask.category = category }
                         if let isComplete = update.isComplete {
@@ -413,13 +413,16 @@ struct HomeTabView: View {
 
                     // Floater detection: no date AND no time → low-priority,
                     // "get to it whenever" task. Force low priority unless the
-                    // AI explicitly said urgent/high.
+                    // AI explicitly said high.
                     let isFloater = !isEvent && newDueDate == nil && specificTime == nil
-                    let rawPriority = taskData.priority ?? "medium"
+                    // Canonical set is high|medium|low. "urgent" left the
+                    // prompt's allowed values (Jul 2026) but the model may
+                    // still emit it — fold it into "high" at the write site
+                    // so no fourth value ever reaches the store again.
+                    let rawPriority = normalizedPriority(taskData.priority ?? "medium")
                     let priority: String = {
                         guard isFloater else { return rawPriority }
-                        return (rawPriority == "urgent" || rawPriority == "high")
-                            ? rawPriority : "low"
+                        return rawPriority == "high" ? rawPriority : "low"
                     }()
 
                     let task = NudgeTask(
@@ -594,6 +597,16 @@ struct HomeTabView: View {
     /// Combines a date with a clock-time string ("3:00 PM", "15:00") into a
     /// concrete Date. Returns nil for fuzzy values ("morning", "afternoon",
     /// "evening", "night") or when no time/date is given.
+    /// Canonical priority vocabulary is high|medium|low. Older prompts
+    /// offered "urgent" as a fourth value that every render surface had to
+    /// special-case (or silently fell through on); it was dropped from the
+    /// prompt Jul 2026 and folds into "high" here so it can never reach the
+    /// store again even if the model still emits it. Existing rows were
+    /// normalized by `LegacyPriorityNormalizer`.
+    private func normalizedPriority(_ raw: String) -> String {
+        raw == "urgent" ? "high" : raw
+    }
+
     private func parseSpecificTime(timeString: String?, on date: Date?) -> Date? {
         guard let timeString, !timeString.isEmpty, let date else { return nil }
 

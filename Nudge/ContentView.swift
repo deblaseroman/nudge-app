@@ -125,6 +125,9 @@ struct ContentView: View {
             // task placed on a past day matches no list section and both
             // planners skip it, so without this it vanishes at midnight.
             PlacementRollover.sweep(modelContext: modelContext)
+            // Fold any stored "urgent" priority into "high" (retired value;
+            // idempotent, zero rows after the first pass).
+            LegacyPriorityNormalizer.sweep(modelContext: modelContext)
             // Sweep the retired fixed daily notifications (pre-Jul-2026
             // repeating requests that outlive the code that scheduled them).
             NotificationScheduler.shared.cancelRetiredDailyNotifications()
