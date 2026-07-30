@@ -254,6 +254,7 @@ final class NudgeArbiter: NudgeArbitering {
         debugStakesImpact(all: candidates, eligible: eligible, context: gateContext)
         debugQuietHoursImpact(all: candidates, context: gateContext)
         debugMorningPromptImpact(all: candidates, profile: profile, context: gateContext)
+        debugRecentActivityImpact(all: candidates, context: gateContext)
         #endif
 
         // 3. Pick winners — exactly one discretionary nudge per fire-time
@@ -1532,10 +1533,10 @@ final class NudgeArbiter: NudgeArbitering {
         // Active session
         if SessionCoordinator.shared.isSessionActive { return false }
 
-        // Cooldown — recent session start or task completion suppresses
-        // discretionary candidates. Event blocks are factual reminders and
-        // pass anyway.
-        if candidate.countsAgainstBudget && hadRecentActivity(now: context.now) {
+        // Cooldown — a recent session start suppresses discretionary
+        // candidates that would land while it's still running. Event blocks
+        // are factual reminders and pass anyway.
+        if candidate.countsAgainstBudget && firesInsideActivityCooldown(candidate.fireDate) {
             return false
         }
 
@@ -1589,18 +1590,54 @@ final class NudgeArbiter: NudgeArbitering {
         return true
     }
 
-    private func hadRecentActivity(now: Date) -> Bool {
-        let cutoff = Calendar.current.date(
-            byAdding: .minute,
-            value: -NudgeConfig.recentActivityCooldownMinutes,
-            to: now
-        ) ?? .distantPast
-        if let lastStart = SharedModelContainer.appGroupDefaults
-            .object(forKey: NotificationScheduler.lastFocusSessionStartedAtKey) as? Date,
-           lastStart > cutoff {
-            return true
+    /// Whether `fireDate` lands inside the cooldown that follows the most
+    /// recent focus-session start.
+    ///
+    /// ── THE RULE, AND WHY THIS ONE ────────────────────────────────────
+    /// The cooldown means "don't nudge someone who just started working."
+    /// It is therefore a property of the MOMENT THE NUDGE ARRIVES, not of
+    /// the moment the arbiter happens to run — so the window it defines is
+    /// `[lastStart, lastStart + recentActivityCooldownMinutes)` and a
+    /// candidate is blocked exactly when its fire date falls inside it.
+    ///
+    /// That is the whole rule. It needs no separate "firing soon"
+    /// threshold: the window is bounded by construction, so anything
+    /// scheduled past its end passes, and in practice only candidates
+    /// within the next `recentActivityCooldownMinutes` can ever be caught.
+    ///
+    /// ── WHAT IT REPLACED ──────────────────────────────────────────────
+    /// This used to be `hadRecentActivity(now:)` — it asked whether a
+    /// session had started within the cooldown of NOW, and if so dropped
+    /// EVERY budget-counting candidate in that reevaluate, including ones
+    /// scheduled for tomorrow that the session has no bearing on. Not fatal
+    /// (the next reevaluate rebuilt them) but it produced intermittent gate
+    /// blocks unrelated to any candidate's own timing, and it was landing
+    /// on the floater check-in — whose anchor is wake+6h — while
+    /// `ROADMAP.md` §1 waits on floater baseline rows. Listed as a known
+    /// bug in `CLAUDE.md` until Jul 2026.
+    ///
+    /// ── WHAT IT STILL CAN'T DO ────────────────────────────────────────
+    /// The app group holds only the MOST RECENT session start, so this can
+    /// only ever reason about one window. A session started this morning is
+    /// invisible once a second one starts. That's accepted, not overlooked:
+    /// building a session log for this gate is explicitly out of scope, and
+    /// the failure direction is permissive (a nudge that should have been
+    /// suppressed gets through), which is the safe one while nothing
+    /// consumes outcome data.
+    private func firesInsideActivityCooldown(_ fireDate: Date) -> Bool {
+        guard let lastStart = SharedModelContainer.appGroupDefaults
+            .object(forKey: NotificationScheduler.lastFocusSessionStartedAtKey) as? Date else {
+            return false
         }
-        return false
+        guard let cooldownEnds = Calendar.current.date(
+            byAdding: .minute,
+            value: NudgeConfig.recentActivityCooldownMinutes,
+            to: lastStart
+        ) else { return false }
+        // Half-open on purpose: a candidate firing exactly as the cooldown
+        // expires is outside it, matching the old form's `lastStart > cutoff`
+        // strict comparison at the other end of the same window.
+        return fireDate >= lastStart && fireDate < cooldownEnds
     }
 
     // MARK: - Quiet hours
@@ -2139,6 +2176,74 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    // MARK: - DEBUG: activity-cooldown gate impact
+
+    /// Before/after gate verdicts for moving the activity cooldown off `now`
+    /// and onto the candidate's fire date, per work-order item 5.
+    ///
+    /// BEFORE is the old rule reproduced exactly — "did a session start
+    /// within `recentActivityCooldownMinutes` of NOW", which was a single
+    /// verdict applied to every budget-counting candidate regardless of when
+    /// it fires. AFTER is the real gate, called per candidate. Read-only.
+    ///
+    /// On a run with no recent session start both columns are all-PASS and
+    /// the dump says so in one line rather than printing a table of
+    /// identical rows — that is the common case and it should be cheap to
+    /// skim past.
+    private func debugRecentActivityImpact(all: [NudgeCandidate], context: GateContext) {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        let lastStart = SharedModelContainer.appGroupDefaults
+            .object(forKey: NotificationScheduler.lastFocusSessionStartedAtKey) as? Date
+        guard let lastStart else {
+            print("[ActivityCooldown] no focus session has ever been started — "
+                + "gate is inert this run, BEFORE and AFTER both pass everything.")
+            return
+        }
+        let cooldown = NudgeConfig.recentActivityCooldownMinutes
+        let cooldownEnds = Calendar.current.date(byAdding: .minute, value: cooldown, to: lastStart)
+            ?? lastStart
+        // The old rule, reproduced: one verdict for the whole run.
+        let blockedEverythingBefore = lastStart > (Calendar.current.date(
+            byAdding: .minute, value: -cooldown, to: context.now
+        ) ?? .distantPast)
+
+        print("[ActivityCooldown] lastSessionStart=\(fmt.string(from: lastStart)) "
+            + "cooldown=\(cooldown)m → window ends \(fmt.string(from: cooldownEnds))")
+
+        let discretionary = all.filter(\.countsAgainstBudget)
+        guard !discretionary.isEmpty else {
+            print("  no budget-counting candidates this run — nothing for either rule to judge.")
+            return
+        }
+        guard blockedEverythingBefore else {
+            print("  BEFORE: last start is older than \(cooldown)m — old rule blocked nothing.")
+            let nowBlocked = discretionary.filter { firesInsideActivityCooldown($0.fireDate) }
+            print("  AFTER : \(nowBlocked.count) blocked. "
+                + (nowBlocked.isEmpty
+                    ? "Identical verdicts this run."
+                    : "NOTE — these fire inside a window the old rule had already exited."))
+            return
+        }
+
+        print("  BEFORE: session started \(Int(context.now.timeIntervalSince(lastStart) / 60))m ago "
+            + "→ old rule BLOCKED ALL \(discretionary.count) budget-counting candidate(s), "
+            + "whatever their fire date.")
+        var freed = 0
+        for cand in discretionary.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let blocked = firesInsideActivityCooldown(cand.fireDate)
+            if !blocked { freed += 1 }
+            print("      " + padc(blocked ? "BLOCK" : "PASS", 7)
+                + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(cand.kind.rawValue, 14)
+                + cand.title)
+        }
+        print("  AFTER : \(freed) of \(discretionary.count) candidate(s) freed — "
+            + "they fire after the cooldown ends and the session has no bearing on them.")
+    }
+
     // MARK: - DEBUG: morning prompt targeting impact
 
     /// Before/after for "the morning prompt names the day's biggest task".
@@ -2339,10 +2444,13 @@ final class NudgeArbiter: NudgeArbitering {
         if SessionCoordinator.shared.isSessionActive {
             return "a focus session is active."
         }
-        if hadRecentActivity(now: context.now) {
-            return "recent activity — a focus session started within "
-                + "\(NudgeConfig.recentActivityCooldownMinutes)m of NOW (this gate reads "
-                + "`now`, not the fire date, so the next reevaluate can rebuild it)."
+        if firesInsideActivityCooldown(candidate.fireDate) {
+            return "the fire time lands inside the "
+                + "\(NudgeConfig.recentActivityCooldownMinutes)m cooldown that follows the "
+                + "last focus-session start — i.e. this nudge would arrive while the user "
+                + "is plausibly still working. (Read against the FIRE DATE since Jul 2026; "
+                + "it used to read `now` and drop every budget-counting candidate in the "
+                + "reevaluate, tomorrow's included.)"
         }
         if !passesQuietHours(fireDate: candidate.fireDate, profile: context.profile) {
             let window = quietWindow(for: context.profile)

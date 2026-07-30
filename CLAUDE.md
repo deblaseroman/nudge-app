@@ -21,7 +21,7 @@ iOS deployment target is 26.4 — a build failure about the deployment target me
 
 Sequencing constraints in force right now. Each is a deliberate state, not an oversight — don't "fix" one without being asked.
 
-1. **Stakes is NOT wired into scoring.** `EisenhowerScorer.importance` accepts an optional `stakes:` param, but no production call site passes it, so the number is identical to the pre-stakes one. Do not arm it without explicit instruction.
+1. **Stakes is NOT wired into scoring.** `EisenhowerScorer.importance` accepts an optional `stakes:` param, but no production call site passes it, so the number is identical to the pre-stakes one. Do not arm it without explicit instruction. **Reading `task.stakes` directly is a different thing and is allowed** — `buildMorningPromptCandidates` ranks on it to pick which task the morning prompt names (Jul 2026). That doesn't arm anything: it never reaches the scorer, and the candidate's `urgency`/`importance` are the constants they always were.
 2. **Before arming stakes, the floater check-in must actually fire and produce baseline outcome data.** It never has — `.floater` shows `—` in every by-kind outcome dump, because `buildFloaterCheckInCandidates` has no next-day rollover. Arming stakes first would hand floaters a −0.15 penalty and suppress the very thing `.floater` was split out to measure.
 3. **`NudgeConfig.fatigueGateEnabled` is false deliberately.** Outcomes are being recorded and observed before anything consumes them.
 4. **Break-it-down is paused pending removal.** Don't build on it.
@@ -31,8 +31,9 @@ Sequencing constraints in force right now. Each is a deliberate state, not an ov
 
 Unlike the items above, these are wrong — they're listed so they aren't mistaken for deliberate state, and so their noise isn't misread as signal.
 
+- **The active-session gate in `passesGates` has the same `now`-shaped blindness the cooldown gate just lost.** `if SessionCoordinator.shared.isSessionActive { return false }` is the first line of the function and drops **every** candidate in that reevaluate — tomorrow's included, and event-block reminders too, which every other gate in that function deliberately exempts via `countsAgainstBudget`. Found while fixing the cooldown gate (Jul 2026) and deliberately left alone: it was explicitly out of scope for that cycle, and unlike the cooldown fix it needs a decision about what "a session is active" should mean for a nudge firing three days out.
 - **`deadlinePrepNotificationsEnabled` is misnamed** — it gates `buildBreakItDownCandidates`, not any deadline-prep feature (get-ahead reads `taskDueSoonNotificationsEnabled`), so the Settings "Break it down" row that binds it behaves correctly and only the field name lies. Renaming it means a store migration for a toggle whose feature is item 4 above, so read the name as a trap, not a spec.
-- **`hadRecentActivity` in `passesGates` evaluates against `now`, not the candidate's fire date.** A focus session started within `recentActivityCooldownMinutes` drops every budget-counting candidate in that reevaluate — including ones scheduled for tomorrow, which the session has no bearing on. Not fatal (the next reevaluate rebuilds them), but it produces intermittent gate blocks unrelated to any candidate's own timing, and it will muddy the floater baseline data item 2 is waiting on.
+- ~~**`hadRecentActivity` in `passesGates` evaluates against `now`**~~ — **fixed Jul 2026.** It is now `firesInsideActivityCooldown(_ fireDate:)` and blocks a candidate only when its own fire time lands in `[lastSessionStart, lastSessionStart + recentActivityCooldownMinutes)`. Strictly more permissive than the old rule for every future-firing candidate, so it can only free candidates, never block new ones.
 
 ## Build & verify
 
