@@ -118,6 +118,22 @@ struct NudgeCandidate {
     /// event blocks (no task duration to estimate).
     let estimatedMinutes: Int?
 
+    /// The task this nudge's COPY names, when that isn't the same thing as
+    /// the task it's *about*.
+    ///
+    /// Only the morning prompt uses it. That candidate keeps `taskID == nil`
+    /// on purpose — `taskID` feeds the fatigue system, and pointing it at
+    /// the user's highest-stakes task would make an ignored morning prompt
+    /// count against exactly the wrong item the day `fatigueGateEnabled`
+    /// flips (see the comment in `buildMorningPromptCandidates`). This field
+    /// is inert by construction: nothing reads it but the morning prompt's
+    /// own named-task history, so it can carry the attribution `taskID`
+    /// must not.
+    ///
+    /// A `var` with a default purely so the synthesised memberwise init
+    /// keeps working at the five call sites that don't set it.
+    var namedTaskID: UUID? = nil
+
     /// Within-slot ranking. `pow(urgency, 1.1) * pow(importance, 0.9)` —
     /// urgency exponent slightly higher to favor time-pressure breaking ties.
     var score: Double {
@@ -176,6 +192,35 @@ final class NudgeArbiter: NudgeArbitering {
         set {
             SharedModelContainer.appGroupDefaults
                 .set(Array(newValue), forKey: scheduledIDsKey)
+        }
+    }
+
+    /// App Group key for "which task did the morning prompt name on which
+    /// day". Backs `morningPromptMaxConsecutiveDays`.
+    private let morningPromptHistoryKey = "nudge.arb.morningPromptHistory"
+
+    /// Day stamp (`yyyyMMdd`, the same format candidate IDs embed) → the
+    /// UUID string of the task the morning prompt named for that day.
+    ///
+    /// Written in `schedule()` rather than in the builder, mirroring
+    /// `eventReminderHistory`: the builder runs many times a day and its
+    /// output can still be dropped downstream, so "what we actually handed
+    /// to the OS" is the only honest thing to record. Re-scheduling the same
+    /// day's prompt overwrites the same key with the same value, so repeated
+    /// reevaluates are idempotent.
+    ///
+    /// Pruned alongside `eventReminderHistory` in `cancelAll`. Stamp keys
+    /// sort lexicographically in date order, which is what makes the prune a
+    /// string comparison.
+    private var morningPromptHistory: [String: String] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: morningPromptHistoryKey)?
+                .compactMapValues { $0 as? String } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: morningPromptHistoryKey)
         }
     }
 
@@ -255,6 +300,7 @@ final class NudgeArbiter: NudgeArbitering {
         debugQuietHoursImpact(all: candidates, context: gateContext)
         debugMorningPromptImpact(all: candidates, profile: profile, context: gateContext)
         debugRecentActivityImpact(all: candidates, context: gateContext)
+        debugActiveSessionImpact(all: candidates, context: gateContext)
         #endif
 
         // 3. Pick winners — exactly one discretionary nudge per fire-time
@@ -313,6 +359,17 @@ final class NudgeArbiter: NudgeArbitering {
         let pruned = eventReminderHistory.filter { $0.value > cutoff }
         if pruned.count != eventReminderHistory.count {
             eventReminderHistory = pruned
+        }
+
+        // Same treatment for the morning prompt's named-task history. Kept
+        // for a week rather than 2 days: the rule reads the days immediately
+        // before the FIRE day, and that fire day can be tomorrow, so the
+        // window has to outlast the lookback by a comfortable margin.
+        let historyCutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date())
+            .map { stamp($0) } ?? ""
+        let prunedMorning = morningPromptHistory.filter { $0.key >= historyCutoff }
+        if prunedMorning.count != morningPromptHistory.count {
+            morningPromptHistory = prunedMorning
         }
 
         // Pending NudgeOutcome rows split into two populations, and only
@@ -673,7 +730,8 @@ final class NudgeArbiter: NudgeArbitering {
             importance: 1.0,
             receptivity: 1.0,
             countsAgainstBudget: false,
-            estimatedMinutes: nil
+            estimatedMinutes: nil,
+            namedTaskID: named.task.id
         )]
     }
 
@@ -701,11 +759,22 @@ final class NudgeArbiter: NudgeArbitering {
     /// `pickWinners`; here the comparison is only ever within one stakes
     /// tier, where "no deadline" should lose to "deadline".)
     ///
+    /// **A task that has been named on the last
+    /// `morningPromptMaxConsecutiveDays` mornings running steps aside**, so
+    /// the next one down gets the slot. Stakes is a stable property of a
+    /// task, so without this the same item wins every morning until it's
+    /// done — and a notification that never changes is one the user learns
+    /// to swipe without reading. Applied by dropping repeat-named tasks
+    /// *before* the top-tier cut, so a lower-stakes task can win the day.
+    ///
     /// Split out of the builder the same way `floaterTargets` was, so
     /// `debugMorningPromptImpact` prints the REAL selection instead of a
-    /// paraphrase that can drift from it.
+    /// paraphrase that can drift from it. `includeRepeatNamed: true` asks
+    /// for the pre-rule ranking, which is what makes the before/after dump
+    /// a comparison rather than an assertion.
     private func morningPromptRanking(
         fireDate: Date,
+        includeRepeatNamed: Bool = false,
         modelContext: ModelContext
     ) -> [MorningPromptChoice] {
         // Same eligibility as every other task-naming builder: open, and
@@ -719,15 +788,32 @@ final class NudgeArbiter: NudgeArbitering {
         let open = (try? modelContext.fetch(descriptor)) ?? []
         guard !open.isEmpty else { return [] }
 
+        // ── The no-repeat rule ───────────────────────────────────────────
+        // Drop anything named on each of the last
+        // `morningPromptMaxConsecutiveDays` mornings. THE FALLBACK IS THE
+        // IMPORTANT PART: if that empties the pool — one open task, named
+        // twice — the rule stands down and the task is named again. The
+        // rule exists to make the notification vary when there is something
+        // to vary to; it must never turn into "the day's anchor goes silent
+        // because the user has exactly one thing on their list", which is
+        // the user who needs it most.
+        let eligible: [NudgeTask]
+        if includeRepeatNamed {
+            eligible = open
+        } else {
+            let fresh = open.filter { !wasNamedOnRecentMornings($0, before: fireDate) }
+            eligible = fresh.isEmpty ? open : fresh
+        }
+
         // Only the top stakes tier can win, so the tie-break is computed for
         // that tier alone — `DurationModel.estimate` is a SwiftData lookup
         // and this builder previously did none.
-        let ranked = open.map { ($0, NudgeArbiter.morningStakesRank($0.stakes)) }
+        let ranked = eligible.map { ($0, NudgeArbiter.morningStakesRank($0.stakes)) }
         guard let topRank = ranked.map(\.1).max() else { return [] }
         let contenders = ranked.filter { $0.1 == topRank }.map(\.0)
 
         return contenders
-            .map { task in
+            .map { task -> MorningPromptChoice in
                 MorningPromptChoice(
                     task: task,
                     stakes: task.stakes,
@@ -748,6 +834,46 @@ final class NudgeArbiter: NudgeArbitering {
                     ? $0.urgency > $1.urgency
                     : $0.task.id.uuidString < $1.task.id.uuidString
             }
+    }
+
+    /// Whether the morning prompt named `task` on EVERY one of the
+    /// `morningPromptMaxConsecutiveDays` days immediately before
+    /// `fireDate`'s day.
+    ///
+    /// Deliberately "every one of the last N", not "any of the last N": the
+    /// rule is about an unbroken run of identical mornings. A task named
+    /// Monday and Wednesday isn't the failure mode — the user saw something
+    /// else on Tuesday.
+    ///
+    /// A missing day counts as a break, which is the forgiving reading and
+    /// the right one: a day with no prompt (busy day, quiet hours, phone
+    /// off) is not evidence the user saw this task, so it shouldn't count
+    /// toward suppressing it.
+    ///
+    /// Deadline-horizon alternative, and why this instead: a horizon would
+    /// not have solved the stated problem. Undated tasks have to stay
+    /// nameable (they're the ones most likely to rot), and they have no
+    /// deadline for a horizon to bite on — so the exact case that motivated
+    /// the rule would have been the one it couldn't reach. A horizon also
+    /// doesn't make anything *vary*: a task due in four days still wins four
+    /// mornings running.
+    private func wasNamedOnRecentMornings(_ task: NudgeTask, before fireDate: Date) -> Bool {
+        let window = NudgeConfig.morningPromptMaxConsecutiveDays
+        guard window > 0 else { return false }
+        let history = morningPromptHistory
+        guard !history.isEmpty else { return false }
+
+        let calendar = Calendar.current
+        let fireDay = calendar.startOfDay(for: fireDate)
+        let taskID = task.id.uuidString
+
+        for daysBack in 1...window {
+            guard let day = calendar.date(byAdding: .day, value: -daysBack, to: fireDay) else {
+                return false
+            }
+            if history[stamp(day)] != taskID { return false }
+        }
+        return true
     }
 
     /// Deadline proximity for the morning prompt's tie-break. 0 for an
@@ -1530,8 +1656,11 @@ final class NudgeArbiter: NudgeArbitering {
     }
 
     private func passesGates(_ candidate: NudgeCandidate, context: GateContext) -> Bool {
-        // Active session
-        if SessionCoordinator.shared.isSessionActive { return false }
+        // Active session — suppresses a nudge only if the nudge would ARRIVE
+        // during the session, and never touches budget-exempt candidates.
+        if candidate.countsAgainstBudget && firesDuringActiveSession(candidate.fireDate) {
+            return false
+        }
 
         // Cooldown — a recent session start suppresses discretionary
         // candidates that would land while it's still running. Event blocks
@@ -1588,6 +1717,43 @@ final class NudgeArbiter: NudgeArbitering {
         }
 
         return true
+    }
+
+    /// Whether `fireDate` lands inside the currently-running focus session.
+    ///
+    /// ── THE THIRD INSTANCE OF ONE BUG ─────────────────────────────────
+    /// This gate used to be `if SessionCoordinator.shared.isSessionActive
+    /// { return false }` — an unconditional bail that dropped EVERY
+    /// candidate in the reevaluate. Two things were wrong with it, and they
+    /// are independent:
+    ///
+    ///   1. **It read the clock, not the candidate.** A session at 14:00
+    ///      killed a nudge scheduled for next Tuesday. Same mistake as
+    ///      `hadRecentActivity`, fixed one line below this one; the session
+    ///      even has a known end time, so there was nothing to approximate.
+    ///   2. **It ignored `countsAgainstBudget`.** Every other gate in
+    ///      `passesGates` exempts factual/anchor nudges through that flag;
+    ///      this one didn't, so a focus session at 14:00 also swallowed the
+    ///      15:00 pre-class heads-up. That is precisely backwards — a
+    ///      factual reminder is what someone heads-down in a session most
+    ///      needs, and it's the one nudge that can't be rebuilt in time if
+    ///      it's dropped near its own fire moment.
+    ///
+    /// Both are now handled at the call site: the `countsAgainstBudget`
+    /// check exempts event blocks (and the morning prompt, which is
+    /// budget-exempt for the same "this is an anchor, not a nudge" reason),
+    /// and this function answers the per-candidate question.
+    ///
+    /// `sessionEnd` is the session's own end instant, so no config constant
+    /// is involved — unlike the cooldown below, the window here is exactly
+    /// as long as the session is. A stale `sessionEnd` left over from a
+    /// finished session is always in the past and therefore inert, and
+    /// `startSession` now sets it BEFORE it triggers its reevaluate so this
+    /// gate never reads a session's end as `.distantPast` while its
+    /// `isSessionActive` is already true.
+    private func firesDuringActiveSession(_ fireDate: Date) -> Bool {
+        guard SessionCoordinator.shared.isSessionActive else { return false }
+        return fireDate < SessionCoordinator.shared.sessionEnd
     }
 
     /// Whether `fireDate` lands inside the cooldown that follows the most
@@ -2176,6 +2342,56 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    // MARK: - DEBUG: active-session gate impact
+
+    /// Before/after for narrowing the active-session gate, per work-order
+    /// item 5.
+    ///
+    /// BEFORE is the old rule, which had exactly one verdict for the whole
+    /// run: session active ⇒ every candidate dropped, budget-exempt or not.
+    /// AFTER is the real gate, per candidate. The rows that matter are the
+    /// event blocks — they were being suppressed by a gate every other rule
+    /// in `passesGates` exempts them from.
+    private func debugActiveSessionImpact(all: [NudgeCandidate], context: GateContext) {
+        guard SessionCoordinator.shared.isSessionActive else {
+            print("[ActiveSession] no session running — gate inert this run, "
+                + "BEFORE and AFTER both pass everything.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        let ends = SessionCoordinator.shared.sessionEnd
+
+        print("[ActiveSession] session running until \(fmt.string(from: ends))")
+        if ends <= context.now {
+            print("  ⚠️  sessionEnd is NOT in the future while isSessionActive is true — "
+                + "the gate will suppress nothing. Expected only in the 3s teardown "
+                + "window inside finishSession; anywhere else this is the ordering bug "
+                + "startSession was fixed for.")
+        }
+        guard !all.isEmpty else {
+            print("  no candidates this run.")
+            return
+        }
+        print("  BEFORE: session active → old rule BLOCKED ALL \(all.count) candidate(s), "
+            + "event blocks included.")
+        var freed = 0
+        for cand in all.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let blocked = cand.countsAgainstBudget && firesDuringActiveSession(cand.fireDate)
+            if !blocked { freed += 1 }
+            let why = blocked
+                ? "BLOCK"
+                : (cand.countsAgainstBudget ? "PASS" : "PASS*")
+            print("      " + padc(why, 7)
+                + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(cand.kind.rawValue, 14)
+                + cand.title)
+        }
+        print("  AFTER : \(freed) of \(all.count) candidate(s) freed. "
+            + "PASS* = budget-exempt, never sees this gate at all.")
+    }
+
     // MARK: - DEBUG: activity-cooldown gate impact
 
     /// Before/after gate verdicts for moving the activity cooldown off `now`
@@ -2292,6 +2508,11 @@ final class NudgeArbiter: NudgeArbitering {
         }
 
         let ranking = morningPromptRanking(fireDate: fireDate, modelContext: context.modelContext)
+        let unfiltered = morningPromptRanking(
+            fireDate: fireDate,
+            includeRepeatNamed: true,
+            modelContext: context.modelContext
+        )
 
         print("[MorningPrompt] fire=\(fmt.string(from: fireDate))  (gating unchanged: toggle, day-fullness, fire-moment busy)")
         print("  BEFORE: \"What do you want to get done today? Tell me and I'll set it up.\"  ← fired with nothing open too")
@@ -2303,6 +2524,33 @@ final class NudgeArbiter: NudgeArbitering {
         } else {
             print("  AFTER : no candidate this run — a builder gate (day-fullness or "
                 + "fire-moment busy) stopped it before targeting, same as it would have before.")
+        }
+
+        // ── The no-repeat rule, shown as a comparison ────────────────────
+        // `morningPromptMaxConsecutiveDays` is the reason today's pick can
+        // differ from the pure stakes ranking. Print the last week of named
+        // tasks so "why THAT one" is answerable from the log alone.
+        let history = morningPromptHistory
+        let window = NudgeConfig.morningPromptMaxConsecutiveDays
+        if let wouldHaveNamed = unfiltered.first {
+            let actuallyNamed = ranking.first
+            if actuallyNamed?.task.id != wouldHaveNamed.task.id {
+                print("  no-repeat rule BIT: \"\(wouldHaveNamed.task.title)\" has been named "
+                    + "\(window) morning(s) running → stepped aside for "
+                    + "\"\(actuallyNamed?.task.title ?? "nothing")\".")
+            } else if !history.isEmpty {
+                print("  no-repeat rule idle: \"\(wouldHaveNamed.task.title)\" has not yet been "
+                    + "named \(window) mornings running.")
+            }
+        }
+        if !history.isEmpty {
+            let recent = history.sorted { $0.key > $1.key }.prefix(7)
+            let titles = (try? context.modelContext.fetch(FetchDescriptor<NudgeTask>()))
+                .map { Dictionary(uniqueKeysWithValues: $0.map { ($0.id.uuidString, $0.title) }) }
+                ?? [:]
+            print("  named-task history (most recent first): "
+                + recent.map { "\($0.key)=\(titles[$0.value] ?? "deleted task")" }
+                    .joined(separator: "  "))
         }
 
         guard !ranking.isEmpty else { return }
@@ -2441,8 +2689,11 @@ final class NudgeArbiter: NudgeArbitering {
         _ candidate: NudgeCandidate,
         context: GateContext
     ) -> String {
-        if SessionCoordinator.shared.isSessionActive {
-            return "a focus session is active."
+        if firesDuringActiveSession(candidate.fireDate) {
+            return "a focus session is running until "
+                + "\(SessionCoordinator.shared.sessionEnd) and this nudge would arrive "
+                + "inside it. (Since Jul 2026 an active session only blocks candidates "
+                + "that land during it, and never blocks budget-exempt kinds.)"
         }
         if firesInsideActivityCooldown(candidate.fireDate) {
             return "the fire time lands inside the "
@@ -2604,6 +2855,18 @@ final class NudgeArbiter: NudgeArbitering {
             var history = eventReminderHistory
             history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
             eventReminderHistory = history
+        }
+
+        // Record which task the morning prompt named for its fire day, so
+        // `morningPromptMaxConsecutiveDays` can make it step aside. Keyed on
+        // the FIRE day, not today: an evening reevaluate schedules
+        // tomorrow's prompt, and tomorrow is the morning the user will see
+        // it on. Re-scheduling the same day writes the same pair again.
+        if candidate.kind == .morningPrompt, let namedTaskID = candidate.namedTaskID {
+            var history = morningPromptHistory
+            history[stamp(Calendar.current.startOfDay(for: candidate.fireDate))]
+                = namedTaskID.uuidString
+            morningPromptHistory = history
         }
 
         // Log the outcome row as "pending" so future evaluations can see

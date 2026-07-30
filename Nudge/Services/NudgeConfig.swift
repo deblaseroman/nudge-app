@@ -63,11 +63,25 @@ enum NudgeConfig {
     static let preBedtimeQuietMinutes: Int = 60
 
     // MARK: - Morning prompt
-    /// Skip the morning "what do you want to get done today?" prompt when
-    /// at least this fraction of the day's awake window (wake+quiet →
-    /// bed−quiet) is already committed to events. A day that's half booked
-    /// doesn't need an open-ended planning ask on top.
+    /// Skip the morning prompt when at least this fraction of the day's
+    /// awake window (wake+quiet → bed−quiet) is already committed to
+    /// events. A day that's half booked doesn't need a planning nudge on
+    /// top.
     static let morningPromptBusyDayThreshold: Double = 0.5
+
+    /// How many mornings in a row the prompt may name the SAME task before
+    /// it steps aside for the next one down the ranking.
+    ///
+    /// The prompt names the highest-stakes open task, and stakes doesn't
+    /// change day to day — so without this, one task months out gets named
+    /// every morning until it's done, and an unchanging daily notification
+    /// is how a channel gets tuned out. 2 rather than 3: a third identical
+    /// morning is already past the point where the user stops reading it.
+    ///
+    /// **Only applies when there is something else to name.** If the pool
+    /// empties, the same task is named again rather than the day's anchor
+    /// going silent — see `morningPromptRanking`.
+    static let morningPromptMaxConsecutiveDays: Int = 2
 
     // MARK: - Outcome classification
     //

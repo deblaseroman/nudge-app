@@ -76,8 +76,21 @@ final class SessionCoordinator {
         SharedModelContainer.appGroupDefaults
             .set(Date(), forKey: NotificationScheduler.lastFocusSessionStartedAtKey)
 
-        // Defer reevaluation: re-runs the arbiter so all pending
-        // discretionary nudges are cancelled now that the user is engaged.
+        let minutes = task.estimatedMinutes ?? defaultDurationMinutes
+        let duration = TimeInterval(minutes * 60)
+        // MUST be set before the reevaluate below. The arbiter's
+        // active-session gate reads `sessionEnd` live to decide whether a
+        // candidate would arrive DURING this session — and `cancelSession()`
+        // at the top of this function resets it to `.distantPast`. Computing
+        // it after the reevaluate left that pass seeing `isSessionActive ==
+        // true` alongside an end instant in the distant past, so the gate
+        // suppressed nothing on the one reevaluate whose entire job is to
+        // clear nudges out of the session the user just started.
+        sessionEnd = Date().addingTimeInterval(duration)
+
+        // Defer reevaluation: re-runs the arbiter so pending discretionary
+        // nudges that would land inside this session are cancelled now that
+        // the user is engaged.
         let context = ModelContext(SharedModelContainer.container)
         if let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
             NudgeArbiter.shared.reevaluate(
@@ -86,10 +99,6 @@ final class SessionCoordinator {
                 modelContext: context
             )
         }
-
-        let minutes = task.estimatedMinutes ?? defaultDurationMinutes
-        let duration = TimeInterval(minutes * 60)
-        sessionEnd = Date().addingTimeInterval(duration)
 
         // Publish the active session to the widget. Without this write
         // the widget timeline shows the "Start" button even after the
