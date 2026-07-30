@@ -78,9 +78,12 @@ enum NudgeConfig {
     /// is how a channel gets tuned out. 2 rather than 3: a third identical
     /// morning is already past the point where the user stops reading it.
     ///
-    /// **Only applies when there is something else to name.** If the pool
-    /// empties, the same task is named again rather than the day's anchor
-    /// going silent — see `morningPromptRanking`.
+    /// **Two things stop it, and both mean "name the same task again".**
+    /// An empty pool (one open task, already named twice) — the day's
+    /// anchor must not go silent on the user with one thing on their list.
+    /// And a replacement more than one stakes tier down, which would put
+    /// "Biggest thing on your list: Clean my desk" in front of someone with
+    /// a high-stakes task open. See `morningPromptRanking`.
     static let morningPromptMaxConsecutiveDays: Int = 2
 
     // MARK: - Outcome classification

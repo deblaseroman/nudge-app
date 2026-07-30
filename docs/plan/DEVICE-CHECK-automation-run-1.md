@@ -71,6 +71,14 @@ Read the `[MorningPrompt]` block. It prints without any waiting.
 - [ ] `named-task history` is empty or short on this first run. It fills in one
       entry per day from here.
 
+The `no-repeat rule …` line has four forms, and they mean different things:
+`idle` (the named task hasn't held the slot long enough yet), `BIT` (it stepped
+aside), `HELD (tier veto)` (it held the slot long enough, but the only
+alternative is more than one stakes tier below — repeating on purpose), and
+`HELD (nothing else open)`. **A `HELD (tier veto)` line is the rule working,
+not failing** — and with mostly `unclassified` tasks it's the one you're most
+likely to see. See the report for `2026-07-31-01`.
+
 **The no-repeat rule needs three consecutive mornings to observe naturally.**
 If you want it now: note the named task, then force it — mark that task
 complete (or add a second, higher-stakes one), foreground the app, and confirm

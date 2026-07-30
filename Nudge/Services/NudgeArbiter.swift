@@ -764,8 +764,16 @@ final class NudgeArbiter: NudgeArbitering {
     /// the next one down gets the slot. Stakes is a stable property of a
     /// task, so without this the same item wins every morning until it's
     /// done — and a notification that never changes is one the user learns
-    /// to swipe without reading. Applied by dropping repeat-named tasks
-    /// *before* the top-tier cut, so a lower-stakes task can win the day.
+    /// to swipe without reading.
+    ///
+    /// **The step-aside is capped at one stakes tier.** Rotation is only
+    /// worth having between tasks that could plausibly both be "the biggest
+    /// thing"; handing the slot from a high-stakes task to a `.low` one
+    /// produces "Biggest thing on your list: Clean my desk" while something
+    /// that actually matters sits open, which is the app contradicting its
+    /// own ranking in the slot the user reads first. **A repeat is better
+    /// than a false claim**, so past one tier the incumbent keeps the slot
+    /// and the notification simply repeats.
     ///
     /// Split out of the builder the same way `floaterTargets` was, so
     /// `debugMorningPromptImpact` prints the REAL selection instead of a
@@ -788,27 +796,62 @@ final class NudgeArbiter: NudgeArbitering {
         let open = (try? modelContext.fetch(descriptor)) ?? []
         guard !open.isEmpty else { return [] }
 
-        // ── The no-repeat rule ───────────────────────────────────────────
-        // Drop anything named on each of the last
-        // `morningPromptMaxConsecutiveDays` mornings. THE FALLBACK IS THE
-        // IMPORTANT PART: if that empties the pool — one open task, named
-        // twice — the rule stands down and the task is named again. The
-        // rule exists to make the notification vary when there is something
-        // to vary to; it must never turn into "the day's anchor goes silent
-        // because the user has exactly one thing on their list", which is
-        // the user who needs it most.
-        let eligible: [NudgeTask]
-        if includeRepeatNamed {
-            eligible = open
-        } else {
-            let fresh = open.filter { !wasNamedOnRecentMornings($0, before: fireDate) }
-            eligible = fresh.isEmpty ? open : fresh
-        }
+        // The ranking with no no-repeat rule applied at all. Its first entry
+        // is the INCUMBENT — the task pure stakes says should be named.
+        let unconstrained = rankPool(open, fireDate: fireDate, modelContext: modelContext)
+        guard !includeRepeatNamed else { return unconstrained }
+        guard let incumbent = unconstrained.first else { return [] }
 
+        // ── The no-repeat rule ───────────────────────────────────────────
+        // The incumbent steps aside only if it has held the slot for
+        // `morningPromptMaxConsecutiveDays` mornings running AND there is
+        // something close enough in stakes to hand it to.
+        guard wasNamedOnRecentMornings(incumbent.task, before: fireDate) else {
+            return unconstrained
+        }
+        let fresh = open.filter { !wasNamedOnRecentMornings($0, before: fireDate) }
+        let alternatives = rankPool(fresh, fireDate: fireDate, modelContext: modelContext)
+
+        // FALLBACK ONE: nothing left to name. One open task, named twice —
+        // the rule stands down rather than letting the day's anchor go
+        // silent on the user who has exactly one thing on their list, which
+        // is the user who needs it most.
+        guard let replacement = alternatives.first else { return unconstrained }
+
+        // FALLBACK TWO: the replacement is more than one stakes tier below
+        // the incumbent. Then it isn't a replacement, it's a contradiction —
+        // "Biggest thing on your list: Clean my desk" while a high-stakes
+        // task sits open is the app arguing with its own ranking in the one
+        // slot the user reads first. A repeat is better than a false claim,
+        // so the incumbent keeps the slot.
+        //
+        // One tier, measured on `morningStakesRank`, which is why `nil`
+        // sitting between `.medium` and `.low` matters here and not just in
+        // the sort: high↔medium and nil↔low can rotate, high↔nil cannot.
+        let gap = NudgeArbiter.morningStakesRank(incumbent.stakes)
+            - NudgeArbiter.morningStakesRank(replacement.stakes)
+        guard gap <= 1 else { return unconstrained }
+
+        return alternatives
+    }
+
+    /// Ranks a pool of open tasks the morning prompt could name, best first:
+    /// top stakes tier only, ordered by deadline proximity, UUID last for
+    /// determinism.
+    ///
+    /// Split out of `morningPromptRanking` so the no-repeat rule can rank
+    /// two pools — everything, and everything-not-recently-named — with one
+    /// implementation. Comparing the two is what makes the rule's decision
+    /// checkable rather than assertable.
+    private func rankPool(
+        _ pool: [NudgeTask],
+        fireDate: Date,
+        modelContext: ModelContext
+    ) -> [MorningPromptChoice] {
         // Only the top stakes tier can win, so the tie-break is computed for
         // that tier alone — `DurationModel.estimate` is a SwiftData lookup
         // and this builder previously did none.
-        let ranked = eligible.map { ($0, NudgeArbiter.morningStakesRank($0.stakes)) }
+        let ranked = pool.map { ($0, NudgeArbiter.morningStakesRank($0.stakes)) }
         guard let topRank = ranked.map(\.1).max() else { return [] }
         let contenders = ranked.filter { $0.1 == topRank }.map(\.0)
 
@@ -2532,14 +2575,39 @@ final class NudgeArbiter: NudgeArbitering {
         // tasks so "why THAT one" is answerable from the log alone.
         let history = morningPromptHistory
         let window = NudgeConfig.morningPromptMaxConsecutiveDays
-        if let wouldHaveNamed = unfiltered.first {
+        if let incumbent = unfiltered.first {
             let actuallyNamed = ranking.first
-            if actuallyNamed?.task.id != wouldHaveNamed.task.id {
-                print("  no-repeat rule BIT: \"\(wouldHaveNamed.task.title)\" has been named "
+            let heldTooLong = wasNamedOnRecentMornings(incumbent.task, before: fireDate)
+            if actuallyNamed?.task.id != incumbent.task.id {
+                print("  no-repeat rule BIT: \"\(incumbent.task.title)\" has been named "
                     + "\(window) morning(s) running → stepped aside for "
                     + "\"\(actuallyNamed?.task.title ?? "nothing")\".")
+            } else if heldTooLong {
+                // The rule wanted to fire and something stopped it. WHICH
+                // one matters: a tier veto is the design working, an empty
+                // pool is the user having one task, and they read
+                // identically in the output unless named.
+                let fresh = (try? context.modelContext.fetch(
+                    FetchDescriptor<NudgeTask>(
+                        predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
+                    )
+                ))?.filter { !wasNamedOnRecentMornings($0, before: fireDate) } ?? []
+                let best = rankPool(fresh, fireDate: fireDate, modelContext: context.modelContext).first
+                if let best {
+                    let gap = NudgeArbiter.morningStakesRank(incumbent.stakes)
+                        - NudgeArbiter.morningStakesRank(best.stakes)
+                    print("  no-repeat rule HELD (tier veto): \"\(incumbent.task.title)\" "
+                        + "(\(incumbent.stakes?.rawValue ?? "unclassified")) has held the slot "
+                        + "\(window) morning(s), but the best alternative "
+                        + "\"\(best.task.title)\" (\(best.stakes?.rawValue ?? "unclassified")) "
+                        + "is \(gap) tier(s) below it. Repeating rather than naming something "
+                        + "the ranking disagrees with.")
+                } else {
+                    print("  no-repeat rule HELD (nothing else open): "
+                        + "\"\(incumbent.task.title)\" is the only thing to name.")
+                }
             } else if !history.isEmpty {
-                print("  no-repeat rule idle: \"\(wouldHaveNamed.task.title)\" has not yet been "
+                print("  no-repeat rule idle: \"\(incumbent.task.title)\" has not yet been "
                     + "named \(window) mornings running.")
             }
         }
