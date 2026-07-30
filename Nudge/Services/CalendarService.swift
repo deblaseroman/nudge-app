@@ -284,7 +284,8 @@ final class CalendarService {
     }
 
     /// Fetch and parse a Canvas iCal URL, creating NudgeTasks with
-    /// source="calendar" and category="school".
+    /// source="calendar" and category="exam" (exam-shaped titles) or
+    /// "school" (everything else).
     func importCanvasICal(urlString: String, modelContext: ModelContext) async -> CalendarImportResult {
         isImporting = true
         defer {
@@ -351,7 +352,9 @@ final class CalendarService {
                 dueTime: event.isAllDay ? nil : "specific",
                 specificTime: specificTime,
                 priority: inferPriorityFromCanvas(title: title),
-                category: "school",
+                // Canvas is where exams come from — a blanket "school"
+                // here would keep every imported exam at the school prior.
+                category: isExamTitle(title) ? "exam" : "school",
                 source: "calendar",
                 estimatedMinutes: importedDurationMinutes(
                     start: startDate,
@@ -497,9 +500,26 @@ final class CalendarService {
 
     // MARK: - Category & Priority Inference
 
+    /// Exam-title check shared by both import paths (EventKit and Canvas
+    /// iCal). Kept out of `schoolKeywords` because `.exam` carries its own
+    /// importance prior (0.9 vs school's 0.7) and the planned study-task
+    /// feature keys on the category — an exam filed under "school" is
+    /// invisible to it. Mirrors the chat prompt's rule: "exam" for
+    /// tests/midterms/finals/quizzes, "school" for other coursework.
+    private func isExamTitle(_ title: String) -> Bool {
+        let lower = title.lowercased()
+        let examKeywords = ["exam", "quiz", "midterm", "final", "test"]
+        return examKeywords.contains { lower.contains($0) }
+    }
+
     private func inferCategory(from event: EKEvent) -> String {
         let calendarTitle = (event.calendar.title).lowercased()
         let title = (event.title ?? "").lowercased()
+
+        // Exam FIRST, and on the event title only — a calendar NAMED
+        // "Exams" signals school context for its events, not that every
+        // event inside it is itself an exam.
+        if isExamTitle(title) { return "exam" }
 
         let schoolKeywords = ["school", "class", "university", "college", "canvas",
                               "coursework", "lecture", "seminar", "lab", "exam",
