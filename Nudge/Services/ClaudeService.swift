@@ -76,6 +76,7 @@ class ClaudeService {
     - Assign priority: "high", "medium", or "low" (default "medium")
     - Categorize: "exam", "school", "work", "health", "personal", "errand", or "other". Use "exam" for tests/midterms/finals/quizzes; "school" for any other coursework (assignments, readings, papers); "work" for jobs/shifts/meetings; "health" for doctor/gym/therapy/medication; "personal" for friends/family/hobbies; "errand" for quick utilitarian tasks (pick up, return, pay).
     - Assign stakes: "high", "medium", or "low" on EVERY item. \(ClaudeService.stakesRuleText)
+    - For EVENTS with category "exam" ONLY, also set "prepLeadDays": how many days ahead studying should start. EXACTLY 3, 7, or 14 — a coarse band, never any other number. Judge from the exam title alone: course level and subject carry the signal (an organic chemistry final outranks an intro marketing quiz). 3 = light/low-stakes quiz or intro-level test; 7 = a typical course exam or midterm; 14 = a final, a cumulative exam, or a notoriously heavy subject. If you can't tell, use null. Every non-exam item gets null.
 
     CRITICAL — TASKS vs EVENTS:
     Every item the user mentions is EITHER a task OR an event. You MUST decide which and set the "isEvent" boolean field:
@@ -198,8 +199,8 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null}
-    The "isEvent" boolean is REQUIRED on every new item.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null}
+    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else.
 
     ORDERED PLANS (sequenceIndex):
     - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
@@ -625,7 +626,8 @@ class ClaudeService {
             "startISO": "<datetime, format YYYY-MM-DDTHH:MM:SS, LOCAL TIME, no timezone suffix>",
             "durationMinutes": <int or null>,
             "category": "exam" | "school" | "work" | "health" | "personal" | "errand" | "other" | null,
-            "stakes": "high" | "medium" | "low" | null
+            "stakes": "high" | "medium" | "low" | null,
+            "prepLeadDays": 3 | 7 | 14 | null
           }
         ]
 
@@ -638,6 +640,7 @@ class ClaudeService {
         - When in doubt about whether something is an event vs. UI text, INCLUDE IT. The user can delete bad ones.
         - Default category to "\(defaultCategory)" when unsure.
         - stakes = the CONSEQUENCE of missing the event, not its timing: "high" for exams/finals/interviews/flights/medical appointments; "medium" for regular classes and work shifts; "low" for optional or social items. Use null when you can't tell.
+        - prepLeadDays: for category "exam" ONLY — how many days ahead studying should start, judged from the title alone. EXACTLY 3, 7, or 14 (a coarse band, never any other number): 3 = light quiz/intro-level test, 7 = typical course exam or midterm, 14 = final/cumulative/heavy subject. Null when you can't tell; null for every non-exam item.
         - Only return [] if there is genuinely zero date/time information anywhere in the text.
 
         OCR TEXT:
@@ -713,7 +716,10 @@ class ClaudeService {
                 startDate: start,
                 estimatedMinutes: json.durationMinutes,
                 category: json.category,
-                stakes: TaskStakes.parse(json.stakes)
+                stakes: TaskStakes.parse(json.stakes),
+                // Tolerant: only the coarse bands survive; 5, 0, -3, 30
+                // all read as "didn't say".
+                prepLeadDays: ExamPrepSweep.validLeadBand(json.prepLeadDays)
             )
         }
         #if DEBUG
@@ -1157,6 +1163,7 @@ struct TaskData: Codable {
     let recurrence: String?
     let dependsOnTask: String?      // title of the task this depends on (resolved client-side)
     let sequenceIndex: Int?         // 1-based order when the user states a plan ("first X, then Y")
+    let prepLeadDays: Int?          // exam events only: coarse study-lead band (3|7|14); anything else → nil via ExamPrepSweep.validLeadBand
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -1170,6 +1177,7 @@ struct TaskData: Codable {
         case recurrence
         case dependsOnTask = "depends_on_task"
         case sequenceIndex = "sequenceIndex"
+        case prepLeadDays = "prepLeadDays"
     }
 }
 
@@ -1221,6 +1229,7 @@ private struct ScreenshotEventJSON: Codable {
     let durationMinutes: Int?
     let category: String?
     let stakes: String?             // consequence signal; unknown/missing → nil via TaskStakes.parse
+    let prepLeadDays: Int?          // exam events only: 3|7|14 band; anything else → nil via ExamPrepSweep.validLeadBand
 }
 
 // MARK: - Batch stakes classification DTO

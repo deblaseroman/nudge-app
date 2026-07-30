@@ -446,6 +446,12 @@ struct HomeTabView: View {
                     // inherits the user-override protection. Unknown or
                     // missing strings parse to nil and leave stakes unset.
                     task.setStakesFromAutomation(TaskStakes.parse(taskData.stakes))
+                    // Study-lead band — meaningful only on exam events;
+                    // band-validated (3|7|14, else nil) so no invented
+                    // precision reaches the store.
+                    if isEvent {
+                        task.prepLeadDays = ExamPrepSweep.validLeadBand(taskData.prepLeadDays)
+                    }
                     modelContext.insert(task)
                     newlyCreatedTasks.append(task)
                 }

@@ -386,6 +386,29 @@ enum NudgeConfig {
     /// yet (see the rollover note on `buildFloaterCheckInCandidates`).
     static let floaterCheckInHoursAfterWake: Double = 6
 
+    // MARK: - Exam prep sweep
+    //
+    // Drives `ExamPrepSweep` — the launch/day-change pass that turns
+    // exam-category calendar events into daily study tasks
+    // (`source == "prep"`), the app's defining feature (DESIGN.md "Study
+    // tasks from exam events").
+
+    /// The coarse prep-lead bands the capture classifier may emit for
+    /// `NudgeTask.prepLeadDays`. Anything else is invalid and reads as
+    /// missing — coarse bands only, no invented precision.
+    static let prepLeadBands: Set<Int> = [3, 7, 14]
+
+    /// Lead band assumed when an exam event carries no valid
+    /// `prepLeadDays` (deterministic calendar imports never can; the AI
+    /// may answer null or nonsense).
+    static let defaultPrepLeadDays: Int = 7
+
+    /// How long the message box keeps showing the "I've added study time"
+    /// announcement and the one-time tombstone note after each first
+    /// renders. Reuses the tap-context freshness idea: a passive display
+    /// can't know it was read, so time bounds it.
+    static let prepMessageFreshnessMinutes: Int = 30
+
     // MARK: - Stakes backfill
     //
     // Drives `StakesBackfill`, the one-shot pass that classifies stakes on

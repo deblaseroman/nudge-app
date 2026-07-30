@@ -184,6 +184,18 @@ final class NudgeTask {
     /// reorderable list, not a placement.
     var sequenceIndex: Int?
 
+    /// How many days ahead of this EXAM EVENT study tasks should start —
+    /// the coarse prep-lead band (3, 7, or 14) the capture/import
+    /// classifier read off the exam title (Aug 2026). Course level and
+    /// subject carry the signal; there is deliberately no web search and
+    /// no finer precision — a confident "start 11 days out" would invent
+    /// an authority the app doesn't have (`DESIGN.md`). Nil = the
+    /// classifier didn't say (deterministic calendar imports never can);
+    /// `ExamPrepSweep` reads nil as `NudgeConfig.defaultPrepLeadDays`.
+    /// Only meaningful on exam-category informational events; inert
+    /// everywhere else.
+    var prepLeadDays: Int? = nil
+
     /// Canonical consequence signal — raw storage for `TaskStakes`
     /// ("high" | "medium" | "low"). Nil = never classified, which is what
     /// a later backfill pass keys on. Read through `stakes`; unknown

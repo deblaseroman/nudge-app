@@ -67,8 +67,20 @@ struct TappedNudgeContext {
 ///   1. a nudge was just tapped (explain it beyond the 60-char banner)
 ///   2. something is overdue (name it and by how long)
 ///   3. something high-stakes is approaching (name it and days remaining)
-///   4. resting — a plain line about the day. NEVER blank: an empty box at
+///   4. a study task was deleted — the one-time "still want study time
+///      for that exam?" note (cycle 2026-08-01-03; per exam, never
+///      repeats — see `PrepTombstone.noteShownAt`)
+///   5. the exam-prep sweep just created study tasks — the announcement
+///      (same cycle; silent creation is not acceptable per DESIGN.md)
+///   6. the AI Refine rationale — stable all-day context
+///   7. resting — a plain line about the day. NEVER blank: an empty box at
 ///      the top of the most-used tab is dead space.
+///
+/// The two prep states sit below the overdue/high-stakes facts (the day's
+/// actionable facts outrank meta-news about the list) and above the
+/// rationale (news beats stable context). A question the user should
+/// settle (the note) outranks an announcement about work already visible
+/// on the list below.
 ///
 /// Tone is where DESIGN.md bites hardest: state facts. No verdict on the
 /// user, no promised outcome, no implied failure for missed work.
@@ -78,6 +90,8 @@ enum TasksMessageComposer {
         tappedNudge: TappedNudgeContext?,
         rationale: String? = nil,
         aiMessage: TasksMessage? = nil,
+        prepNote: PrepNoteContext? = nil,
+        prepAnnouncement: PrepAnnouncementContext? = nil,
         now: Date
     ) -> TasksMessage {
         // ── AI SEAM (unused as of Aug 2026) ─────────────────────────────
@@ -147,7 +161,24 @@ enum TasksMessageComposer {
             )
         }
 
-        // 4 — the AI Refine rationale (fifth state, Aug 2026 — folded in
+        // 4 — a study task was deleted: ask once whether they still want
+        // study time for that exam. Factual, no guilt — deleting was a
+        // decision and it stands (the sweep never recreates that day);
+        // this just makes sure it was a decision, not an accident.
+        if let prepNote {
+            return prepNoteMessage(examTitle: prepNote.examTitle)
+        }
+
+        // 5 — the sweep created study tasks: say so. The user should never
+        // discover work on their list they can't account for.
+        if let prepAnnouncement {
+            return prepAnnouncementMessage(
+                examTitle: prepAnnouncement.examTitle,
+                daysUntil: prepAnnouncement.daysUntil
+            )
+        }
+
+        // 6 — the AI Refine rationale (Aug 2026 — folded in
         // from the banner that used to render separately, so the tab has
         // one voice in one place). Sits BELOW overdue and high-stakes on
         // purpose: those are the day's actionable facts, while the
@@ -162,8 +193,35 @@ enum TasksMessageComposer {
             )
         }
 
-        // 5 — resting. Never blank.
+        // 7 — resting. Never blank.
         return restingMessage(open: open, allTasks: tasks, now: now)
+    }
+
+    // MARK: Exam-prep states
+
+    /// Built as standalone statics (not inline in `compose`) so the view
+    /// can compare the composed message against them by equality — that
+    /// comparison is how it knows the state actually RENDERED, which is
+    /// what starts the note's never-repeat clock and the announcement's
+    /// freshness window.
+
+    static func prepNoteMessage(examTitle: String) -> TasksMessage {
+        TasksMessage(
+            headline: "Do you still want study time for “\(examTitle)”?",
+            detail: "A study task for it was removed — that day won't be re-added. "
+                + "Any other study days are still on your list; delete them too "
+                + "if you'd rather plan it yourself."
+        )
+    }
+
+    static func prepAnnouncementMessage(examTitle: String, daysUntil: Int) -> TasksMessage {
+        let when = daysUntil == 1 ? "tomorrow" : "in \(daysUntil) days"
+        let span = daysUntil == 1 ? "for today" : "each day until then"
+        return TasksMessage(
+            headline: "Your “\(examTitle)” is \(when) — I've added study time \(span).",
+            detail: "One study task per day, through the day before. "
+                + "Delete any you don't want — removed days stay removed."
+        )
     }
 
     // MARK: Tapped-nudge explanations
@@ -331,6 +389,17 @@ struct TasksMessageBox: View {
     let tasks: [NudgeTask]
     let tappedNudge: TappedNudgeContext?
     var rationale: String? = nil
+    /// One-time "still want study time for X?" note (tombstone-backed).
+    var prepNote: PrepNoteContext? = nil
+    /// "I've added study time" announcement from the exam-prep sweep.
+    var prepAnnouncement: PrepAnnouncementContext? = nil
+    /// Fired when the note state actually RENDERS (not merely exists) —
+    /// the owner stamps `PrepTombstone.noteShownAt`, which is what makes
+    /// the note one-time. A passive display can't know it was read;
+    /// rendering is the honest proxy.
+    var onPrepNoteShown: (() -> Void)? = nil
+    /// Same, for the announcement — starts its freshness window.
+    var onPrepAnnouncementShown: (() -> Void)? = nil
 
     @State private var isExpanded = false
 
@@ -345,6 +414,8 @@ struct TasksMessageBox: View {
             tasks: tasks,
             tappedNudge: tappedNudge,
             rationale: rationale,
+            prepNote: prepNote,
+            prepAnnouncement: prepAnnouncement,
             now: clock.now
         )
         let expandable = message.detail != nil
@@ -393,5 +464,29 @@ struct TasksMessageBox: View {
             }
         }
         .animation(NudgeAnimation.standard, value: message)
+        // Render-detection for the two exam-prep states: the callbacks
+        // must fire only when the state actually WON the composer's
+        // priority contest, not merely because a pending note exists —
+        // an overdue task can preempt the note for days, and it must
+        // still show later. Equality against the states' own builders is
+        // what makes "did it render" checkable.
+        .onAppear { reportPrepDisplays(message) }
+        .onChange(of: message) { _, newMessage in
+            reportPrepDisplays(newMessage)
+        }
+    }
+
+    private func reportPrepDisplays(_ message: TasksMessage) {
+        if let prepNote,
+           message == TasksMessageComposer.prepNoteMessage(examTitle: prepNote.examTitle) {
+            onPrepNoteShown?()
+        }
+        if let prepAnnouncement,
+           message == TasksMessageComposer.prepAnnouncementMessage(
+               examTitle: prepAnnouncement.examTitle,
+               daysUntil: prepAnnouncement.daysUntil
+           ) {
+            onPrepAnnouncementShown?()
+        }
     }
 }

@@ -114,6 +114,9 @@ final class ScreenshotCalendarImporter {
             // (never the init) so every non-user writer inherits the
             // user-override protection.
             task.setStakesFromAutomation(event.stakes)
+            // Study-lead band for exam events (already band-validated at
+            // the parse). `ExamPrepSweep` reads nil as the default band.
+            task.prepLeadDays = event.prepLeadDays
             modelContext.insert(task)
             importedCount += 1
         }
@@ -190,4 +193,8 @@ struct ParsedScreenshotEvent {
     /// Consequence signal from the AI parse; nil when the model couldn't
     /// tell (tolerant-parsed — an unknown string never survives to here).
     let stakes: TaskStakes?
+    /// Coarse study-lead band (3|7|14) for exam events; nil when the model
+    /// couldn't tell or answered off-band (tolerant-parsed via
+    /// `ExamPrepSweep.validLeadBand`).
+    let prepLeadDays: Int?
 }

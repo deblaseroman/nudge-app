@@ -118,6 +118,11 @@ struct ContentView: View {
             // task placed on a past day matches no list section and both
             // planners skip it, so without this it vanishes at midnight.
             PlacementRollover.sweep(modelContext: modelContext)
+            // Turn exam events inside their prep window into daily study
+            // tasks (idempotent; tombstoned days never recreated). BEFORE
+            // the reevaluate so fresh tasks are in the store when the
+            // arbiter builds candidates.
+            ExamPrepSweep.shared.run(modelContext: modelContext)
             // Fold any stored "urgent" priority into "high" (retired value;
             // idempotent, zero rows after the first pass).
             LegacyPriorityNormalizer.sweep(modelContext: modelContext)
@@ -157,6 +162,11 @@ struct ContentView: View {
             CalendarService.shared.purgePastEvents(modelContext: modelContext)
             // Same rollover treatment for stale timeline placements.
             PlacementRollover.sweep(modelContext: modelContext)
+
+            // Exam → study-task sweep, same cadence as the rollover (launch
+            // covers cold start; this covers the day changing while the app
+            // was backgrounded). Runs before the reevaluate below.
+            ExamPrepSweep.shared.run(modelContext: modelContext)
 
             // Stamp the foreground and resolve any delivered-but-unanswered
             // nudges. `.onAppear` above covers cold launch; this covers
@@ -292,5 +302,6 @@ struct OnboardingPlaceholderView: View {
             TaskIntelligence.self,
             CategoryDurationStats.self,
             EventDurationStats.self,
+            PrepTombstone.self,
         ], inMemory: true)
 }

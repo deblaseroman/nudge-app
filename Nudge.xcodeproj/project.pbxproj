@@ -76,6 +76,7 @@
 				Models/NudgeHabit.swift,
 				Models/NudgeOutcome.swift,
 				Models/NudgeTask.swift,
+				Models/PrepTombstone.swift,
 				Models/SentNotificationFlag.swift,
 				Models/StatedUrgency.swift,
 				Models/TaskActivityAttributes.swift,

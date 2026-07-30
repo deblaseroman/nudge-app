@@ -16,6 +16,11 @@ struct TasksTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Query private var tasks: [NudgeTask]
     @Query private var completedRecords: [CompletedTaskRecord]
+    /// Deleted-study-task records — feeds the message box's one-time
+    /// "still want study time?" note. Unbounded @Query is fine here: rows
+    /// only exist for exams whose prep tasks the user deleted, a handful
+    /// at most.
+    @Query private var prepTombstones: [PrepTombstone]
 
     @Binding var selectedTab: AppTab
     @State private var activeSheet: TaskSheetDestination?
@@ -48,6 +53,34 @@ struct TasksTabView: View {
     @State private var tappedNudgeContext: TappedNudgeContext?
 
     private var coordinator: SessionCoordinator { SessionCoordinator.shared }
+
+    /// The tombstone note the message box should offer: the most recent
+    /// exam with an un-shown note (`noteShownAt == nil`), or one shown
+    /// recently enough to still be inside its freshness window (so the
+    /// note doesn't vanish mid-read the moment it's stamped).
+    private var pendingPrepNote: PrepNoteContext? {
+        let now = Date()
+        let window = Double(NudgeConfig.prepMessageFreshnessMinutes) * 60
+        let candidate = prepTombstones
+            .filter { row in
+                if row.noteShownAt == nil { return true }
+                if let shown = row.noteShownAt { return now.timeIntervalSince(shown) < window }
+                return false
+            }
+            .max { $0.deletedAt < $1.deletedAt }
+        return candidate.map { PrepNoteContext(examTitle: $0.examTitle, examEventId: $0.examEventId) }
+    }
+
+    /// Stamps every un-shown tombstone row for the exam whose note just
+    /// rendered — per-exam consumption; the note never repeats.
+    private func markPrepNoteShown(_ note: PrepNoteContext) {
+        let now = Date()
+        for row in prepTombstones
+        where row.examEventId == note.examEventId && row.noteShownAt == nil {
+            row.noteShownAt = now
+        }
+        try? modelContext.save()
+    }
 
     private var actionableTasks: [NudgeTask] {
         tasks.filter { !$0.isInformationalEvent }
@@ -235,7 +268,15 @@ struct TasksTabView: View {
                 TasksMessageBox(
                     tasks: tasks,
                     tappedNudge: tappedNudgeContext,
-                    rationale: refineRationale
+                    rationale: refineRationale,
+                    prepNote: pendingPrepNote,
+                    prepAnnouncement: ExamPrepSweep.currentAnnouncement(),
+                    onPrepNoteShown: {
+                        if let note = pendingPrepNote { markPrepNoteShown(note) }
+                    },
+                    onPrepAnnouncementShown: {
+                        ExamPrepSweep.markAnnouncementShown()
+                    }
                 )
                 HStack(alignment: .center) {
                     sectionLabel("Today")
@@ -403,6 +444,9 @@ struct TasksTabView: View {
                             refreshNotifications()
                         },
                         onDelete: {
+                            // A deleted study task is a decision that
+                            // persists — tombstone before the row is gone.
+                            ExamPrepSweep.recordDeletionIfPrep(task, modelContext: modelContext)
                             modelContext.delete(task)
                             try? modelContext.save()
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -915,6 +959,12 @@ struct TasksTabView: View {
 
     private func deleteTask(_ task: NudgeTask) {
         NudgeHaptics.light()
+        // A deleted study task is a decision that persists (`DESIGN.md`) —
+        // record the tombstone BEFORE the row is gone so `ExamPrepSweep`
+        // never recreates this day. (The DEBUG wipe-everything helper below
+        // deliberately does NOT tombstone: it resets a test store, and
+        // poisoning every exam's sweep would defeat the reset.)
+        ExamPrepSweep.recordDeletionIfPrep(task, modelContext: modelContext)
         withAnimation(NudgeAnimation.standard) {
             modelContext.delete(task)
         }

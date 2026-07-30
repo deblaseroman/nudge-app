@@ -269,6 +269,7 @@ let widgetSchema = Schema([
     TaskIntelligence.self,
     CategoryDurationStats.self,
     EventDurationStats.self,
+    PrepTombstone.self,
 ])
 
 private let widgetAppGroupID = "group.com.deblaser.nudge"
