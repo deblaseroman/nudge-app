@@ -24,14 +24,14 @@ Sequencing constraints in force right now. Each is a deliberate state, not an ov
 1. **Stakes is NOT wired into scoring.** `EisenhowerScorer.importance` accepts an optional `stakes:` param, but no production call site passes it, so the number is identical to the pre-stakes one. Do not arm it without explicit instruction. **Reading `task.stakes` directly is a different thing and is allowed** — `buildMorningPromptCandidates` ranks on it to pick which task the morning prompt names (Jul 2026). That doesn't arm anything: it never reaches the scorer, and the candidate's `urgency`/`importance` are the constants they always were.
 2. **Before arming stakes, the floater check-in must actually fire and produce baseline outcome data.** It never has — `.floater` shows `—` in every by-kind outcome dump, because `buildFloaterCheckInCandidates` has no next-day rollover. Arming stakes first would hand floaters a −0.15 penalty and suppress the very thing `.floater` was split out to measure.
 3. **`NudgeConfig.fatigueGateEnabled` is false deliberately.** Outcomes are being recorded and observed before anything consumes them.
-4. **Break-it-down is paused pending removal.** Don't build on it.
+4. **Break-it-down was removed entirely (Jul 2026).** The kind, builder, category, `tappedBreakDown`, toggle and Settings row are gone; `deadlinePrepNotificationsEnabled` survives only as a deprecated tombstone column on `UserProfile`. Don't resurrect any of it.
 5. **Any change that alters what the arbiter does gets a DEBUG before/after comparison on real data before it goes live.** This has caught several wrong assumptions already.
 
 ### Known bugs, not yet fixed
 
 Unlike the items above, these are wrong — they're listed so they aren't mistaken for deliberate state, and so their noise isn't misread as signal.
 
-- **`deadlinePrepNotificationsEnabled` is misnamed** — it gates `buildBreakItDownCandidates`, not any deadline-prep feature (get-ahead reads `taskDueSoonNotificationsEnabled`), so the Settings "Break it down" row that binds it behaves correctly and only the field name lies. Renaming it means a store migration for a toggle whose feature is item 4 above, so read the name as a trap, not a spec.
+- ~~**`deadlinePrepNotificationsEnabled` is misnamed**~~ — **resolved Jul 2026** by break-it-down's removal (item 4 above): nothing reads the field any more; it survives only as a deprecated tombstone column on `UserProfile` so existing stores open without a migration. The name still lies — read it as history, not a spec.
 - ~~**`hadRecentActivity` in `passesGates` evaluates against `now`**~~ — **fixed Jul 2026.** It is now `firesInsideActivityCooldown(_ fireDate:)` and blocks a candidate only when its own fire time lands in `[lastSessionStart, lastSessionStart + recentActivityCooldownMinutes)`. Strictly more permissive than the old rule for every future-firing candidate, so it can only free candidates, never block new ones. The active-session gate above it had the identical bug plus a missing `countsAgainstBudget` exemption, and was fixed the same way in the next cycle (`firesDuringActiveSession`). **Both gates now read the candidate's fire date; no gate in `passesGates` is keyed on `now` any more.**
 
 ## Build & verify
@@ -58,7 +58,7 @@ When the Xcode MCP server is connected, prefer its tools (`BuildProject`, `Xcode
 The most important invariant: **UI never schedules notifications directly.** Views mutate SwiftData, then call `NudgeArbiter.shared.reevaluate(reason:profile:modelContext:)`. The arbiter is declarative — each run:
 
 1. Cancels every notification it owns (IDs prefixed `nudge.arb.`, tracked synchronously in App Group UserDefaults — deliberately NOT via the async `pendingNotificationRequests()`, which raced scheduling and killed fresh notifications)
-2. Rebuilds candidates (event-block reminders, morning prompt, idle, get-ahead, floater check-in, break-it-down)
+2. Rebuilds candidates (event-block reminders, morning prompt, idle, get-ahead, floater check-in)
 3. Filters through gates (busy windows from `BusyWindowResolver`, quiet hours, daily budget, spacing, per-task fatigue from `NudgeOutcome` history)
 4. Picks winners and schedules
 

@@ -37,7 +37,6 @@ final class UserProfile {
     /// NotificationScheduler morning kickoff — same toggle, new machinery).
     var morningCheckInNotificationsEnabled: Bool
     var taskDueSoonNotificationsEnabled: Bool
-    var deadlinePrepNotificationsEnabled: Bool
     var sessionStarterNotificationsEnabled: Bool
 
     /// Gates the arbiter's floater check-in (`buildFloaterCheckInCandidates`).
@@ -109,6 +108,13 @@ final class UserProfile {
 
     /// Gated the retired bedtime-planning notification (removed Jul 2026).
     var eveningCheckInNotificationsEnabled: Bool
+    /// Misnamed from birth — it gated the break-it-down builder, never any
+    /// deadline-prep feature (get-ahead reads
+    /// `taskDueSoonNotificationsEnabled`). Break-it-down was removed
+    /// Jul 2026, and this field retired with it — kept as a column so
+    /// existing stores open without a migration plan, per the block
+    /// comment above.
+    var deadlinePrepNotificationsEnabled: Bool
     var windDownNotificationsEnabled: Bool
     var habitReminderNotificationsEnabled: Bool
     var monthlyCheckInNotificationsEnabled: Bool

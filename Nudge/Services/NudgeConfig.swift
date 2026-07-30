@@ -35,14 +35,15 @@ enum NudgeConfig {
     static let recentActivityCooldownMinutes: Int = 90
 
     // MARK: - Per-task fatigue
-    /// After this many nudges for the same task, stop pushing and switch to
-    /// a break-it-down offer (or back off entirely).
+    /// After this many nudges for the same task, stop pushing and back
+    /// off. (Break-it-down — the offer that used to replace the pushes at
+    /// this threshold — was removed Jul 2026.)
     static let perTaskMaxNudges: Int = 3
 
-    /// MASTER SWITCH for everything that ACTS on `NudgeOutcome` history:
-    /// the per-task fatigue gate in `NudgeArbiter.passesGates` and the
-    /// `buildBreakItDownCandidates` builder that fires once a task crosses
-    /// `perTaskMaxNudges`.
+    /// MASTER SWITCH for everything that ACTS on `NudgeOutcome` history —
+    /// today that is exactly one consumer: the per-task fatigue gate in
+    /// `NudgeArbiter.passesGates`. (The break-it-down builder was the
+    /// second consumer until its removal, Jul 2026.)
     ///
     /// Deliberately OFF. `NudgeOutcomeClassifier` now writes real `.ignored`
     /// rows, which the fatigue predicates already match — so leaving this

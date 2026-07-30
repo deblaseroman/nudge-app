@@ -285,9 +285,8 @@ final class NudgeArbiter: NudgeArbitering {
         candidates.append(contentsOf: buildIdleCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildGetAheadCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildFloaterCheckInCandidates(profile: profile, modelContext: modelContext))
-        candidates.append(contentsOf: buildBreakItDownCandidates(profile: profile, modelContext: modelContext))
         #if DEBUG
-        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + getAhead + floater + breakDown).")
+        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + getAhead + floater).")
         #endif
 
         // 2. Run gates
@@ -406,10 +405,10 @@ final class NudgeArbiter: NudgeArbitering {
 
         // Prune outcomes older than the 14-day fatigue window. Without
         // this, every resolved row persisted forever, so the database grew
-        // monotonically and `buildBreakItDownCandidates` / `taskFatigueCount`
-        // reloaded ever-larger result sets into the shared SwiftData
-        // identity map on every reevaluate. This was a confirmed
-        // contributor to the rapid-cycling memory jetsam.
+        // monotonically and `taskFatigueCount` reloaded ever-larger result
+        // sets into the shared SwiftData identity map on every reevaluate.
+        // This was a confirmed contributor to the rapid-cycling memory
+        // jetsam.
         //
         // Cleanup rule (chosen to keep fatigue tracking correct):
         //   - Cutoff: 14 days ago (same window the fatigue fetch uses).
@@ -420,8 +419,7 @@ final class NudgeArbiter: NudgeArbitering {
         //     In practice the classifier resolves them within 90 minutes;
         //     this is the backstop for rows that somehow never got swept.
         //   - Keep: ALL outcomes within the last 14 days, so the per-task
-        //     counters in `buildBreakItDownCandidates` see complete recent
-        //     history.
+        //     fatigue counter sees complete recent history.
         //
         // Uses `delete(model:where:)` so rows are removed by predicate
         // without first loading them into the context.
@@ -706,24 +704,21 @@ final class NudgeArbiter: NudgeArbitering {
             // `guard let taskID`, so a non-nil taskID would not change one
             // classification.
             //
-            // It is NOT free for the other two `taskID` consumers, and both
-            // sit inside the fatigue system that `CLAUDE.md` work order
+            // It is NOT free for the remaining `taskID` consumer, which
+            // sits inside the fatigue system that `CLAUDE.md` work order
             // items 2 and 3 are deliberately keeping unarmed:
+            // `passesGates`' per-task fatigue check exempts kinds by
+            // `successIsObservableInApp`, and `.morningPrompt` passes that
+            // predicate — so the named task would start accumulating
+            // fatigue from a nudge that is not a push to work on it, and
+            // the user's HIGHEST-STAKES task would be the first one the
+            // gate silences.
             //
-            //   • `passesGates`' per-task fatigue check exempts kinds by
-            //     `successIsObservableInApp`, and `.morningPrompt` passes
-            //     that predicate — so the named task would start
-            //     accumulating fatigue from a nudge that is not a push to
-            //     work on it.
-            //   • `buildBreakItDownCandidates` counts the same rows, so an
-            //     ignored morning prompt would push the user's
-            //     HIGHEST-STAKES task toward a break-it-down offer.
-            //
-            // Both are inert while `fatigueGateEnabled` is off, which is
-            // exactly what makes setting taskID a landmine rather than a
-            // bug: it would change behaviour on the day that flag flips,
-            // for the one task least able to afford it. Attribution for
-            // this nudge comes from `debugMorningPromptImpact` instead.
+            // Inert while `fatigueGateEnabled` is off, which is exactly
+            // what makes setting taskID a landmine rather than a bug: it
+            // would change behaviour on the day that flag flips, for the
+            // one task least able to afford it. Attribution for this nudge
+            // comes from `debugMorningPromptImpact` instead.
             taskID: nil,
             tier: .normal,
             urgency: 1.0,
@@ -1351,11 +1346,11 @@ final class NudgeArbiter: NudgeArbitering {
     /// the nudge lands.
     ///
     /// ── ROLLOVER ──────────────────────────────────────────────────────
-    /// `buildMorningPromptCandidates`, `buildIdleCandidates`,
-    /// `buildFloaterCheckInCandidates` and `buildBreakItDownCandidates` all
-    /// share one idiom: compute today's wake-anchored time, and
-    /// `if fireDate <= now` add exactly one day. One day is always enough
-    /// for them because their anchor day is *today* by definition.
+    /// `buildMorningPromptCandidates`, `buildIdleCandidates` and
+    /// `buildFloaterCheckInCandidates` all share one idiom: compute
+    /// today's wake-anchored time, and `if fireDate <= now` add exactly
+    /// one day. One day is always enough for them because their anchor day
+    /// is *today* by definition.
     /// Get-ahead's anchor day is derived from the deadline instead, so this
     /// generalises the same idiom into a bounded walk forward — same
     /// behaviour, just able to step more than once.
@@ -1423,9 +1418,9 @@ final class NudgeArbiter: NudgeArbitering {
     /// `taskDueSoonNotificationsEnabled` with get-ahead.
     ///
     /// ── ROLLOVER ──────────────────────────────────────────────────────
-    /// Now the same idiom as `buildMorningPromptCandidates`,
-    /// `buildIdleCandidates` and `buildBreakItDownCandidates`: compute
-    /// today's wake-anchored time, and `if fireDate <= now` add one day.
+    /// Now the same idiom as `buildMorningPromptCandidates` and
+    /// `buildIdleCandidates`: compute today's wake-anchored time, and
+    /// `if fireDate <= now` add one day.
     /// This builder used to be the odd one out — it gave up with
     /// `guard fireDate > Date() else { return [] }`, which is why `.floater`
     /// has never appeared in an outcome dump. `cancelAll` runs FIRST on
@@ -1600,114 +1595,6 @@ final class NudgeArbiter: NudgeArbitering {
         return (targets: eligible, placedOut: placedOut)
     }
 
-    /// Break-it-down offer — only kicks in for a task that's been nudged
-    /// `perTaskMaxNudges` times without action. Replaces further pushes for
-    /// that task.
-    private func buildBreakItDownCandidates(
-        profile: UserProfile,
-        modelContext: ModelContext
-    ) -> [NudgeCandidate] {
-        // Break-it-down is the OTHER half of the fatigue system: it fires
-        // precisely when a task crosses `perTaskMaxNudges` ignored nudges.
-        // Same kill switch as the gate in `passesGates` — with real
-        // `.ignored` rows now being written, this builder would otherwise
-        // start firing a notification kind that has never fired before.
-        guard NudgeConfig.fatigueGateEnabled else {
-            #if DEBUG
-            print("[NudgeArbiter] breakDown: SKIP — fatigueGateEnabled is off (recording outcomes only).")
-            #endif
-            return []
-        }
-        guard profile.deadlinePrepNotificationsEnabled else { return [] }
-        // Scope to the fatigue window — fetching every NudgeOutcome ever
-        // recorded grew the shared SwiftData identity map unboundedly on
-        // every reevaluate (this path was a confirmed contributor to the
-        // "Terminated due to memory issue" jetsam under rapid scene
-        // cycling). The fatigue counter only needs recent ignored/
-        // dismissed events per task; older history doesn't affect the
-        // perTaskMaxNudges decision.
-        let fatigueCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
-        var descriptor = FetchDescriptor<NudgeOutcome>(
-            predicate: #Predicate<NudgeOutcome> { $0.scheduledFor >= fatigueCutoff }
-        )
-        descriptor.fetchLimit = 500
-        let outcomes = (try? modelContext.fetch(descriptor)) ?? []
-
-        var ignoredCountByTask: [UUID: Int] = [:]
-        for outcome in outcomes {
-            guard let taskID = outcome.taskID else { continue }
-            // Same correctness exemption as the gate in `passesGates`: a
-            // kind whose success leaves no in-app trace produces `.ignored`
-            // on its GOOD days, so its rows are not evidence of anything.
-            // Counting them here would be the more visible half of the bug —
-            // three read-and-obeyed reminders for a recurring class would
-            // cross `perTaskMaxNudges` and offer to "break down" a calendar
-            // event. See `NudgeOutcomeKind.successIsObservableInApp`.
-            guard outcome.kind.successIsObservableInApp else { continue }
-            if outcome.result == .ignored || outcome.result == .dismissed {
-                ignoredCountByTask[taskID, default: 0] += 1
-            } else if outcome.result == .tappedStart {
-                // Reset the count on success.
-                ignoredCountByTask[taskID] = 0
-            }
-        }
-
-        let candidates: [NudgeCandidate] = ignoredCountByTask
-            .filter { $0.value >= NudgeConfig.perTaskMaxNudges }
-            .compactMap { (taskID, _) -> NudgeCandidate? in
-                let taskDescriptor = FetchDescriptor<NudgeTask>(
-                    predicate: #Predicate<NudgeTask> { $0.id == taskID }
-                )
-                guard let task = (try? modelContext.fetch(taskDescriptor))?.first,
-                      !task.isComplete else { return nil }
-
-                let calendar = Calendar.current
-                let wake = profile.wakeTime ?? profile.morningCheckInTime
-                let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
-                var todayComps = calendar.dateComponents([.year, .month, .day], from: Date())
-                todayComps.hour = wakeComps.hour
-                todayComps.minute = wakeComps.minute
-                guard var fireDate = calendar.date(from: todayComps) else { return nil }
-                fireDate = fireDate.addingTimeInterval(4 * 60 * 60)
-                if fireDate <= Date() {
-                    fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
-                }
-
-                // Break-it-down is intentionally calmer in tone — always
-                // .normal so it doesn't read as urgent pressure. Urgency is
-                // forced low (0.3) so a genuinely-urgent candidate beats
-                // it inside `pickWinners`; importance still comes from the
-                // task's category/dependency/statedUrgency signals so a
-                // stuck exam-prep task outranks a stuck errand at the
-                // same urgency.
-                let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
-                let importance = EisenhowerScorer.importance(
-                    category: task.taskCategory,
-                    isDeepWork: false,
-                    statedUrgency: signals.statedUrgency,
-                    hasDependencies: task.dependsOnTaskId != nil
-                )
-                let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
-                return NudgeCandidate(
-                    id: "\(prefix)breakDown.\(task.id.uuidString)",
-                    kind: .breakItDown,
-                    fireDate: fireDate,
-                    title: "Let's break this down",
-                    body: "\"\(task.title)\" has been sitting for a while. It's probably too big in your head. Want me to break it into steps?",
-                    categoryID: .breakDown,
-                    interruption: .active,
-                    taskID: task.id,
-                    tier: .normal,
-                    urgency: 0.3,
-                    importance: importance,
-                    receptivity: 1.0,
-                    countsAgainstBudget: true,
-                    estimatedMinutes: estimatedMinutes
-                )
-            }
-        return candidates
-    }
-
     // MARK: - Gates
 
     private struct GateContext {
@@ -1747,9 +1634,10 @@ final class NudgeArbiter: NudgeArbitering {
         }
 
         // Per-task fatigue — if this task has been nudged perTaskMaxNudges
-        // times without action, suppress further pushes for it. The break-
-        // it-down offer is the only candidate that's still allowed for that
-        // task at that point.
+        // times without action, suppress further pushes for it. (The
+        // break-it-down offer used to be the escape hatch that survived
+        // this gate; the kind was removed Jul 2026, so past the threshold
+        // the arbiter now simply backs off the task.)
         //
         // GATED OFF (`NudgeConfig.fatigueGateEnabled`). The outcome
         // classifier now writes real `.ignored` rows, which this predicate
@@ -1757,20 +1645,14 @@ final class NudgeArbiter: NudgeArbitering {
         // would have immediately changed which notifications fire. The
         // recorded classifications get observed first.
         //
-        // TWO exemptions, for two unrelated reasons — don't collapse them:
-        //
-        //  • `.breakItDown` — a POLICY exemption. It's the escape hatch the
-        //    gate hands the user once a task is fatigued, so gating it would
-        //    suppress the one nudge that's supposed to survive.
-        //
-        //  • `!kind.successIsObservableInApp` (today: `.eventBlock`) — a
-        //    CORRECTNESS exemption. Those kinds' success case produces no
-        //    app open, so the classifier logs `.ignored` for a reminder that
-        //    worked exactly as intended. Counting that as fatigue would
-        //    silence event reminders for the user who reads every one of
-        //    them and shows up on time. See `successIsObservableInApp`.
+        // One exemption: `!kind.successIsObservableInApp` (today:
+        // `.eventBlock`) — a CORRECTNESS exemption. Those kinds' success
+        // case produces no app open, so the classifier logs `.ignored` for
+        // a reminder that worked exactly as intended. Counting that as
+        // fatigue would silence event reminders for the user who reads
+        // every one of them and shows up on time. See
+        // `successIsObservableInApp`.
         if NudgeConfig.fatigueGateEnabled,
-           candidate.kind != .breakItDown,
            candidate.kind.successIsObservableInApp,
            let taskID = candidate.taskID,
            taskFatigueCount(taskID: taskID, context: context) >= NudgeConfig.perTaskMaxNudges {
@@ -1987,8 +1869,7 @@ final class NudgeArbiter: NudgeArbitering {
     }
 
     private func taskFatigueCount(taskID: UUID, context: GateContext) -> Int {
-        // Scoped to the fatigue window for the same reason as
-        // buildBreakItDownCandidates — without the date bound, this
+        // Scoped to the fatigue window — without the date bound, this
         // returns more rows over time forever, and is called once per
         // gate-evaluated candidate per reevaluate.
         let fatigueCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
@@ -2242,13 +2123,11 @@ final class NudgeArbiter: NudgeArbitering {
 
     /// The exact importance inputs a builder used for this candidate.
     ///
-    /// `isDeepWork` is reconstructed per kind rather than recomputed one
-    /// way for all of them: `buildBreakItDownCandidates` hardcodes `false`
-    /// (its nudge is deliberately calm), while idle / get-ahead / floater
-    /// all derive it from `StartByPlanner.isDeepWork` over the same
-    /// `DurationModel` estimate the candidate already carries. Getting this
-    /// wrong would silently change the "without" baseline and make the
-    /// whole comparison lie.
+    /// `isDeepWork` is reconstructed the way the builders compute it:
+    /// idle / get-ahead / floater all derive it from
+    /// `StartByPlanner.isDeepWork` over the same `DurationModel` estimate
+    /// the candidate already carries. Getting this wrong would silently
+    /// change the "without" baseline and make the whole comparison lie.
     private func stakesInputs(
         for candidate: NudgeCandidate,
         modelContext: ModelContext
@@ -2261,16 +2140,11 @@ final class NudgeArbiter: NudgeArbitering {
         descriptor.fetchLimit = 1
         guard let task = (try? modelContext.fetch(descriptor))?.first else { return nil }
 
-        let isDeepWork: Bool
-        if candidate.kind == .breakItDown {
-            isDeepWork = false
-        } else {
-            isDeepWork = StartByPlanner.isDeepWork(
-                category: task.taskCategory,
-                effortMinutes: candidate.estimatedMinutes
-                    ?? DurationModel.shared.estimate(for: task, modelContext: modelContext)
-            )
-        }
+        let isDeepWork = StartByPlanner.isDeepWork(
+            category: task.taskCategory,
+            effortMinutes: candidate.estimatedMinutes
+                ?? DurationModel.shared.estimate(for: task, modelContext: modelContext)
+        )
         let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
         return (
             title: task.title,

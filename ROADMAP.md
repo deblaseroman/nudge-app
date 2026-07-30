@@ -36,9 +36,8 @@ arbiter does, so **every item needs a DEBUG before/after on real data** per
 - Gates find the next viable slot instead of rejecting — *blocked: nothing.*
 - Split get-ahead into separate prep and due-soon kinds — *blocked: nothing.*
 - Batch same-hour deadlines into one notification — *blocked: nothing.*
-- Fix idle's suppression rule — a calendar event existing isn't the same as the user having been active — *blocked: nothing.*
-- Remove the break-it-down kind entirely — *blocked: nothing; it's paused pending exactly this.* Its notification action and `NudgeOutcomeResult.tappedBreakDown`'s only writer are already gone (Jul 2026), so the kind, the builder, `deadlinePrepNotificationsEnabled` and that now-writerless result case retire together.
-- Retire `deadlinePrepNotificationsEnabled` with it — the field is misnamed and gates break-it-down, not deadline prep — *blocked: pairs with the removal above; renaming alone would need a store migration for a toggle that's leaving.*
+- ~~Fix idle's suppression rule~~ — **done Jul 2026** (batch cycle `2026-07-30-02`): the event-window check is gone; idle's activity test reads only real activity (session started / task completed).
+- ~~Remove the break-it-down kind entirely~~ — **done Jul 2026** (batch cycle `2026-07-30-02`): kind, builder, category, `tappedBreakDown`, toggle and Settings row all removed; `deadlinePrepNotificationsEnabled` survives as a deprecated tombstone column only.
 - Custom quiet hours can swallow the morning prompt — its budget-exempt status is now load-bearing in a way it wasn't — *blocked: nothing.*
 
 ## 3 — Features, designed but unbuilt

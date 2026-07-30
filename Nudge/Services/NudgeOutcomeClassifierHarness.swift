@@ -133,7 +133,7 @@ enum NudgeOutcomeClassifierHarness {
             ),
             Fixture(
                 label: "no activity at all",
-                kind: .breakItDown,
+                kind: .getAhead,
                 fire: f3,
                 expected: .ignored,
                 taskID: UUID(),

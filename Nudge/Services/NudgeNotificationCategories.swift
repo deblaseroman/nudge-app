@@ -19,7 +19,10 @@ enum NudgeNotificationCategoryID: String {
     case eventBlock = "category.event"
     case idle       = "category.idle"
     case getAhead   = "category.getAhead"
-    case breakDown  = "category.breakDown"
+    // `breakDown` ("category.breakDown") was removed Jul 2026 with the
+    // break-it-down kind. A category identifier is only meaningful on a
+    // scheduled request, and no request ever carried this one — the
+    // builder never ran in production.
     /// Morning prompt — no *task* action buttons on purpose: the whole
     /// interaction is "tap → land in Home chat → type your answer". It does
     /// carry 👎, which doesn't compete with that (it never opens the app)
@@ -162,17 +165,6 @@ enum NudgeNotificationCategories {
             intentIdentifiers: [],
             options: dismissible
         )
-        // The break-it-down KIND is paused pending removal (`CLAUDE.md` work
-        // order item 4) and can't fire while `fatigueGateEnabled` is off, so
-        // this category is currently unreachable. Its own action is gone —
-        // shipping a button for a paused feature is worse than shipping
-        // nothing — which leaves it with the two that still mean something.
-        let breakDown = UNNotificationCategory(
-            identifier: NudgeNotificationCategoryID.breakDown.rawValue,
-            actions: [snooze30, markUnhelpful],
-            intentIdentifiers: [],
-            options: dismissible
-        )
         let morningPrompt = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.morningPrompt.rawValue,
             actions: [markUnhelpful],
@@ -192,7 +184,7 @@ enum NudgeNotificationCategories {
         )
 
         UNUserNotificationCenter.current().setNotificationCategories([
-            eventBlock, idle, getAhead, breakDown, morningPrompt, floater
+            eventBlock, idle, getAhead, morningPrompt, floater
         ])
     }
 }

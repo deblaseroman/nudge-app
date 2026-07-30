@@ -133,11 +133,6 @@ struct SettingsTabView: View {
                         subtitle: "A morning paralysis nudge if you haven't started anything 3 hrs after wake.",
                         isOn: $profile.sessionStarterNotificationsEnabled
                     )
-                    toggleSettingsRow(
-                        title: "Break it down",
-                        subtitle: "Offer to break a task into steps if it keeps getting ignored.",
-                        isOn: $profile.deadlinePrepNotificationsEnabled
-                    )
                 }
 
                 settingsCard(title: "Calendar source", value: profile.calendarSource.isEmpty ? "Not connected yet" : profile.calendarSource)

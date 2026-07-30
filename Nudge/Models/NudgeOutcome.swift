@@ -14,7 +14,12 @@ enum NudgeOutcomeKind: String, Codable, CaseIterable {
     case eventBlock
     case idle
     case getAhead
-    case breakItDown
+    // `breakItDown` was removed Jul 2026 along with its builder, category,
+    // and toggle. No store ever held a row with that raw value — the
+    // builder was gated behind `fatigueGateEnabled`, which has never been
+    // true in production — so there is no history to preserve; were one to
+    // exist, the `kind` getter's `?? .idle` fallback reads it without
+    // crashing.
     /// Day-opening capture ask ("what do you want to get done today?").
     /// Replaced the fixed NotificationScheduler morning kickoff when the
     /// morning notification moved under the arbiter (Jul 2026).
@@ -73,7 +78,7 @@ extension NudgeOutcomeKind {
         switch self {
         case .eventBlock:
             return false
-        case .idle, .getAhead, .breakItDown, .morningPrompt, .floater:
+        case .idle, .getAhead, .morningPrompt, .floater:
             return true
         }
     }
@@ -92,11 +97,9 @@ enum NudgeOutcomeResult: String, Codable {
     case pending          // scheduled but not yet fired / acted upon
     case tappedStart      // user tapped "Start session"
     case tappedSnooze     // user tapped "Snooze 30 min"
-    /// User tapped "Break it down". NO WRITER as of Jul 2026 — that action
-    /// was removed from every category. Kept only because the `.breakItDown`
-    /// KIND is still here (paused pending removal, `CLAUDE.md` work order
-    /// item 4); it should leave with the kind, not before it.
-    case tappedBreakDown
+    // `tappedBreakDown` left with the `.breakItDown` kind (Jul 2026). Its
+    // writer had already been removed, so no row ever carried the raw
+    // value; the `result` getter's `?? .pending` fallback covers a stray.
     case dismissed        // user explicitly cleared the notification
     case ignored          // delivered, app never opened in the response window
 
