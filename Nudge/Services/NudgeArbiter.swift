@@ -1537,11 +1537,12 @@ final class NudgeArbiter: NudgeArbitering {
     /// "is still open" at 14:00 when the user has it on the timeline for
     /// 16:00. A task on the timeline is not floating.
     ///
-    /// Scoped to the FIRE DAY, not `plannedStartDate != nil`. Placements are
-    /// never cleared when the day rolls over — the UI just filters them with
-    /// `isDateInToday` — so a blanket nil-check would permanently exclude any
-    /// task that was ever placed once. This matches the UI's semantics,
-    /// evaluated against the day the nudge will actually fire.
+    /// Scoped to the FIRE DAY, not `plannedStartDate != nil`. A placement is
+    /// a slot on one specific day (`PlacementRollover` clears them once that
+    /// day has passed), so the only question that matters is whether the task
+    /// is on the timeline for the day the nudge will actually fire — a
+    /// blanket nil-check would also exclude tasks placed on a DIFFERENT day
+    /// than the one being evaluated.
     ///
     /// Exclusion runs BEFORE the plan-next collapse on purpose: picking the
     /// lowest `sequenceIndex` first and filtering after would return nothing

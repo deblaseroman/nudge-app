@@ -121,6 +121,10 @@ struct ContentView: View {
             guard let profile = currentProfile else { return }
             // Clear yesterday's events before anything else uses the event list.
             CalendarService.shared.purgePastEvents(modelContext: modelContext)
+            // Clear stale timeline placements the same way — an unfinished
+            // task placed on a past day matches no list section and both
+            // planners skip it, so without this it vanishes at midnight.
+            PlacementRollover.sweep(modelContext: modelContext)
             // Sweep the retired fixed daily notifications (pre-Jul-2026
             // repeating requests that outlive the code that scheduled them).
             NotificationScheduler.shared.cancelRetiredDailyNotifications()
@@ -155,6 +159,8 @@ struct ContentView: View {
             // is the practical equivalent of "remove at midnight" since iOS
             // can't run code while the app is suspended.
             CalendarService.shared.purgePastEvents(modelContext: modelContext)
+            // Same rollover treatment for stale timeline placements.
+            PlacementRollover.sweep(modelContext: modelContext)
 
             // Stamp the foreground and resolve any delivered-but-unanswered
             // nudges. `.onAppear` above covers cold launch; this covers
