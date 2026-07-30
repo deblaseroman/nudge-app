@@ -253,6 +253,7 @@ final class NudgeArbiter: NudgeArbitering {
         print("[NudgeArbiter] \(eligible.count) candidates passed the gates.")
         debugStakesImpact(all: candidates, eligible: eligible, context: gateContext)
         debugQuietHoursImpact(all: candidates, context: gateContext)
+        debugMorningPromptImpact(all: candidates, profile: profile, context: gateContext)
         #endif
 
         // 3. Pick winners — exactly one discretionary nudge per fire-time
@@ -536,12 +537,23 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
-    /// Morning prompt — the day-opening capture ask ("what do you want to
-    /// get done today?"). Tapping it lands in the Home chat, where the
-    /// answer flows through the normal brain-dump capture. Replaces the
-    /// fixed `NotificationScheduler` morning kickoff so the decision runs
-    /// through the arbiter's declarative rebuild instead of a repeating
-    /// clock trigger that fires no matter what the day looks like.
+    /// Morning prompt — the day-opening statement of the biggest thing on
+    /// the user's list. Tapping it lands in the Home chat, where anything
+    /// they type flows through the normal brain-dump capture.
+    ///
+    /// ── IT USED TO ASK A QUESTION ─────────────────────────────────────
+    /// Until Jul 2026 the body was "What do you want to get done today?
+    /// Tell me and I'll set it up." — an open question that costs attention
+    /// and returns nothing the app can use, in the best delivery slot it
+    /// has (budget-exempt, highest morning capacity). It now names the
+    /// user's highest-stakes open task instead, so the slot carries the
+    /// day's most consequential item. **If no open task qualifies it does
+    /// not fire at all**: a contentless morning notification is worse than
+    /// silence.
+    ///
+    /// Replaces the fixed `NotificationScheduler` morning kickoff so the
+    /// decision runs through the arbiter's declarative rebuild instead of a
+    /// repeating clock trigger that fires no matter what the day looks like.
     ///
     /// Budget-exempt like event blocks — it's the daily anchor, not a
     /// discretionary nudge. That also means `passesGates` skips the shared
@@ -603,17 +615,57 @@ final class NudgeArbiter: NudgeArbitering {
             return []
         }
 
+        // The content gate, and the only one that can silence this nudge on
+        // a completely free day: with nothing open there is nothing to name.
+        guard let named = morningPromptRanking(
+            fireDate: fireDate,
+            modelContext: modelContext
+        ).first else {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — no open task to name.")
+            #endif
+            return []
+        }
+
         #if DEBUG
-        print("[NudgeArbiter] morning: OK — will schedule morning prompt at \(fireDate).")
+        print("[NudgeArbiter] morning: OK — will schedule morning prompt at \(fireDate) "
+            + "naming '\(named.task.title)' "
+            + "(stakes=\(named.stakes?.rawValue ?? "unclassified"), "
+            + "urgency=\(String(format: "%.2f", named.urgency))).")
         #endif
         return [NudgeCandidate(
             id: "\(prefix)morning.\(stamp(calendar.startOfDay(for: fireDate)))",
             kind: .morningPrompt,
             fireDate: fireDate,
             title: "Good morning",
-            body: "What do you want to get done today? Tell me and I'll set it up.",
+            body: NudgeArbiter.morningPromptBody(for: named.task, fireDate: fireDate),
             categoryID: .morningPrompt,
             interruption: .active,
+            // ── taskID STAYS NIL, deliberately ───────────────────────────
+            // The plan for this change asked whether setting it is free
+            // because of the classifier. In `performedAction` it IS: the
+            // `row.kind == .morningPrompt` branch returns before the
+            // `guard let taskID`, so a non-nil taskID would not change one
+            // classification.
+            //
+            // It is NOT free for the other two `taskID` consumers, and both
+            // sit inside the fatigue system that `CLAUDE.md` work order
+            // items 2 and 3 are deliberately keeping unarmed:
+            //
+            //   • `passesGates`' per-task fatigue check exempts kinds by
+            //     `successIsObservableInApp`, and `.morningPrompt` passes
+            //     that predicate — so the named task would start
+            //     accumulating fatigue from a nudge that is not a push to
+            //     work on it.
+            //   • `buildBreakItDownCandidates` counts the same rows, so an
+            //     ignored morning prompt would push the user's
+            //     HIGHEST-STAKES task toward a break-it-down offer.
+            //
+            // Both are inert while `fatigueGateEnabled` is off, which is
+            // exactly what makes setting taskID a landmine rather than a
+            // bug: it would change behaviour on the day that flag flips,
+            // for the one task least able to afford it. Attribution for
+            // this nudge comes from `debugMorningPromptImpact` instead.
             taskID: nil,
             tier: .normal,
             urgency: 1.0,
@@ -622,6 +674,183 @@ final class NudgeArbiter: NudgeArbitering {
             countsAgainstBudget: false,
             estimatedMinutes: nil
         )]
+    }
+
+    /// One ranked row of the morning prompt's selection: the task, the
+    /// stakes it was ranked on, and the deadline-proximity tie-break.
+    private struct MorningPromptChoice {
+        let task: NudgeTask
+        let stakes: TaskStakes?
+        let urgency: Double
+    }
+
+    /// Every open task the morning prompt could name, best first.
+    ///
+    /// **Primary key is `NudgeTask.stakes`, read DIRECTLY.** `CLAUDE.md`
+    /// work order item 1 keeps stakes out of `EisenhowerScorer.importance`
+    /// until the floater baseline exists; this reads the field without
+    /// touching that call site, so scoring is bit-identical to before.
+    ///
+    /// **Ties break on deadline proximity**, via the existing logistic
+    /// urgency curve rather than a second hand-rolled ranking — evaluated
+    /// AT the fire date, matching `buildGetAheadCandidates`. A task with no
+    /// deadline scores 0: undated is the least proximate thing there is.
+    /// (Note this is NOT the floater's 0.6 undated fallback. That number
+    /// exists to let an undated task compete against OTHER KINDS inside
+    /// `pickWinners`; here the comparison is only ever within one stakes
+    /// tier, where "no deadline" should lose to "deadline".)
+    ///
+    /// Split out of the builder the same way `floaterTargets` was, so
+    /// `debugMorningPromptImpact` prints the REAL selection instead of a
+    /// paraphrase that can drift from it.
+    private func morningPromptRanking(
+        fireDate: Date,
+        modelContext: ModelContext
+    ) -> [MorningPromptChoice] {
+        // Same eligibility as every other task-naming builder: open, and
+        // not an informational calendar event. No day-scoping — "the day's
+        // biggest task" is the biggest thing on the list as of that
+        // morning, which for an undated high-stakes item is still it.
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
+        )
+        descriptor.fetchLimit = 50
+        let open = (try? modelContext.fetch(descriptor)) ?? []
+        guard !open.isEmpty else { return [] }
+
+        // Only the top stakes tier can win, so the tie-break is computed for
+        // that tier alone — `DurationModel.estimate` is a SwiftData lookup
+        // and this builder previously did none.
+        let ranked = open.map { ($0, NudgeArbiter.morningStakesRank($0.stakes)) }
+        guard let topRank = ranked.map(\.1).max() else { return [] }
+        let contenders = ranked.filter { $0.1 == topRank }.map(\.0)
+
+        return contenders
+            .map { task in
+                MorningPromptChoice(
+                    task: task,
+                    stakes: task.stakes,
+                    urgency: morningDeadlineUrgency(
+                        for: task,
+                        at: fireDate,
+                        modelContext: modelContext
+                    )
+                )
+            }
+            // Final key is the UUID string — not a preference, just
+            // determinism. Without it two equally-urgent tasks swap places
+            // between runs on fetch order alone, and a notification that
+            // names a different task each reevaluate is indistinguishable
+            // from a bug.
+            .sorted {
+                $0.urgency != $1.urgency
+                    ? $0.urgency > $1.urgency
+                    : $0.task.id.uuidString < $1.task.id.uuidString
+            }
+    }
+
+    /// Deadline proximity for the morning prompt's tie-break. 0 for an
+    /// undated task — see `morningPromptRanking`.
+    private func morningDeadlineUrgency(
+        for task: NudgeTask,
+        at fireDate: Date,
+        modelContext: ModelContext
+    ) -> Double {
+        guard let deadline = task.specificTime ?? task.dueDate else { return 0 }
+        let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
+        return EisenhowerScorer.urgency(
+            hoursUntilDue: deadline.timeIntervalSince(fireDate) / 3600,
+            effortHoursRemaining: Double(estimatedMinutes) / 60.0
+        )
+    }
+
+    /// Sort key for `TaskStakes` in the morning prompt's selection.
+    ///
+    /// `nil` deliberately sorts ABOVE `.low`. Nil means "never classified"
+    /// — the absence of evidence — while `.low` is a positive statement
+    /// that this one is minor, which is the strongest possible argument
+    /// against handing it the day's best delivery slot. Ranking nil last
+    /// would also be the common case rather than an edge case: stakes is
+    /// only written by the capture/import path, so most existing tasks
+    /// carry nil and the slot would go to whatever hobby item happened to
+    /// get labelled.
+    private static func morningStakesRank(_ stakes: TaskStakes?) -> Int {
+        switch stakes {
+        case .high:   return 3
+        case .medium: return 2
+        case .none:   return 1
+        case .low:    return 0
+        }
+    }
+
+    /// The morning prompt's body: a statement of what the day's biggest item
+    /// is, and when it's due.
+    ///
+    /// `DESIGN.md` tone rules this is written against — it's the first thing
+    /// the user reads each day, so all three bite at once:
+    ///   • **State the fact, don't ask.** The old copy asked a question and
+    ///     spent the slot on it.
+    ///   • **Propose, never promise.** No "do this and you'll be fine".
+    ///   • **Never imply failure.** Hence the deadline clause is dropped
+    ///     entirely for anything already past due at the fire time — "due
+    ///     yesterday at 5 PM" is factually correct and reads as an
+    ///     accusation before the user is out of bed. The task still gets
+    ///     named; it just doesn't get dated.
+    private static func morningPromptBody(for task: NudgeTask, fireDate: Date) -> String {
+        let base = "Biggest thing on your list: \"\(task.title)\""
+        guard let phrase = morningDeadlinePhrase(for: task, fireDate: fireDate) else {
+            return base + "."
+        }
+        return base + " — \(phrase)."
+    }
+
+    /// "due today at 5:00 PM" / "due tomorrow" / "due Thu at 9:00 AM" /
+    /// "due Aug 14". Nil when the task has no deadline, or when the deadline
+    /// has already passed by the time the notification fires.
+    ///
+    /// A clock time is only ever shown when the task carries a
+    /// `specificTime`; a bare `dueDate` is a day, and rendering its midnight
+    /// as "at 12:00 AM" would invent a precision the task doesn't have.
+    private static func morningDeadlinePhrase(for task: NudgeTask, fireDate: Date) -> String? {
+        guard let deadline = task.specificTime ?? task.dueDate else { return nil }
+
+        let calendar = Calendar.current
+        // "Already passed" is measured at the deadline's OWN granularity.
+        // A bare `dueDate` is a DAY, and its `Date` is that day's midnight —
+        // so an instant comparison calls anything due today "overdue" from
+        // 00:01 onwards and silently drops the clause for the single most
+        // common case there is. Only a `specificTime` gets compared as an
+        // instant.
+        let stillAhead = task.specificTime != nil
+            ? deadline > fireDate
+            : calendar.startOfDay(for: deadline) >= calendar.startOfDay(for: fireDate)
+        guard stillAhead else { return nil }
+
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "h:mm a"
+        timeFmt.locale = Locale(identifier: "en_US_POSIX")
+        let clock = task.specificTime.map { " at \(timeFmt.string(from: $0))" } ?? ""
+
+        let days = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: fireDate),
+            to: calendar.startOfDay(for: deadline)
+        ).day ?? 0
+
+        switch days {
+        case 0:  return "due today\(clock)"
+        case 1:  return "due tomorrow\(clock)"
+        case 2...6:
+            let dayFmt = DateFormatter()
+            dayFmt.dateFormat = "EEEE"
+            dayFmt.locale = Locale(identifier: "en_US_POSIX")
+            return "due \(dayFmt.string(from: deadline))\(clock)"
+        default:
+            let dateFmt = DateFormatter()
+            dateFmt.dateFormat = "MMM d"
+            dateFmt.locale = Locale(identifier: "en_US_POSIX")
+            return "due \(dateFmt.string(from: deadline))"
+        }
     }
 
     /// Idle / paralysis nudge — fires at wake+idleThreshold and asks "Have
@@ -1907,6 +2136,84 @@ final class NudgeArbiter: NudgeArbitering {
                 + "passing candidate still has to survive the busy-window gate, min-spacing, "
                 + "and the daily budget of \(NudgeConfig.dailyNudgeBudget) before it reaches "
                 + "the user.")
+        }
+    }
+
+    // MARK: - DEBUG: morning prompt targeting impact
+
+    /// Before/after for "the morning prompt names the day's biggest task".
+    ///
+    /// This change is a payload change, not a scheduling change — the
+    /// builder's gating (toggle, day-fullness, fire-moment busy) is
+    /// untouched, so the fire time is identical to before. The ONE way it
+    /// can alter what the arbiter does is the new content gate: with no open
+    /// task there is now no candidate at all, where the old open question
+    /// fired regardless. That case prints as `SKIP` below and is the line to
+    /// look for.
+    ///
+    /// Read-only: re-derives into locals, schedules nothing. Calls the real
+    /// `morningPromptRanking` so the printed order cannot drift from the
+    /// order the builder used.
+    private func debugMorningPromptImpact(
+        all: [NudgeCandidate],
+        profile: UserProfile,
+        context: GateContext
+    ) {
+        guard profile.morningCheckInNotificationsEnabled else {
+            print("[MorningPrompt] toggle off — nothing to compare.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        let built = all.first { $0.kind == .morningPrompt }
+        // Reconstruct the fire date the builder would have used, so the
+        // ranking below is evaluated at the same instant even on a run where
+        // the builder bailed out at one of its gates.
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        var comps = calendar.dateComponents([.year, .month, .day], from: context.now)
+        comps.hour = wakeComps.hour
+        comps.minute = wakeComps.minute
+        guard var fireDate = calendar.date(from: comps) else {
+            print("[MorningPrompt] could not resolve the fire date.")
+            return
+        }
+        fireDate = fireDate.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
+        if fireDate <= context.now {
+            fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
+        }
+
+        let ranking = morningPromptRanking(fireDate: fireDate, modelContext: context.modelContext)
+
+        print("[MorningPrompt] fire=\(fmt.string(from: fireDate))  (gating unchanged: toggle, day-fullness, fire-moment busy)")
+        print("  BEFORE: \"What do you want to get done today? Tell me and I'll set it up.\"  ← fired with nothing open too")
+        if let built {
+            print("  AFTER : \"\(built.body)\"")
+        } else if ranking.isEmpty {
+            print("  AFTER : SKIP — nothing open to name. THIS is the behaviour change: "
+                + "the old copy would have fired here.")
+        } else {
+            print("  AFTER : no candidate this run — a builder gate (day-fullness or "
+                + "fire-moment busy) stopped it before targeting, same as it would have before.")
+        }
+
+        guard !ranking.isEmpty else { return }
+        print("  ranked \(ranking.count) contender(s) in the top stakes tier "
+            + "(stakes ▸ deadline proximity ▸ id):")
+        let shown = ranking.prefix(8)
+        for choice in shown {
+            let due = (choice.task.specificTime ?? choice.task.dueDate)
+                .map { fmt.string(from: $0) } ?? "undated"
+            print("      " + padc(choice.stakes?.rawValue ?? "unclassified", 14)
+                + padc(String(format: "%.2f", choice.urgency), 6)
+                + padc(due, 18)
+                + choice.task.title)
+        }
+        if ranking.count > shown.count {
+            print("      … \(ranking.count - shown.count) more contender(s) not printed.")
         }
     }
 

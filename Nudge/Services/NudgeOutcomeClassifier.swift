@@ -192,10 +192,23 @@ final class NudgeOutcomeClassifier {
         let lower = window.lowerBound
         let upper = window.upperBound
 
-        // The morning prompt asks the user to CAPTURE something ("what do
-        // you want to get done today?"). Any task created inside the window
-        // is the user answering it — whether they typed into Home chat or
-        // added the task by hand.
+        // The morning prompt used to ASK the user to capture something
+        // ("what do you want to get done today?"), and any task created
+        // inside the window was them answering it — typed into Home chat or
+        // added by hand.
+        //
+        // ── STALE AS OF JUL 2026, DELIBERATELY UNCHANGED ─────────────────
+        // The prompt no longer asks a question; it NAMES the day's
+        // highest-stakes open task (`buildMorningPromptCandidates`). So this
+        // branch now infers `.acted` from a capture the notification never
+        // requested — it measures "did they add something this morning",
+        // which is adjacent to, but not, the thing the nudge is for. Left
+        // alone on purpose: changing it would rewrite the meaning of
+        // `.morningPrompt` outcome rows in the middle of the collection
+        // period `ROADMAP.md` §1 is waiting on. What "acted" should mean for
+        // a statement rather than a question is a product question, and it
+        // needs the candidate's `taskID` — which is nil, also on purpose.
+        // See the comment on `taskID` in the builder.
         if row.kind == .morningPrompt {
             var createdDescriptor = FetchDescriptor<NudgeTask>(
                 predicate: #Predicate<NudgeTask> {
