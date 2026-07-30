@@ -75,8 +75,10 @@ file into `Nudge/` or `NudgeWidget/` auto-joins that target — no `.pbxproj` ed
 **for the owning target only**.
 
 The widget target additionally compiles all of `Nudge/Models/*.swift` plus
-`Nudge/Services/SharedModelContainer.swift`, and **nothing else** from `Nudge/`.
-So widget code can reach the models but not `NudgeConfig`, `DurationModel`,
+`Nudge/Services/SharedModelContainer.swift` and `Nudge/NudgeTheme.swift`
+(Jul 2026 — so `WidgetColors` aliases the one palette instead of hand-copying
+RGB triples), and **nothing else** from `Nudge/`. So widget code can reach the
+models and the theme but not `NudgeConfig`, `DurationModel`,
 `EisenhowerScorer`, or any other service.
 
 That cross-target membership is NOT automatic: it's a hand-maintained
@@ -179,7 +181,7 @@ reading.)
 - `Nudge/NudgeApp.swift` — `@main` App: builds the SwiftData container, sets the notification delegate, registers background refresh, kicks off `StakesBackfill`. Hosts `ContentView`.
 - `Nudge/ContentView.swift` — Root router (onboarding vs `MainTabView`); handles deep links, scene-phase, the debounced `NudgeArbiter.reevaluate`, and `recordForegroundAndClassifyOutcomes()` (`AppOpenLog` stamp → `NudgeOutcomeClassifier` sweep → DEBUG dump) on both cold launch and foreground.
 - `Nudge/Views/Tabs/MainTabView.swift` — Tab shell owning `selectedTab`; reacts to `deepLinkTab` to switch tabs from notification taps.
-- `Nudge/NudgeTheme.swift` — Central colors + Lexend fonts; used by every view.
+- `Nudge/NudgeTheme.swift` — Central colors + Lexend fonts; used by every view. **Compiled into the widget target too** (Jul 2026, via `membershipExceptions`): `WidgetColors` in `NudgeWidget.swift` is now a set of aliases over this palette — its hand-copied RGB triples had drifted (off-by-one channels, divergent alphas). Includes `goalAccent`, which was previously an inline literal in both targets.
 - `Nudge/NudgeFeedback.swift` — Haptics (`NudgeHaptics`), animation constants (`NudgeAnimation`), AND the completion-effect visual system: `TaskCompletionEffect`, `CheckboxBounceEffect`, `AnimatedStrikethrough`, `ParticleBurstView`, exposed as `.taskCompletionEffect(isComplete:)` / `.checkboxBounce(isComplete:)`. Used by task rows and timeline blocks.
 - `Nudge/Views/MainAppMockView.swift` — Dead shim: `typealias MainAppMockView = MainTabView`, kept for backward compatibility after the tab views moved to `Views/Tabs/`. No mock content.
 

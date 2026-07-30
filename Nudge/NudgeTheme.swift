@@ -4,6 +4,12 @@
 //
 //  Every color and font in the app. Never hardcode hex values inline.
 //
+//  COMPILED INTO BOTH TARGETS (Jul 2026): this file is in the widget's
+//  membershipExceptions list in project.pbxproj, so `WidgetColors` can
+//  alias these values instead of hand-copying RGB triples (which had
+//  drifted — off-by-one channels in background/textPrimary, divergent
+//  alphas). One palette, two targets.
+//
 
 import SwiftUI
 
@@ -40,6 +46,10 @@ struct NudgeTheme {
     /// while a row's time colors change, so it must not share their red
     /// family — that separation is the whole point of the signal.
     static let amber = Color(hex: "#C98A1F")
+    /// Green for goal-linked accents — the widget's goal-fallback rows and
+    /// the "All Done" session tint. Was hardcoded as an RGB triple in both
+    /// targets before joining the theme (Jul 2026).
+    static let goalAccent = Color(hex: "#54A477")
 
     // MARK: - Border
     static let border = Color(hex: "#7E8780").opacity(0.22)

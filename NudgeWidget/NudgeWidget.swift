@@ -217,23 +217,30 @@ struct NudgeTaskEntry: TimelineEntry {
 
 // MARK: - Widget Colors (light theme)
 
+/// Widget-local NAMES for the shared `NudgeTheme` palette (Jul 2026 —
+/// these used to be hand-copied RGB triples, and had drifted: background
+/// and textPrimary were off by one channel step, surface/muted/divider
+/// carried their own alphas, and `neutral` was a rounded copy of
+/// `textMuted`). Every value now reads from NudgeTheme, which is compiled
+/// into this target; only widget-specific soft/inactive derivations apply
+/// an opacity on top. Do not introduce raw color literals here.
 enum WidgetColors {
-    static let background = Color(red: 0.965, green: 0.976, blue: 0.967)
-    static let surface = Color.white
-    static let accent = Color(red: 0.451, green: 0.576, blue: 0.702)
-    static let accentSoft = Color(red: 0.451, green: 0.576, blue: 0.702).opacity(0.16)
-    static let goalAccent = Color(red: 0.329, green: 0.643, blue: 0.467)
-    static let goalAccentSoft = goalAccent.opacity(0.12)
-    static let neutral = Color(red: 0.55, green: 0.58, blue: 0.56)
-    static let textPrimary = Color(red: 0.11, green: 0.13, blue: 0.12)
-    static let textSecondary = Color(red: 0.11, green: 0.13, blue: 0.12).opacity(0.72)
-    static let textMuted = Color(red: 0.11, green: 0.13, blue: 0.12).opacity(0.45)
-    static let streakActive = accent
-    static let streakInactive = Color(red: 0.11, green: 0.13, blue: 0.12).opacity(0.12)
-    static let checkboxBorder = Color(red: 0.49, green: 0.53, blue: 0.5).opacity(0.28)
-    static let divider = Color(red: 0.49, green: 0.53, blue: 0.5).opacity(0.14)
+    static let background = NudgeTheme.background
+    static let surface = NudgeTheme.surface
+    static let accent = NudgeTheme.primary
+    static let accentSoft = NudgeTheme.primary.opacity(0.16)
+    static let goalAccent = NudgeTheme.goalAccent
+    static let goalAccentSoft = NudgeTheme.goalAccent.opacity(0.12)
+    static let neutral = NudgeTheme.textSecondary
+    static let textPrimary = NudgeTheme.textPrimary
+    static let textSecondary = NudgeTheme.textSecondary
+    static let textMuted = NudgeTheme.textMuted
+    static let streakActive = NudgeTheme.primary
+    static let streakInactive = NudgeTheme.textPrimary.opacity(0.12)
+    static let checkboxBorder = NudgeTheme.border
+    static let divider = NudgeTheme.border
     static let pillBackground = accentSoft
-    static let chipBackground = Color(red: 0.49, green: 0.53, blue: 0.5).opacity(0.08)
+    static let chipBackground = NudgeTheme.surfaceAlt
 }
 
 // MARK: - Shared Widget Schema & Container

@@ -837,7 +837,7 @@ struct TasksTabView: View {
 
     private var sessionStateTint: Color {
         coordinator.sessionState == .complete
-            ? Color(red: 0.33, green: 0.64, blue: 0.47)
+            ? NudgeTheme.goalAccent
             : NudgeTheme.primary
     }
 

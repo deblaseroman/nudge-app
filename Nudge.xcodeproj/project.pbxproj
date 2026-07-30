@@ -84,6 +84,7 @@
 				Models/TaskStakes.swift,
 				Models/TimeBlock.swift,
 				Models/UserProfile.swift,
+				NudgeTheme.swift,
 				Services/SharedModelContainer.swift,
 			);
 			target = 7E03C5B02F7AE83300329D80 /* NudgeWidgetExtension */;
