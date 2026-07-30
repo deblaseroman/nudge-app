@@ -65,6 +65,7 @@
 				Models/CategoryDurationStats.swift,
 				Models/CheckIn.swift,
 				Models/CompletedTaskRecord.swift,
+				Models/CountdownState.swift,
 				Models/DailySession.swift,
 				Models/DailyStats.swift,
 				Models/EngagementState.swift,

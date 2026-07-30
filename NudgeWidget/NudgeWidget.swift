@@ -302,14 +302,6 @@ private enum WidgetFormatters {
     static let clockTime: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "h:mm a"; return f
     }()
-    /// Used by `dueDateLine` for ":00" minute case → "9pm".
-    static let clockTimeHourOnly: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "ha"; return f
-    }()
-    /// Used by `dueDateLine` when minutes are non-zero → "9:30pm".
-    static let clockTimeWithMinutes: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "h:mma"; return f
-    }()
 }
 
 // MARK: - Timeline Provider
@@ -660,10 +652,14 @@ struct NudgeTaskProvider: TimelineProvider {
     }
 }
 
-/// Widget-side mirror of CountdownLabel's text logic. Returns the same
-/// phrasing the in-app label uses so the widget reads consistently. The
-/// widget only refreshes every 15 min, so this is computed at timeline-
-/// snapshot time — not live.
+/// Widget-side countdown text. Derives every threshold decision from the
+/// shared `CountdownState` (Jul 2026 — it used to hand-copy the logic,
+/// and had drifted: `countdown()` switched to days-away at 72h where the
+/// app and this file's own `remainingLine` used 48h). Only the PHRASING
+/// here is widget-specific — shorter formats for a small surface; which
+/// state applies is decided in exactly one place. The widget only
+/// refreshes every 15 min, so this is computed at timeline-snapshot
+/// time — not live.
 enum WidgetCountdownFormatter {
     /// Day-name (or date) string for the non-urgent rows. Per Rule 9.
     static func dayName(for task: NudgeTask, now: Date) -> String? {
@@ -684,44 +680,30 @@ enum WidgetCountdownFormatter {
         return WidgetFormatters.monthDay.string(from: deadline)
     }
 
-    /// Countdown label for the most-urgent row only. Implements rules 1–7
-    /// from the CountdownLabel spec.
+    /// Countdown label for the most-urgent row only. The state (which
+    /// rule applies, incl. the 48h days-away boundary and the night
+    /// window) comes from `CountdownState.compute`; the short phrasing is
+    /// widget-specific.
     static func countdown(for task: NudgeTask, now: Date) -> String? {
         guard let deadline = task.specificTime ?? task.dueDate else { return nil }
-        let interval = deadline.timeIntervalSince(now)
-
-        // Rule 6 — overdue
-        if interval < 0 {
-            return "Was due \(timeAgo(-interval))"
-        }
-
-        // Rule 7 — night suppression
-        let hour = Calendar.current.component(.hour, from: now)
-        if hour >= 23 || hour < 7 { return nil }
-
-        let hours = interval / 3600
-        let days  = hours / 24
         let prefix = pickPrefix(task: task)
 
-        if days > 7 {
+        switch CountdownState.compute(dueDate: deadline, now: now) {
+        case .overdue(let ago):
+            return "Was due \(ago)"
+        case .nightSuppressed:
+            return nil
+        case .farFuture:
             return "\(prefix) \(WidgetFormatters.monthDay.string(from: deadline))"
+        case .daysAway(_, let days):
+            return "\(prefix) \(WidgetFormatters.weekday.string(from: deadline)) · \(days) days away"
+        case .withinTwoDays(_, let hours), .underDay(_, let hours):
+            return "\(prefix) in \(hours) hours"
+        case .underThreeHours(_, let h, let m):
+            if h == 0 { return "\(prefix) in \(m)min" }
+            if m == 0 { return "\(prefix) in \(h)hr" }
+            return "\(prefix) in \(h)hr \(m)min"
         }
-        if days >= 3 {
-            return "\(prefix) \(WidgetFormatters.weekday.string(from: deadline)) · \(Int(days.rounded())) days away"
-        }
-        if hours >= 24 {
-            return "\(prefix) in \(Int(hours.rounded())) hours"
-        }
-        if hours >= 3 {
-            return "\(prefix) in \(Int(hours.rounded())) hours"
-        }
-        // Rule 5 — under 3 hours: hr+min
-        let totalMinutes = Int((interval / 60).rounded())
-        let h = totalMinutes / 60
-        let m = totalMinutes % 60
-        if h == 0 { return "\(prefix) in \(m)min" }
-        if m == 0 { return "\(prefix) in \(h)hr" }
-        return "\(prefix) in \(h)hr \(m)min"
     }
 
     private static func pickPrefix(task: NudgeTask) -> String {
@@ -739,81 +721,23 @@ enum WidgetCountdownFormatter {
         return "Due"
     }
 
-    private static func timeAgo(_ seconds: TimeInterval) -> String {
-        let minutes = Int(seconds / 60)
-        if minutes < 60 { return minutes <= 1 ? "1 minute ago" : "\(minutes) minutes ago" }
-        let hours = minutes / 60
-        if hours < 24 { return hours == 1 ? "1 hour ago" : "\(hours) hours ago" }
-        let days = hours / 24
-        return days == 1 ? "1 day ago" : "\(days) days ago"
-    }
-
     // MARK: - Split-row helpers
     //
-    // Mirror the in-app `CountdownState.dueDateLine` and `.remainingLine`
-    // helpers so the widget row reads the same as the task list. Kept
-    // in lockstep with the in-app version — any tweak to format there
-    // should be applied here too.
+    // Straight delegation to the shared `CountdownState` helpers — the
+    // widget row and the task list read the same strings by construction,
+    // not by hand-synced copies.
 
     /// "Jun 17th, 9pm" for timed tasks, "Jun 17th" when only date is set,
     /// nil for floaters.
     static func dueDateLine(for task: NudgeTask) -> String? {
-        let anchor = task.specificTime ?? task.dueDate
-        guard let anchor else { return nil }
-        let day = Calendar.current.component(.day, from: anchor)
-        let datePart = WidgetFormatters.monthDay.string(from: anchor) + ordinalSuffix(for: day)
-        if task.specificTime != nil {
-            return "\(datePart), \(formatClockTime(anchor))"
-        }
-        return datePart
+        CountdownState.dueDateLine(dueDate: task.dueDate, specificTime: task.specificTime)
     }
 
     /// "12 hours left" / "5 days away" / "3 hours ago", hidden for
-    /// far-future and at night. Threshold: hours-left below 48h,
-    /// days-away above 48h (matches in-app).
+    /// far-future and at night.
     static func remainingLine(for task: NudgeTask, now: Date) -> String? {
         guard let deadline = task.specificTime ?? task.dueDate else { return nil }
-        let interval = deadline.timeIntervalSince(now)
-        if interval < 0 { return timeAgo(-interval) }
-
-        let hour = Calendar.current.component(.hour, from: now)
-        if hour >= 23 || hour < 7 { return nil }
-
-        let hoursOut = interval / 3600
-        let daysOut  = hoursOut / 24
-        if daysOut > 7 { return nil }
-        if hoursOut >= 48 {
-            let n = Int(daysOut.rounded())
-            return n == 1 ? "1 day away" : "\(n) days away"
-        }
-        if hoursOut >= 3 {
-            let n = Int(hoursOut.rounded())
-            return n == 1 ? "1 hour left" : "\(n) hours left"
-        }
-        let totalMinutes = Int((interval / 60).rounded())
-        let h = totalMinutes / 60
-        let m = totalMinutes % 60
-        if h == 0 { return "\(m)min" }
-        if m == 0 { return "\(h)hr" }
-        return "\(h)hr \(m)min"
-    }
-
-    private static func ordinalSuffix(for day: Int) -> String {
-        if (11...13).contains(day) { return "th" }
-        switch day % 10 {
-        case 1: return "st"
-        case 2: return "nd"
-        case 3: return "rd"
-        default: return "th"
-        }
-    }
-
-    private static func formatClockTime(_ date: Date) -> String {
-        let minute = Calendar.current.component(.minute, from: date)
-        let formatter = minute == 0
-            ? WidgetFormatters.clockTimeHourOnly
-            : WidgetFormatters.clockTimeWithMinutes
-        return formatter.string(from: date).lowercased()
+        return CountdownState.remainingLine(dueDate: deadline, now: now)
     }
 }
 
