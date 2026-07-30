@@ -387,8 +387,35 @@ struct NudgeTaskProvider: TimelineProvider {
             recentDoneDescriptor.fetchLimit = 100
             let recentDone = try context.fetch(recentDoneDescriptor)
 
+            // ── Mini day chart window: a rolling 5-hour window with "now" ──
+            // 15% in from the left (so a little of the recent past shows, and
+            // the next ~4¼ hours are ahead). A short window lets blocks show
+            // a label. Computed HERE, before the event fetch, because the
+            // fetch window below must cover it. `dayStart`/`dayEnd` drive the
+            // strip; the now-marker lands at 15% automatically because
+            // now = dayStart + 0.15 * window.
+            let chartWindow: TimeInterval = 5 * 3600
+            let chartStart = now.addingTimeInterval(-0.15 * chartWindow)
+            let chartEnd = now.addingTimeInterval(0.85 * chartWindow)
+
+            // Events are fetched SORTED by start time and SCOPED to what the
+            // widget actually renders: today (the "next 2 events" list) plus
+            // the chart window (which can poke past midnight late in the
+            // day). An unscoped, unsorted fetch returned the first 20 events
+            // in arbitrary store order — with more than 20 in the store (five
+            // classes a day over two weeks is seventy), today's events could
+            // all miss the cut and the widget omitted what's happening today.
+            // Timeless events are excluded: both consumers guard on
+            // `specificTime` anyway.
+            let eventWindowStart = min(startOfToday, chartStart)
+            let eventWindowEnd = max(endOfToday, chartEnd)
             var eventDescriptor = FetchDescriptor<NudgeTask>(
-                predicate: #Predicate { $0.isInformationalEvent }
+                predicate: #Predicate<NudgeTask> { task in
+                    task.isInformationalEvent &&
+                    (task.specificTime ?? distantPastSentinel) >= eventWindowStart &&
+                    (task.specificTime ?? distantPastSentinel) < eventWindowEnd
+                },
+                sortBy: [SortDescriptor(\.specificTime)]
             )
             eventDescriptor.fetchLimit = 20
             let allFetchedEvents = try context.fetch(eventDescriptor)
@@ -540,15 +567,8 @@ struct NudgeTaskProvider: TimelineProvider {
                 return UUID(uuidString: idString)
             }()
 
-            // ── Mini day chart: a rolling 5-hour window with "now" 15% in ──
-            // from the left (so a little of the recent past shows, and the
-            // next ~4¼ hours are ahead). A short window lets blocks show a
-            // label. `dayStart`/`dayEnd` drive the strip; the now-marker lands
-            // at 15% automatically because now = dayStart + 0.15 * window.
-            let chartWindow: TimeInterval = 5 * 3600
-            let chartStart = now.addingTimeInterval(-0.15 * chartWindow)
-            let chartEnd = now.addingTimeInterval(0.85 * chartWindow)
-
+            // Mini day chart — window computed above, next to the event
+            // fetch it scopes.
             func overlapsWindow(start: Date, minutes: Int) -> Bool {
                 let end = start.addingTimeInterval(Double(minutes) * 60)
                 return start < chartEnd && end > chartStart
