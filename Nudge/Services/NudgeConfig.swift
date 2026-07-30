@@ -256,9 +256,11 @@ enum NudgeConfig {
 
     /// Fallback duration assumed for informational events that don't have
     /// `estimatedMinutes` set and aren't found in `EventDurationStats`.
-    /// Capture flow (step 6) will ask the user instead of guessing, but
-    /// this keeps the gate safe in the meantime.
-    static let defaultEventDurationMinutes: Int = 60
+    /// FORWARDER — the value lives on `NudgeTask.fallbackEventDurationMinutes`
+    /// (the widget target compiles Models only and can't see this file, and
+    /// the resolution method `eventDurationMinutes` lives there with it).
+    /// Kept here so the tunables index stays complete; tune it there.
+    static let defaultEventDurationMinutes: Int = NudgeTask.fallbackEventDurationMinutes
 
     /// Upper bound on the duration a calendar / iCal import may write to
     /// `NudgeTask.estimatedMinutes`. Real end times are honored up to this

@@ -578,7 +578,10 @@ struct NudgeTaskProvider: TimelineProvider {
             // Events in-window.
             for event in allFetchedEvents {
                 guard let t = event.specificTime else { continue }
-                let mins = event.estimatedMinutes ?? 60
+                // Shared resolution incl. the learned per-title duration —
+                // the old `estimatedMinutes ?? 60` drew a three-hour lab
+                // one hour wide.
+                let mins = event.eventDurationMinutes(modelContext: context)
                 guard overlapsWindow(start: t, minutes: mins) else { continue }
                 blocks.append(WidgetTimeBlock(
                     id: event.id,

@@ -85,7 +85,11 @@ final class DayPlanRefiner {
         var eventDTOs: [DayPlanInput.EventDTO] = []
         for event in allTasks where event.isInformationalEvent {
             guard let start = event.specificTime, cal.isDateInToday(start) else { continue }
-            let mins = event.estimatedMinutes ?? NudgeConfig.defaultEventDurationMinutes
+            // Shared resolution — includes the learned per-title row, which
+            // the old `estimatedMinutes ?? default` skipped: a three-hour
+            // lab read as 60 minutes to the AI while the busy windows above
+            // (from the resolver) blocked the full three hours.
+            let mins = event.eventDurationMinutes(modelContext: modelContext)
             busy.append((start.addingTimeInterval(-preEventBuffer), start))
             eventDTOs.append(.init(title: event.title, start: Self.iso(start), durationMinutes: mins))
         }

@@ -12,13 +12,11 @@
 //  Nothing here makes scheduling decisions — it just answers "is the user
 //  busy at this Date?" for callers like `NudgeArbiter`'s gate.
 //
-//  Duration resolution per event, in order:
-//    1. `task.estimatedMinutes` if set (calendar/screenshot import wrote
-//       a real end time).
-//    2. `EventDurationStats` row keyed by normalized title — populated
-//       once the user confirms the duration of an event they added
-//       without one (capture flow, step 6).
-//    3. `NudgeConfig.defaultEventDurationMinutes` (60) as a safety net.
+//  Duration resolution per event is the shared
+//  `NudgeTask.eventDurationMinutes` (explicit → learned per-title row →
+//  fallback) — one implementation for this gate, the timeline, both
+//  planners, and the widget chart, so they can never disagree about how
+//  long an event runs.
 //
 
 import Foundation
@@ -77,7 +75,7 @@ final class BusyWindowResolver {
         // Build raw windows (start + end before any merging or buffer).
         var rawWindows: [BusyWindow] = events.compactMap { event in
             guard let start = event.specificTime else { return nil }
-            let durationMin = resolveDurationMinutes(for: event, modelContext: modelContext)
+            let durationMin = event.eventDurationMinutes(modelContext: modelContext)
             let end = start.addingTimeInterval(Double(durationMin) * 60)
             // Range filter — keep events whose window overlaps [from, to].
             if end < from || start > to { return nil }
@@ -146,25 +144,6 @@ final class BusyWindowResolver {
             windowEnd: end,
             busyMinutes: Int(busySeconds / 60)
         )
-    }
-
-    // MARK: - Duration resolution
-
-    private func resolveDurationMinutes(
-        for event: NudgeTask,
-        modelContext: ModelContext
-    ) -> Int {
-        if let explicit = event.estimatedMinutes, explicit > 0 {
-            return explicit
-        }
-        let key = EventDurationStats.normalize(event.title)
-        let descriptor = FetchDescriptor<EventDurationStats>(
-            predicate: #Predicate<EventDurationStats> { $0.titleKey == key }
-        )
-        if let learned = (try? modelContext.fetch(descriptor))?.first {
-            return learned.durationMinutes
-        }
-        return NudgeConfig.defaultEventDurationMinutes
     }
 
     // MARK: - Merge logic

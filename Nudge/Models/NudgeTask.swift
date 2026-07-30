@@ -8,6 +8,57 @@
 import Foundation
 import SwiftData
 
+// MARK: - Event duration resolution
+//
+// THE one implementation of "how long does this event run?". Until Jul
+// 2026 there were four: `BusyWindowResolver.resolveDurationMinutes` (the
+// canonical one), a hand-maintained mirror in `TodayTimelineView`, and two
+// TRUNCATED copies (`DayPlanRefiner`, the widget chart) that skipped the
+// learned `EventDurationStats` row — so a three-hour lab with no explicit
+// estimate read as 60 minutes to the AI planner and the widget chart while
+// the busy gate correctly saw three hours.
+//
+// It lives HERE, not in a service, because the widget target compiles
+// `Nudge/Models/*.swift` and nothing else — a service method couldn't be
+// shared, and a NEW model file would need a hand edit to the widget's
+// `membershipExceptions` list in project.pbxproj.
+extension NudgeTask {
+    /// Fallback when nothing explicit or learned exists. This is the
+    /// single source of truth — `NudgeConfig.defaultEventDurationMinutes`
+    /// forwards to it (NudgeConfig is invisible to the widget target, so
+    /// the value itself must live in the model layer). Tune it here.
+    static let fallbackEventDurationMinutes: Int = 60
+
+    /// Resolved duration in minutes for an informational event:
+    /// explicit `estimatedMinutes` (written by the calendar / screenshot
+    /// import from the event's real end time) → learned per-title
+    /// `EventDurationStats` row → the shared fallback.
+    func eventDurationMinutes(modelContext: ModelContext) -> Int {
+        if let explicit = estimatedMinutes, explicit > 0 { return explicit }
+        let key = EventDurationStats.normalize(title)
+        var descriptor = FetchDescriptor<EventDurationStats>(
+            predicate: #Predicate<EventDurationStats> { $0.titleKey == key }
+        )
+        descriptor.fetchLimit = 1
+        if let learned = (try? modelContext.fetch(descriptor))?.first {
+            return learned.durationMinutes
+        }
+        return Self.fallbackEventDurationMinutes
+    }
+
+    /// Same resolution against an already-fetched stats array — for hot
+    /// paths that hold a bounded `@Query` (the timeline re-reads on every
+    /// 60s tick) and must not fetch per event per render.
+    func eventDurationMinutes(in stats: [EventDurationStats]) -> Int {
+        if let explicit = estimatedMinutes, explicit > 0 { return explicit }
+        let key = EventDurationStats.normalize(title)
+        if let learned = stats.first(where: { $0.titleKey == key }) {
+            return learned.durationMinutes
+        }
+        return Self.fallbackEventDurationMinutes
+    }
+}
+
 @Model
 final class NudgeTask {
     var id: UUID
