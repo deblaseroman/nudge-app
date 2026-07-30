@@ -62,7 +62,7 @@ enforces agreement — a mismatch is a runtime crash, not a build error.
 |---|---|---|
 | `SharedModelContainer.schema` | `Nudge/Services/SharedModelContainer.swift` | the app's real container |
 | `widgetSchema` | `NudgeWidget/NudgeWidget.swift` | the widget's own container — does **not** call `SharedModelContainer`, though that file is compiled into the widget target |
-| `#Preview` container | `Nudge/ContentView.swift` | previews only — **already drifted**: missing `CompletedTaskRecord`, `TimeBlock`, `CategoryDurationStats`, `EventDurationStats` |
+| `#Preview` container | `Nudge/ContentView.swift` | previews only — re-synced Jul 2026 after drifting four models behind (`CompletedTaskRecord`, `TimeBlock`, `CategoryDurationStats`, `EventDurationStats`) |
 
 The widget re-declares its own schema, app-group ID, and `ModelContainer` rather
 than reusing `SharedModelContainer`. The only guardrail is a comment in

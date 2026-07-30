@@ -269,6 +269,10 @@ struct OnboardingPlaceholderView: View {
 }
 
 #Preview {
+    // One of the THREE hand-synced schema lists (Cross-cutting invariant 2
+    // in ARCHITECTURE.md) — keep in lockstep with
+    // `SharedModelContainer.schema` and `widgetSchema`. It had drifted:
+    // four models were missing until Jul 2026.
     ContentView()
         .modelContainer(for: [
             NudgeTask.self,
@@ -278,10 +282,14 @@ struct OnboardingPlaceholderView: View {
             DailyStats.self,
             DailySession.self,
             CheckIn.self,
+            CompletedTaskRecord.self,
+            TimeBlock.self,
             EngagementState.self,
             NotificationEvent.self,
             SentNotificationFlag.self,
             NudgeOutcome.self,
             TaskIntelligence.self,
+            CategoryDurationStats.self,
+            EventDurationStats.self,
         ], inMemory: true)
 }
