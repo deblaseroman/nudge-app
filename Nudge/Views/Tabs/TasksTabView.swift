@@ -166,13 +166,15 @@ struct TasksTabView: View {
         planTasks.contains { !$0.isComplete }
     }
 
-    /// Incomplete actionable tasks in the SAME order the app list uses:
-    /// ordered-plan tasks first (sequenceIndex order), then everything else by
-    /// TaskSortComparator. Used by the "start a session" task picker so it
-    /// matches the list. (`planTasks` is already sequenceIndex-sorted;
-    /// `sortedTasks` is the non-plan, incomplete, comparator-sorted set.)
+    /// Incomplete actionable tasks in the SAME order the app list uses.
+    /// The comparator is plan-first, so this is a single sort: plan tasks
+    /// in sequenceIndex order, then everything else by deadline bucket.
+    /// Used by the "start a session" task picker so it matches the list.
     private var orderedActionableTasks: [NudgeTask] {
-        planTasks.filter { !$0.isComplete } + sortedTasks
+        let comparator = TaskSortComparator()
+        return actionableTasks
+            .filter { !$0.isComplete }
+            .sorted { comparator.compare($0, $1) }
     }
 
     /// Open tasks not yet placed on today's timeline.
@@ -2496,38 +2498,11 @@ enum TaskSheetDestination: Identifiable {
     }
 }
 
-struct TaskSortComparator {
-    func compare(_ lhs: NudgeTask, _ rhs: NudgeTask) -> Bool {
-        let leftBucket = sortBucket(for: lhs)
-        let rightBucket = sortBucket(for: rhs)
-
-        if leftBucket != rightBucket {
-            return leftBucket < rightBucket
-        }
-
-        switch leftBucket {
-        case 0, 1:
-            return lhs.sortDeadline < rhs.sortDeadline
-        case 2:
-            return lhs.createdAt < rhs.createdAt
-        default:
-            return (lhs.completedAt ?? .distantPast) > (rhs.completedAt ?? .distantPast)
-        }
-    }
-
-    private func sortBucket(for task: NudgeTask) -> Int {
-        if task.isComplete {
-            return 3
-        }
-        if task.isOverdue {
-            return 0
-        }
-        if task.sortDeadline != .distantFuture {
-            return 1
-        }
-        return 2
-    }
-}
+// `TaskSortComparator`, `sortDeadline`, and `isOverdue` moved to
+// `Nudge/Models/NudgeTask.swift` (Jul 2026) — the widget was carrying its
+// own private copies plus an inline plan-first sort, and every consumer
+// hand-bolted the plan-first rule on top of the comparator. Plan-first is
+// now built into the comparator itself.
 
 // MARK: - Idle confirmation sheet
 
@@ -2630,21 +2605,4 @@ extension NudgeTask {
         return nil
     }
 
-    var sortDeadline: Date {
-        if let specificTime {
-            return specificTime
-        }
-
-        if let dueDate {
-            let start = Calendar.current.startOfDay(for: dueDate)
-            return Calendar.current.date(byAdding: .day, value: 1, to: start) ?? dueDate
-        }
-
-        return .distantFuture
-    }
-
-    var isOverdue: Bool {
-        guard !isComplete else { return false }
-        return sortDeadline < Date()
-    }
 }

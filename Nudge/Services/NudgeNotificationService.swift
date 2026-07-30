@@ -321,15 +321,10 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
     private func pickTopOpenTask(context: ModelContext) -> NudgeTask? {
         let allTasks = (try? context.fetch(FetchDescriptor<NudgeTask>())) ?? []
         let open = allTasks.filter { !$0.isInformationalEvent && !$0.isComplete }
-        // If the user has an ordered plan today, its NEXT item (lowest
-        // sequenceIndex) is the answer to "what should I start?" — prefer it
-        // over pure score.
-        if let planNext = open
-            .filter({ $0.sequenceIndex != nil })
-            .min(by: { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }) {
-            return planNext
-        }
-        return open.sorted(by: { TaskSortComparator().compare($0, $1) }).first
+        // The comparator is plan-first: an ordered plan's NEXT item wins
+        // when one exists, deadline buckets rank the rest.
+        let comparator = TaskSortComparator()
+        return open.min { comparator.compare($0, $1) }
     }
 
     @MainActor

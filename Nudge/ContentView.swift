@@ -74,19 +74,12 @@ struct ContentView: View {
                    let profile = currentProfile {
                     let open = tasks
                         .filter { !$0.isInformationalEvent && !$0.isComplete }
-                    // If the user has an ordered plan today, its NEXT item
-                    // (lowest sequenceIndex) is the answer to "what should I
-                    // start?" — prefer it over pure score, matching
-                    // NudgeNotificationService.pickTopOpenTask and the widget's
-                    // own display order. Sorting by score alone started a
-                    // different task than the widget was showing.
+                    // The comparator is plan-first: the plan's NEXT item
+                    // (lowest sequenceIndex) wins when one exists, matching
+                    // NudgeNotificationService.pickTopOpenTask and the
+                    // widget's display order by construction.
                     let comparator = TaskSortComparator()
-                    let pick = open
-                        .filter { $0.sequenceIndex != nil }
-                        .min { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
-                        ?? open
-                            .sorted { comparator.compare($0, $1) }
-                            .first
+                    let pick = open.min { comparator.compare($0, $1) }
                     if let task = pick {
                         SessionCoordinator.shared.startSession(
                             task: task,

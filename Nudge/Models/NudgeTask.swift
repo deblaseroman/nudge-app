@@ -59,6 +59,92 @@ extension NudgeTask {
     }
 }
 
+// MARK: - Display / pick ordering
+//
+// Shared by every "what order do tasks go in?" and "what should I start?"
+// site in BOTH targets — the app list, the session pickers, the idle
+// builder's target choice, the notification-tap target, and the widget
+// rows. Lives here (Models) for the same reason `eventDurationMinutes`
+// does: the widget compiles Models only.
+
+extension NudgeTask {
+    /// The instant used for deadline ordering: the explicit clock time
+    /// when one exists, else the END of the due day (a bare due date means
+    /// "by end of that day" — capture normalizes it to 23:59 for exactly
+    /// this reason), else `.distantFuture` for floaters.
+    var sortDeadline: Date {
+        if let specificTime {
+            return specificTime
+        }
+        if let dueDate {
+            let start = Calendar.current.startOfDay(for: dueDate)
+            return Calendar.current.date(byAdding: .day, value: 1, to: start) ?? dueDate
+        }
+        return .distantFuture
+    }
+
+    var isOverdue: Bool {
+        guard !isComplete else { return false }
+        return sortDeadline < Date()
+    }
+}
+
+/// The one task ordering, with **plan-first built in** (Jul 2026 — before
+/// this, every site that consumed the comparator hand-bolted the "ordered
+/// plan outranks score" rule on top of it, or forgot to). Buckets:
+///
+///   0. plan tasks (`sequenceIndex != nil`), in stated order — the user's
+///      declared sequence outranks every deadline heuristic below
+///      (Cross-cutting invariant 1 in ARCHITECTURE.md)
+///   1. overdue, oldest deadline first
+///   2. dated, soonest deadline first
+///   3. floaters, oldest created first
+///   4. completed, newest completion first
+///
+/// Callers that must EXCLUDE plan tasks (the app's Unscheduled/Scheduled
+/// sections render them in their own numbered section) filter
+/// `sequenceIndex == nil` before sorting, same as before.
+struct TaskSortComparator {
+    func compare(_ lhs: NudgeTask, _ rhs: NudgeTask) -> Bool {
+        let leftBucket = sortBucket(for: lhs)
+        let rightBucket = sortBucket(for: rhs)
+
+        if leftBucket != rightBucket {
+            return leftBucket < rightBucket
+        }
+
+        switch leftBucket {
+        case 0:
+            if let l = lhs.sequenceIndex, let r = rhs.sequenceIndex, l != r {
+                return l < r
+            }
+            return lhs.sortDeadline < rhs.sortDeadline
+        case 1, 2:
+            return lhs.sortDeadline < rhs.sortDeadline
+        case 3:
+            return lhs.createdAt < rhs.createdAt
+        default:
+            return (lhs.completedAt ?? .distantPast) > (rhs.completedAt ?? .distantPast)
+        }
+    }
+
+    private func sortBucket(for task: NudgeTask) -> Int {
+        if task.isComplete {
+            return 4
+        }
+        if task.sequenceIndex != nil {
+            return 0
+        }
+        if task.isOverdue {
+            return 1
+        }
+        if task.sortDeadline != .distantFuture {
+            return 2
+        }
+        return 3
+    }
+}
+
 @Model
 final class NudgeTask {
     var id: UUID

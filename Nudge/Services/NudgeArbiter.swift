@@ -1112,13 +1112,11 @@ final class NudgeArbiter: NudgeArbitering {
         )
         unstartedDescriptor.fetchLimit = 50
         let unstarted = (try? modelContext.fetch(unstartedDescriptor)) ?? []
-        // Prefer the next item in the user's ordered plan (lowest
-        // sequenceIndex) — the plan's next step IS the answer to "what should
-        // I start?". Fall back to score when there's no plan.
-        let planNext = unstarted
-            .filter { $0.sequenceIndex != nil }
-            .min(by: { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) })
-        guard let target = planNext ?? unstarted.sorted(by: { TaskSortComparator().compare($0, $1) }).first else {
+        // The comparator is plan-first: the plan's next item (lowest
+        // sequenceIndex) IS the answer to "what should I start?" when a
+        // plan exists; deadline buckets rank the rest.
+        let comparator = TaskSortComparator()
+        guard let target = unstarted.min(by: { comparator.compare($0, $1) }) else {
             #if DEBUG
             print("[NudgeArbiter] idle: SKIP — no incomplete non-event task to attach to (add a task first).")
             #endif

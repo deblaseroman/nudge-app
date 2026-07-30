@@ -449,30 +449,14 @@ struct NudgeTaskProvider: TimelineProvider {
                 task.isOverdue || task.priority == "high"
             }.count
 
-            // Sort visible tasks (incomplete + recently completed) together
-            // so completed tasks stay in their original position for smooth animation
-            let sortedVisible = visibleTasks.sorted { lhs, rhs in
-                // Completed tasks sink below incomplete ones
-                if lhs.isComplete != rhs.isComplete {
-                    return !lhs.isComplete
-                }
-                // Match the app: an ordered "Today's plan" comes first, in the
-                // user's stated sequenceIndex order, ahead of score/deadline.
-                let lSeq = lhs.sequenceIndex
-                let rSeq = rhs.sequenceIndex
-                if (lSeq != nil) != (rSeq != nil) {
-                    return lSeq != nil            // plan tasks before non-plan
-                }
-                if let l = lSeq, let r = rSeq, l != r {
-                    return l < r                  // lower number earlier
-                }
-                let leftBucket = sortBucket(for: lhs)
-                let rightBucket = sortBucket(for: rhs)
-                if leftBucket != rightBucket {
-                    return leftBucket < rightBucket
-                }
-                return lhs.sortDeadline < rhs.sortDeadline
-            }
+            // Sort visible tasks (incomplete + recently completed) with the
+            // shared comparator — plan-first, then overdue/dated/floater,
+            // completed sunk to the bottom. This used to be an inline copy
+            // of the app's ordering with the plan-first rule hand-bolted on
+            // top; one comparator means the widget can't drift from the
+            // list again.
+            let comparator = TaskSortComparator()
+            let sortedVisible = visibleTasks.sorted { comparator.compare($0, $1) }
 
             var goalDescriptor = FetchDescriptor<NudgeGoal>(
                 predicate: #Predicate { $0.isActive }
@@ -639,17 +623,6 @@ struct NudgeTaskProvider: TimelineProvider {
         return task.dueTime
     }
 
-    private func sortBucket(for task: NudgeTask) -> Int {
-        if task.isOverdue {
-            return 0
-        }
-
-        if task.sortDeadline != .distantFuture {
-            return 1
-        }
-
-        return 2
-    }
 }
 
 /// Widget-side countdown text. Derives every threshold decision from the
@@ -741,24 +714,9 @@ enum WidgetCountdownFormatter {
     }
 }
 
-private extension NudgeTask {
-    var sortDeadline: Date {
-        if let specificTime {
-            return specificTime
-        }
-
-        if let dueDate {
-            let startOfDay = Calendar.current.startOfDay(for: dueDate)
-            return Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) ?? dueDate
-        }
-
-        return .distantFuture
-    }
-
-    var isOverdue: Bool {
-        !isComplete && sortDeadline < Date()
-    }
-}
+// `sortDeadline` / `isOverdue` come from the shared extension in
+// `Nudge/Models/NudgeTask.swift` — this file carried private copies until
+// Jul 2026.
 
 // MARK: - Widget View
 
