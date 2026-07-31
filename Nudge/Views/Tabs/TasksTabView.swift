@@ -26,7 +26,16 @@ struct TasksTabView: View {
     @State private var activeSheet: TaskSheetDestination?
     @State private var showCancelSessionAlert = false
     @State private var showSessionTaskPicker = false
-    @State private var showCompletedSheet = false
+    /// Which list tab shows below Start Session. Deliberately not persisted:
+    /// every launch lands on Today, so the entry point never moves around —
+    /// the Overdue badge carries the "look here" signal instead.
+    @State private var selectedListTab: TaskListTab = .today
+    /// Events tab lens. Two lenses on the same data, not two buckets — a
+    /// high-stakes event tomorrow appears under both.
+    @State private var eventLens: EventLens = .thisWeek
+    /// Exams whose collapsed prep-day rows are currently expanded in the
+    /// Unscheduled tab (keyed by the exam's linkedEventId).
+    @State private var expandedPrepExams: Set<String> = []
     /// Set when the user taps empty timeline space — drives the placement
     /// sheet. Carries the (15-min-rounded) tapped time.
     @State private var placement: PlacementContext?
@@ -107,17 +116,37 @@ struct TasksTabView: View {
     /// events (no dueDate and no specificTime) have no day of their own, so
     /// they're parked under today — their "needs a time and date" chip stays
     /// visible at the top of the list instead of vanishing, the same surfacing
-    /// the old flat list gave them.
-    private var eventDayGroups: [EventDayGroup] {
+    /// the old flat list gave them. Takes the event list as a parameter so
+    /// each Events-tab lens groups its own subset the same way.
+    private func eventDayGroups(for events: [NudgeTask]) -> [EventDayGroup] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        let byDay = Dictionary(grouping: eventItems) { event -> Date in
+        let byDay = Dictionary(grouping: events) { event -> Date in
             guard let anchor = event.specificTime ?? event.dueDate else { return today }
             return cal.startOfDay(for: anchor)
         }
         return byDay
             .map { EventDayGroup(day: $0.key, events: $0.value.sorted(by: Self.eventsWithinDayOrder)) }
             .sorted { $0.day < $1.day }
+    }
+
+    /// "This week" lens: events whose day falls within the next 7 days.
+    /// No lower bound — a past-day incomplete event stays visible here
+    /// rather than vanishing. Dateless events pass (they park under today).
+    private var thisWeekEvents: [NudgeTask] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        guard let horizon = cal.date(byAdding: .day, value: 7, to: today) else { return eventItems }
+        return eventItems.filter { event in
+            guard let anchor = event.specificTime ?? event.dueDate else { return true }
+            return cal.startOfDay(for: anchor) <= horizon
+        }
+    }
+
+    /// "Important" lens: high-stakes events, any date. Same data as This
+    /// week, different lens — stakes is the one importance signal.
+    private var importantEvents: [NudgeTask] {
+        eventItems.filter { $0.stakes == .high }
     }
 
     /// Within a day: untimed / "needs a time" events sort to the top, then
@@ -153,16 +182,6 @@ struct TasksTabView: View {
     /// `nonisolated` for the same reason as `eventsWithinDayOrder`: pure.
     private nonisolated static func normalizedEventTitle(_ title: String) -> String {
         title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    /// The first `eventsExpandedDays` day-groups — always shown.
-    private var expandedEventDays: [EventDayGroup] {
-        Array(eventDayGroups.prefix(NudgeConfig.eventsExpandedDays))
-    }
-
-    /// Day-groups past the expanded window — hidden behind "Show N more days".
-    private var collapsedEventDays: [EventDayGroup] {
-        Array(eventDayGroups.dropFirst(NudgeConfig.eventsExpandedDays))
     }
 
     /// Header for a day-group: "Today · Friday", "Tomorrow · Saturday", then
@@ -214,9 +233,16 @@ struct TasksTabView: View {
             .sorted { comparator.compare($0, $1) }
     }
 
-    /// Open tasks not yet placed on today's timeline.
+    /// Open tasks not on today's timeline: unplaced, OR placed on some other
+    /// day. Including stale (non-today) placements keeps such a task visible
+    /// in a list instead of belonging to no section — the vanishing-task
+    /// shape. The rollover sweep that clears stale placements is still a
+    /// separate roadmap item; this is presentation only.
     private var unscheduledTasks: [NudgeTask] {
-        sortedTasks.filter { $0.plannedStartDate == nil }
+        sortedTasks.filter { task in
+            guard let p = task.plannedStartDate else { return true }
+            return !Calendar.current.isDateInToday(p)
+        }
     }
 
     /// Open tasks placed on today's timeline. Kept in the list (in addition
@@ -242,19 +268,14 @@ struct TasksTabView: View {
         actionableTasks.filter { !$0.isComplete }.count
     }
 
-    /// Monday 00:00 of the current calendar week.
+    /// Monday 00:00 of the current calendar week. Still needed after the
+    /// "Completed (N)" control's removal: `purgeOldCompletedRecords` keys
+    /// its cutoff on this.
     private var weekStart: Date {
         var calendar = Calendar.current
         calendar.firstWeekday = 2 // Monday
         let comps = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())
         return calendar.date(from: comps) ?? Calendar.current.startOfDay(for: Date())
-    }
-
-    /// CompletedTaskRecord rows from this week, newest at top.
-    private var thisWeekCompleted: [CompletedTaskRecord] {
-        completedRecords
-            .filter { $0.completedAt >= weekStart }
-            .sorted { $0.completedAt > $1.completedAt }
     }
 
     var body: some View {
@@ -352,9 +373,9 @@ struct TasksTabView: View {
                     onCompleteTask: { toggleCompletion(for: $0) }
                 )
                 startSessionButton
-                completedButton
-                tasksContent
+                listTabStrip
                     .padding(.top, 8)
+                selectedTabContent
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -475,10 +496,6 @@ struct TasksTabView: View {
                 }
             )
             .presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: $showCompletedSheet) {
-            WeeklyCompletedSheet(records: thisWeekCompleted)
-                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: idleSheetIsPresented) {
             if let task = idleProposedTask {
@@ -632,10 +649,10 @@ struct TasksTabView: View {
 
     /// Ordered "Today's plan" — a numbered, long-press-reorderable list.
     /// Uses a scroll-disabled List so SwiftUI's `.onMove` gives native drag
-    /// reordering while still living inside the tab's ScrollView.
+    /// reordering while still living inside the tab's ScrollView. No section
+    /// label since the Today tab IS the label; the numbers mark the plan rows.
     private var planSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("Today's plan")
             List {
                 ForEach(planTasks, id: \.id) { task in
                     HStack(alignment: .center, spacing: 10) {
@@ -680,90 +697,340 @@ struct TasksTabView: View {
         refreshNotifications()
     }
 
-    private var tasksContent: some View {
-        Group {
-            if sortedTasks.isEmpty && eventItems.isEmpty && !hasActivePlan {
+    // MARK: - List tabs (below Start Session)
+
+    /// The four one-at-a-time lists below Start Session. Raw value is the
+    /// tab label.
+    private enum TaskListTab: String, CaseIterable {
+        case unscheduled = "Unscheduled"
+        case today = "Today"
+        case events = "Events"
+        case overdue = "Overdue"
+    }
+
+    /// The Events tab's two lenses over the same event data.
+    private enum EventLens: String, CaseIterable {
+        case thisWeek = "This week"
+        case important = "Important"
+    }
+
+    /// Overdue tab membership: past due, open, excluding deliberately
+    /// low-stakes tasks — the same rule as the row treatment (nil stakes is
+    /// not low, so unclassified tasks still count). Includes plan tasks so
+    /// the badge count never understates.
+    private var overdueTasks: [NudgeTask] {
+        let comparator = TaskSortComparator()
+        return actionableTasks
+            .filter { !$0.isComplete && $0.isOverdue && $0.stakes != .low }
+            .sorted { comparator.compare($0, $1) }
+    }
+
+    private var listTabStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(TaskListTab.allCases, id: \.self) { tab in
+                    listTabChip(tab)
+                }
+            }
+        }
+    }
+
+    /// One tab chip. The Overdue tab renders in `NudgeTheme.overdue` red —
+    /// with a count badge — only while something is actually overdue; at
+    /// zero it drops to the standard chip colors, because red with nothing
+    /// behind it is alarm without cause.
+    private func listTabChip(_ tab: TaskListTab) -> some View {
+        let isSelected = selectedListTab == tab
+        let overdueCount = overdueTasks.count
+        let isRed = tab == .overdue && overdueCount > 0
+        let textColor: Color = isSelected ? .white : (isRed ? NudgeTheme.overdue : NudgeTheme.textPrimary)
+        let background: Color = isSelected
+            ? (isRed ? NudgeTheme.overdue : NudgeTheme.primary)
+            : NudgeTheme.surfaceAlt
+        return Button {
+            NudgeHaptics.light()
+            withAnimation(NudgeAnimation.standard) { selectedListTab = tab }
+        } label: {
+            HStack(spacing: 6) {
+                Text(tab.rawValue)
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                if isRed {
+                    Text("\(overdueCount)")
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 11))
+                        .foregroundColor(isSelected ? NudgeTheme.overdue : .white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(isSelected ? Color.white : NudgeTheme.overdue)
+                        .clipShape(Capsule())
+                }
+            }
+            .foregroundColor(textColor)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(background)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var selectedTabContent: some View {
+        switch selectedListTab {
+        case .unscheduled: unscheduledTab
+        case .today:       todayTab
+        case .events:      eventsTab
+        case .overdue:     overdueTab
+        }
+    }
+
+    /// The shared task row wiring, used by every tab that renders task rows.
+    private func taskRow(_ task: NudgeTask) -> some View {
+        TaskRowView(
+            task: task,
+            isLastIncompleteTask: incompleteCount == 1 && !task.isComplete,
+            onOpen: { activeSheet = .edit(taskID: task.id) },
+            onToggleComplete: { toggleCompletion(for: task) },
+            onDelete: { deleteTask(task) },
+            onConvertToEvent: { setEventFlag(task, isEvent: true) }
+        )
+    }
+
+    /// Quiet one-line empty state for a tab whose list has nothing in it.
+    private func tabEmptyLine(_ text: String) -> some View {
+        Text(text)
+            .font(.custom(NudgeTheme.fontBody, size: 14))
+            .foregroundColor(NudgeTheme.textMuted)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 32)
+    }
+
+    // MARK: Unscheduled tab (with per-exam prep collapsing)
+
+    /// A row in the Unscheduled tab: a plain task, or an exam's prep tasks
+    /// folded into one group (visible head + collapsible rest).
+    private enum UnscheduledItem: Identifiable {
+        case task(NudgeTask)
+        case prepGroup(examId: String, head: NudgeTask, rest: [NudgeTask])
+
+        var id: String {
+            switch self {
+            case .task(let task):              return task.id.uuidString
+            case .prepGroup(let examId, _, _): return "prep-\(examId)"
+            }
+        }
+    }
+
+    /// Unscheduled rows with prep tasks grouped per exam. The list is
+    /// comparator-sorted, so each exam's head is its nearest study day —
+    /// today's, whenever the sweep is current — sitting at that task's
+    /// natural sort position; the exam's remaining days collapse behind one
+    /// "Show N more" control (the Events section's collapse idiom).
+    private var unscheduledItems: [UnscheduledItem] {
+        let listed = unscheduledTasks
+        let prepByExam = Dictionary(
+            grouping: listed.filter { $0.source == "prep" && $0.linkedEventId != nil },
+            by: { $0.linkedEventId ?? "" }
+        )
+        var seenExams = Set<String>()
+        var items: [UnscheduledItem] = []
+        for task in listed {
+            if task.source == "prep", let examId = task.linkedEventId {
+                guard seenExams.insert(examId).inserted else { continue }
+                let group = prepByExam[examId] ?? [task]
+                items.append(.prepGroup(
+                    examId: examId,
+                    head: group[0],
+                    rest: Array(group.dropFirst())
+                ))
+            } else {
+                items.append(.task(task))
+            }
+        }
+        return items
+    }
+
+    @ViewBuilder
+    private var unscheduledTab: some View {
+        if unscheduledTasks.isEmpty {
+            if incompleteCount == 0 && eventItems.isEmpty && !hasActivePlan {
                 emptyState
             } else {
-                VStack(alignment: .leading, spacing: 20) {
-                    if hasActivePlan {
-                        planSection
-                    }
-
-                    if !unscheduledTasks.isEmpty {
-                        sectionLabel("Unscheduled")
-
-                        VStack(spacing: 12) {
-                            ForEach(unscheduledTasks, id: \.id) { task in
-                                TaskRowView(
-                                    task: task,
-                                    isLastIncompleteTask: incompleteCount == 1 && !task.isComplete,
-                                    onOpen: { activeSheet = .edit(taskID: task.id) },
-                                    onToggleComplete: { toggleCompletion(for: task) },
-                                    onDelete: { deleteTask(task) },
-                                    onConvertToEvent: { setEventFlag(task, isEvent: true) }
-                                )
+                tabEmptyLine("Nothing unscheduled.")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(unscheduledItems) { item in
+                    switch item {
+                    case .task(let task):
+                        taskRow(task)
+                    case .prepGroup(let examId, let head, let rest):
+                        taskRow(head)
+                        if !rest.isEmpty {
+                            if expandedPrepExams.contains(examId) {
+                                ForEach(rest, id: \.id) { taskRow($0) }
                             }
-                        }
-                    }
-
-                    if !scheduledTasks.isEmpty {
-                        sectionLabel("Scheduled")
-
-                        VStack(spacing: 12) {
-                            ForEach(scheduledTasks, id: \.id) { task in
-                                TaskRowView(
-                                    task: task,
-                                    isLastIncompleteTask: incompleteCount == 1 && !task.isComplete,
-                                    onOpen: { activeSheet = .edit(taskID: task.id) },
-                                    onToggleComplete: { toggleCompletion(for: task) },
-                                    onDelete: { deleteTask(task) },
-                                    onConvertToEvent: { setEventFlag(task, isEvent: true) }
-                                )
-                            }
-                        }
-                    }
-
-                    if !eventDayGroups.isEmpty {
-                        sectionLabel("Events")
-
-                        // Computed once per render, not once per row — the
-                        // repeat count scans every event.
-                        let routineTitles = routineRepeatedTitles
-
-                        VStack(alignment: .leading, spacing: 20) {
-                            ForEach(expandedEventDays) { group in
-                                eventDaySection(group, routineTitles: routineTitles)
-                            }
-
-                            if showAllEventDays {
-                                ForEach(collapsedEventDays) { group in
-                                    eventDaySection(group, routineTitles: routineTitles)
-                                }
-                            }
-
-                            if !collapsedEventDays.isEmpty {
-                                Button {
-                                    NudgeHaptics.light()
-                                    withAnimation(NudgeAnimation.standard) {
-                                        showAllEventDays.toggle()
-                                    }
-                                } label: {
-                                    Text(showAllEventDays
-                                         ? "Show fewer days"
-                                         : "Show \(collapsedEventDays.count) more day\(collapsedEventDays.count == 1 ? "" : "s")")
-                                        .font(.custom(NudgeTheme.fontMedium, size: 14))
-                                        .foregroundColor(NudgeTheme.primary)
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 44)
-                                        .background(NudgeTheme.surfaceAlt)
-                                        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
-                                }
-                                .buttonStyle(.plain)
-                            }
+                            prepToggleButton(examId: examId, hiddenCount: rest.count)
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Per-exam "Show N more" control — same styling as the Events tab's
+    /// show-more-days button, one idiom for both collapses.
+    private func prepToggleButton(examId: String, hiddenCount: Int) -> some View {
+        let isExpanded = expandedPrepExams.contains(examId)
+        return Button {
+            NudgeHaptics.light()
+            withAnimation(NudgeAnimation.standard) {
+                if isExpanded {
+                    expandedPrepExams.remove(examId)
+                } else {
+                    expandedPrepExams.insert(examId)
+                }
+            }
+        } label: {
+            Text(isExpanded
+                 ? "Show fewer study days"
+                 : "Show \(hiddenCount) more study day\(hiddenCount == 1 ? "" : "s")")
+                .font(.custom(NudgeTheme.fontMedium, size: 14))
+                .foregroundColor(NudgeTheme.primary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .background(NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Today tab
+
+    /// One notion of "today": the ordered plan (numbered, drag-reorderable)
+    /// followed by tasks placed on today's timeline. The two never overlap —
+    /// `scheduledTasks` derives from `sortedTasks`, which excludes plan
+    /// tasks. Empty state is the Plan my day button, nothing else.
+    @ViewBuilder
+    private var todayTab: some View {
+        if !hasActivePlan && scheduledTasks.isEmpty {
+            Button {
+                planMyDay()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Plan my day")
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(NudgeTheme.primary)
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+        } else {
+            VStack(alignment: .leading, spacing: 20) {
+                if hasActivePlan {
+                    planSection
+                }
+                if !scheduledTasks.isEmpty {
+                    VStack(spacing: 12) {
+                        ForEach(scheduledTasks, id: \.id) { taskRow($0) }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Events tab
+
+    @ViewBuilder
+    private var eventsTab: some View {
+        let lensEvents = eventLens == .thisWeek ? thisWeekEvents : importantEvents
+        let groups = eventDayGroups(for: lensEvents)
+        VStack(alignment: .leading, spacing: 16) {
+            eventLensPicker
+            if groups.isEmpty {
+                tabEmptyLine(eventLens == .thisWeek
+                             ? "No events in the next 7 days."
+                             : "No high-stakes events.")
+            } else {
+                // Computed once per render, not once per row — the repeat
+                // count scans every event. Deliberately counted over ALL
+                // events (both lenses), the population the routine rule was
+                // validated against.
+                let routineTitles = routineRepeatedTitles
+                let expandedGroups = Array(groups.prefix(NudgeConfig.eventsExpandedDays))
+                let collapsedGroups = Array(groups.dropFirst(NudgeConfig.eventsExpandedDays))
+                VStack(alignment: .leading, spacing: 20) {
+                    ForEach(expandedGroups) { group in
+                        eventDaySection(group, routineTitles: routineTitles)
+                    }
+
+                    if showAllEventDays {
+                        ForEach(collapsedGroups) { group in
+                            eventDaySection(group, routineTitles: routineTitles)
+                        }
+                    }
+
+                    if !collapsedGroups.isEmpty {
+                        Button {
+                            NudgeHaptics.light()
+                            withAnimation(NudgeAnimation.standard) {
+                                showAllEventDays.toggle()
+                            }
+                        } label: {
+                            Text(showAllEventDays
+                                 ? "Show fewer days"
+                                 : "Show \(collapsedGroups.count) more day\(collapsedGroups.count == 1 ? "" : "s")")
+                                .font(.custom(NudgeTheme.fontMedium, size: 14))
+                                .foregroundColor(NudgeTheme.primary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(NudgeTheme.surfaceAlt)
+                                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var eventLensPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(EventLens.allCases, id: \.self) { lens in
+                let isSelected = eventLens == lens
+                Button {
+                    NudgeHaptics.light()
+                    withAnimation(NudgeAnimation.standard) { eventLens = lens }
+                } label: {
+                    Text(lens.rawValue)
+                        .font(.custom(NudgeTheme.fontMedium, size: 12))
+                        .foregroundColor(isSelected ? .white : NudgeTheme.textPrimary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(isSelected ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+    }
+
+    // MARK: Overdue tab
+
+    @ViewBuilder
+    private var overdueTab: some View {
+        if overdueTasks.isEmpty {
+            tabEmptyLine("Nothing overdue.")
+        } else {
+            VStack(spacing: 12) {
+                ForEach(overdueTasks, id: \.id) { taskRow($0) }
             }
         }
     }
@@ -851,32 +1118,6 @@ struct TasksTabView: View {
                 }
                 .buttonStyle(.plain)
             }
-        }
-    }
-
-    private var completedButton: some View {
-        HStack {
-            Spacer()
-            Button(action: {
-                NudgeHaptics.light()
-                showCompletedSheet = true
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Completed (\(thisWeekCompleted.count))")
-                        .font(.custom(NudgeTheme.fontSemiBold, size: 13))
-                }
-                .foregroundColor(NudgeTheme.primary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(NudgeTheme.primary.opacity(0.12))
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule().stroke(NudgeTheme.primary.opacity(0.25), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -2392,102 +2633,9 @@ struct SessionTaskPickerSheet: View {
     }
 }
 
-// MARK: - Completed Tasks Sheet
-
-struct WeeklyCompletedSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let records: [CompletedTaskRecord]
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if records.isEmpty {
-                        emptyState
-                    } else {
-                        Text("\(records.count) task\(records.count == 1 ? "" : "s") completed this week")
-                            .font(.custom(NudgeTheme.fontBody, size: 13))
-                            .foregroundColor(NudgeTheme.textMuted)
-                            .padding(.bottom, 4)
-
-                        ForEach(records, id: \.id) { record in
-                            recordRow(record)
-                        }
-                    }
-                }
-                .padding(20)
-            }
-            .background(NudgeTheme.background)
-            .navigationTitle("Completed This Week")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "checkmark.seal")
-                .font(.system(size: 36))
-                .foregroundColor(NudgeTheme.textMuted)
-
-            Text("No tasks completed yet")
-                .font(.custom(NudgeTheme.fontSemiBold, size: 17))
-                .foregroundColor(NudgeTheme.textPrimary)
-
-            Text("Tasks you check off this week will appear here.")
-                .font(.custom(NudgeTheme.fontBody, size: 13))
-                .foregroundColor(NudgeTheme.textMuted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-    }
-
-    private func recordRow(_ record: CompletedTaskRecord) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(NudgeTheme.primary)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(record.title)
-                    .font(.custom(NudgeTheme.fontSemiBold, size: 15))
-                    .foregroundColor(NudgeTheme.textPrimary)
-
-                Text(timestampLabel(for: record.completedAt))
-                    .font(.custom(NudgeTheme.fontBody, size: 12))
-                    .foregroundColor(NudgeTheme.textMuted)
-            }
-
-            Spacer()
-        }
-        .padding(14)
-        .background(NudgeTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
-        .overlay(
-            RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
-                .stroke(NudgeTheme.border, lineWidth: 1)
-        )
-    }
-
-    private func timestampLabel(for date: Date) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            return "Today, \(date.formatted(date: .omitted, time: .shortened))"
-        }
-        if calendar.isDateInYesterday(date) {
-            return "Yesterday, \(date.formatted(date: .omitted, time: .shortened))"
-        }
-        let weekdayFmt = DateFormatter()
-        weekdayFmt.dateFormat = "EEEE 'at' h:mm a"
-        return weekdayFmt.string(from: date)
-    }
-}
+// `WeeklyCompletedSheet` and the "Completed (N)" control were removed
+// (cycle 2026-08-01-05): completed tasks are recorded and browsable in the
+// Stats tab; the Tasks tab shows only what still needs doing.
 
 // MARK: - Supporting Types
 
