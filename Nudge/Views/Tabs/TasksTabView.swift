@@ -1360,7 +1360,18 @@ struct TasksTabView: View {
         let dayEnd = bedToday.addingTimeInterval(-60 * 60)
         // Don't place in the past.
         let scanStart = max(dayStart, Date())
-        guard dayEnd > scanStart else { return }
+        #if DEBUG
+        print("🧭 [PlanMyDay] invoked \(Date().formatted(date: .abbreviated, time: .shortened))")
+        print("   window: wake+30 \(Self.traceTime(dayStart)) → bed−60 \(Self.traceTime(dayEnd)), scan from \(Self.traceTime(scanStart))")
+        #endif
+        guard dayEnd > scanStart else {
+            #if DEBUG
+            print("   ❌ EMPTY WINDOW — dayEnd ≤ scanStart. SILENT return: no haptic, no message, nothing placed.")
+            print("      A midnight-or-later bedtime collapses this window permanently (bed−60 lands at or before")
+            print("      the same day's start); a tap after bed−60 collapses it until tomorrow morning.")
+            #endif
+            return
+        }
 
         // Occupied intervals: event busy windows (already include 15-min tail
         // + merges) plus any existing placements (auto or manual) so we fill
@@ -1384,6 +1395,10 @@ struct TasksTabView: View {
             busy.append((start.addingTimeInterval(-preEventBuffer), start))
         }
 
+        #if DEBUG
+        debugPrintBusyAndGaps(busy: busy, scanStart: scanStart, dayEnd: dayEnd)
+        #endif
+
         // Candidates: open, non-event, not already placed. Ranked by score.
         // Explicit "Plan my day" DOES place plan tasks. Plan tasks go first,
         // in the user's stated sequenceIndex order (their order outranks
@@ -1400,19 +1415,55 @@ struct TasksTabView: View {
             .sorted { planScore(for: $0) > planScore(for: $1) }
         let candidates = planCandidates + scoredCandidates
 
+        #if DEBUG
+        print("   candidates (open, non-event, unplaced) — \(candidates.count):")
+        for task in planCandidates {
+            print("      • \(task.title) — plan #\(task.sequenceIndex ?? 0), \(planningMinutes(for: task))m")
+        }
+        for task in scoredCandidates {
+            let score = String(format: "%.2f", planScore(for: task))
+            let prep = task.source == "prep" ? " [prep]" : ""
+            print("      • \(task.title) — score \(score), \(planningMinutes(for: task))m\(prep)")
+        }
+        for task in tasks where !task.isInformationalEvent && !candidates.contains(where: { $0.id == task.id }) {
+            let reason: String
+            if task.isComplete {
+                reason = "complete"
+            } else if let p = task.plannedStartDate {
+                reason = "already placed \(p.formatted(date: .abbreviated, time: .shortened)) (\(task.plannedIsAuto ? "auto" : "manual"))"
+            } else {
+                reason = "unexpected — open, unplaced, yet not a candidate"
+            }
+            print("      ◦ excluded: \(task.title) — \(reason)")
+        }
+        #endif
+
         let spacing: TimeInterval = 15 * 60
         var placedCount = 0
 
         for task in candidates {
-            guard placedCount < 4 else { break }
+            guard placedCount < 4 else {
+                #if DEBUG
+                print("   cap reached (4 placed) — remaining candidates not attempted")
+                #endif
+                break
+            }
             let duration = TimeInterval(planningMinutes(for: task) * 60)
             guard let start = earliestGapStart(
                 fitting: duration,
                 busy: busy,
                 from: scanStart,
                 to: dayEnd
-            ) else { continue }
+            ) else {
+                #if DEBUG
+                print("   ✗ \(task.title) (\(Int(duration / 60))m) — no gap fits")
+                #endif
+                continue
+            }
 
+            #if DEBUG
+            print("   ✓ \(task.title) (\(Int(duration / 60))m) → placed \(Self.traceTime(start))")
+            #endif
             task.plannedStartDate = start
             task.plannedDurationMinutes = planningMinutes(for: task)
             task.plannedIsAuto = true
@@ -1422,9 +1473,15 @@ struct TasksTabView: View {
         }
 
         guard placedCount > 0 else {
+            #if DEBUG
+            print("   result: placed 0 of \(candidates.count) candidate(s) → error haptic only — reads as a dead button")
+            #endif
             NudgeHaptics.error()
             return
         }
+        #if DEBUG
+        print("   result: placed \(placedCount) of \(candidates.count) candidate(s) → success haptic; rows now in Today tab + timeline")
+        #endif
         withAnimation(NudgeAnimation.standard) { }
         try? modelContext.save()
         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -1462,6 +1519,50 @@ struct TasksTabView: View {
         }
         return nil
     }
+
+    #if DEBUG
+    /// Item-1 diagnosis trace (cycle 2026-08-02-01, read-only): prints the
+    /// merged busy intervals and the free gaps `planMyDay()` will scan, so a
+    /// zero-placement run shows WHY. Merge logic mirrors the resolver's
+    /// overlap rule but exists only for this printout.
+    private nonisolated static func traceTime(_ d: Date) -> String {
+        d.formatted(date: .omitted, time: .shortened)
+    }
+
+    private func debugPrintBusyAndGaps(
+        busy: [(start: Date, end: Date)],
+        scanStart: Date,
+        dayEnd: Date
+    ) {
+        let sorted = busy.sorted { $0.start < $1.start }
+        var merged: [(start: Date, end: Date)] = []
+        for interval in sorted {
+            if let last = merged.last, interval.start <= last.end {
+                merged[merged.count - 1].end = max(last.end, interval.end)
+            } else {
+                merged.append(interval)
+            }
+        }
+        print("   busy — \(busy.count) raw interval(s) (event durations + placements + 1h pre-event buffers), \(merged.count) merged:")
+        for w in merged {
+            print("      • \(Self.traceTime(w.start))–\(Self.traceTime(w.end))")
+        }
+        var gaps: [(start: Date, end: Date)] = []
+        var cursor = scanStart
+        for w in merged {
+            if w.start > cursor { gaps.append((cursor, min(w.start, dayEnd))) }
+            cursor = max(cursor, w.end)
+            if cursor >= dayEnd { break }
+        }
+        if cursor < dayEnd { gaps.append((cursor, dayEnd)) }
+        let real = gaps.filter { $0.end > $0.start }
+        print("   free gaps in scan window:")
+        if real.isEmpty { print("      (none — nothing can place regardless of candidates)") }
+        for g in real {
+            print("      • \(Self.traceTime(g.start))–\(Self.traceTime(g.end)) (\(Int(g.end.timeIntervalSince(g.start) / 60))m)")
+        }
+    }
+    #endif
 
     /// Runs the AI refine (Pro/trial only). A button tap is an explicit ask,
     /// so `force: true`. Shows the returned rationale above the timeline.
