@@ -154,12 +154,13 @@ struct SettingsTabView: View {
                 // Debug builds only — stripped from Release. Nothing in the
                 // shipping app writes `isPro` or `trialStartDate` yet, so the
                 // `isPro || isInTrial` gate on AI Refine (DayPlanRefiner,
-                // TasksTabView, HomeTabView) is unreachable without these.
-                // Remove once real entitlement logic exists.
+                // reachable via Home chat's plan intent only since cycle
+                // 2026-08-02-01 removed the Tasks-tab button) is unreachable
+                // without these. Remove once real entitlement logic exists.
                 settingsSection(title: "Debug — entitlements") {
                     toggleSettingsRow(
                         title: "Pro access",
-                        subtitle: "Sets profile.isPro. Unlocks AI Refine in the Tasks tab and “plan my day” in Home chat.",
+                        subtitle: "Sets profile.isPro. Unlocks AI “plan my day” in Home chat.",
                         isOn: $profile.isPro
                     )
                     toggleSettingsRow(

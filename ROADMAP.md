@@ -55,7 +55,7 @@ before it starts — these are all user-facing.
 - Batched AI classification for calendar imports — *blocked: nothing.*
 - AI policy-setter: reads outcome data daily, writes timing parameters the arbiter executes — *blocked: outcome data (section 1); the arbiter still executes deterministically, which is what keeps this within the design rule.*
 - Time-shift before backoff; per-kind strike rates rather than streaks — *blocked: outcome data (section 1).*
-- Retire AI Refine as a button — deterministic planner always runs, AI advises — *blocked: nothing.*
+- ~~Retire AI Refine as a button — deterministic planner always runs, AI advises~~ — **done** (cycle 2026-08-02-01): Tasks-tab button removed; `DayPlanRefiner` and its Pro gate stay, reachable via Home chat's plan intent; the rationale still surfaces through the Tasks message box.
 - Onboarding: semester dates asked once; more conversational — *blocked: nothing.*
 - Weekly prompted capture for week-by-week professors — *blocked: nothing.*
 - Three pigeon mascots (nudges, brain dump, tasks-tab chat) — *blocked: assets.*

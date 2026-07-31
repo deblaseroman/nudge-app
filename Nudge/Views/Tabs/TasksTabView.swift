@@ -42,9 +42,11 @@ struct TasksTabView: View {
     /// When "New task" is chosen from the placement sheet, the created task
     /// should land at this time. Consumed by the create editor's onSave.
     @State private var pendingPlacementTime: Date?
-    /// AI day-plan rationale shown above the timeline (from DayPlanRefiner).
+    /// AI day-plan rationale surfaced through the message box. The Tasks-tab
+    /// Refine button is gone (cycle 2026-08-02-01); this is still fed by
+    /// `DayPlanRefiner.todaysRationale()` on appear, produced by the Home
+    /// chat plan-intent flow (Pro/trial gated).
     @State private var refineRationale: String?
-    @State private var isRefining = false
     #if DEBUG
     @State private var showDeleteAllAlert = false
     #endif
@@ -315,29 +317,6 @@ struct TasksTabView: View {
                                 .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                    }
-                    if profile.isPro || profile.isInTrial {
-                        Button {
-                            refineWithAI()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if isRefining {
-                                    ProgressView().scaleEffect(0.7)
-                                } else {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 12, weight: .semibold))
-                                }
-                                Text("Refine")
-                                    .font(.custom(NudgeTheme.fontSemiBold, size: 13))
-                            }
-                            .foregroundColor(NudgeTheme.primary)
-                            .padding(.horizontal, 12)
-                            .frame(height: 34)
-                            .background(NudgeTheme.primary.opacity(0.12))
-                            .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isRefining)
                     }
                     Button {
                         planMyDay()
@@ -1563,29 +1542,6 @@ struct TasksTabView: View {
         }
     }
     #endif
-
-    /// Runs the AI refine (Pro/trial only). A button tap is an explicit ask,
-    /// so `force: true`. Shows the returned rationale above the timeline.
-    private func refineWithAI() {
-        guard !isRefining else { return }
-        isRefining = true
-        Task { @MainActor in
-            let outcome = await DayPlanRefiner.shared.refine(
-                profile: profile,
-                modelContext: modelContext,
-                force: true
-            )
-            isRefining = false
-            switch outcome {
-            case .success(let r), .cached(let r):
-                refineRationale = r
-            case .noTasks:
-                NudgeHaptics.error()
-            case .notEntitled, .failed:
-                NudgeHaptics.error()
-            }
-        }
-    }
 
     /// Removes only auto (Plan my day) placements from today; keeps manual
     /// ones.
