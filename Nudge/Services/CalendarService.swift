@@ -135,16 +135,24 @@ final class CalendarService {
 
     /// App Group UserDefaults key tracking the latest date we've fetched
     /// calendar events through. Used by `refreshRollingWindow` to incrementally
-    /// extend the window week by week.
+    /// extend the window day by day.
     static let calendarSyncedThroughKey = "nudge.calendarSyncedThrough"
     private static let appGroupID = "group.com.deblaser.nudge"
 
     /// Re-runs Apple Calendar import to maintain a rolling 3-week future window.
     ///
     /// - On first call (`syncedThrough == nil`): imports today → today + 21 days.
-    /// - On subsequent calls: only re-imports if at least 7 days have elapsed
-    ///   since the last sync, then extends the window to today + 21 days.
-    /// Skipping the import when no week has elapsed avoids redundant work.
+    /// - On subsequent calls: re-imports once the synced-through edge has
+    ///   fallen at least a day behind today + 21, importing only the missing
+    ///   tail slice (genuinely incremental — `start` is the old edge).
+    ///
+    /// Daily, not weekly (cycle 2026-08-02-01): the weekly cadence let the
+    /// visible horizon decay from 21 to 14 days between refreshes, and 14 is
+    /// exactly the prep sweep's maximum lead band — an exam near the far edge
+    /// could enter its lead window while still un-imported, starting prep
+    /// late on the exams needing the longest runway. Extending one day per
+    /// day pins the horizon at 21; same-day repeat calls still skip (the
+    /// guard is 0 until midnight passes).
     @discardableResult
     func refreshRollingWindow(
         modelContext: ModelContext,
@@ -159,9 +167,9 @@ final class CalendarService {
 
         let start: Date
         if let syncedThrough {
-            // Only run if a full week has passed since the last sync.
+            // Only run once the edge is at least a day short of the target.
             let daysSinceSync = calendar.dateComponents([.day], from: syncedThrough, to: target).day ?? 0
-            guard daysSinceSync >= 7 else { return nil }
+            guard daysSinceSync >= 1 else { return nil }
             // Begin from where we last left off (or today if that's in the past).
             start = max(now, syncedThrough)
         } else {
