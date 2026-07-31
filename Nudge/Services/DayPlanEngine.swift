@@ -127,8 +127,20 @@ enum DayPlanEngine {
         // (their order outranks Eisenhower score); non-plan tasks follow,
         // by score. A placed plan task keeps its number in Today's plan AND
         // shows on the timeline.
-        let openUnplaced = tasks.filter {
-            !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate == nil
+        //
+        // A prep task is a candidate ONLY on its own study day (cycle
+        // 2026-08-02-03): the sweep already spread the work across days,
+        // and exam-category scoring let tomorrow's block win today's gaps,
+        // un-spreading it. Prep is the one source whose dates ARE the
+        // plan; ordinary dated tasks stay eligible early on purpose —
+        // working ahead of a deadline is the point of planning.
+        let openUnplaced = tasks.filter { task in
+            guard !task.isComplete, !task.isInformationalEvent,
+                  task.plannedStartDate == nil else { return false }
+            if task.source == "prep" {
+                guard let due = task.dueDate, cal.isDateInToday(due) else { return false }
+            }
+            return true
         }
         let planCandidates = openUnplaced
             .filter { $0.sequenceIndex != nil }
@@ -154,6 +166,9 @@ enum DayPlanEngine {
                 reason = "complete"
             } else if let p = task.plannedStartDate {
                 reason = "already placed \(p.formatted(date: .abbreviated, time: .shortened)) (\(task.plannedIsAuto ? "auto" : "manual"))"
+            } else if task.source == "prep" {
+                let day = task.dueDate?.formatted(date: .abbreviated, time: .omitted) ?? "undated"
+                reason = "prep for another day (due \(day)) — places only on its own study day"
             } else {
                 reason = "unexpected — open, unplaced, yet not a candidate"
             }
