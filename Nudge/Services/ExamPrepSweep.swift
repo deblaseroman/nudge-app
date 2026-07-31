@@ -69,7 +69,7 @@ final class ExamPrepSweep {
 
     /// Tolerant read of a classifier-emitted lead value: only the coarse
     /// bands are valid, anything else is "the model didn't say".
-    nonisolated static func validLeadBand(_ value: Int?) -> Int? {
+    static func validLeadBand(_ value: Int?) -> Int? {
         guard let value, NudgeConfig.prepLeadBands.contains(value) else { return nil }
         return value
     }
@@ -96,7 +96,7 @@ final class ExamPrepSweep {
         let createStamps: [String]
     }
 
-    nonisolated static func decide(
+    static func decide(
         examTitle: String,
         examDay: Date,
         prepLeadDays: Int?,
@@ -162,7 +162,7 @@ final class ExamPrepSweep {
     /// Known misses, accepted for v1: nicknames ("orgo" for Organic
     /// Chemistry), synonyms without a study word ("go over chem notes"
     /// matches via "chem"; "go over notes" alone doesn't), misspellings.
-    nonisolated static func userStudyTaskMatch(examTitle: String, taskTitles: [String]) -> String? {
+    static func userStudyTaskMatch(examTitle: String, taskTitles: [String]) -> String? {
         let subject = subjectTokens(examTitle)
         let phrases = coursePhrases(examTitle)
         let studyWords = ["study", "review", "prep", "practice", "revise", "cram"]
@@ -179,7 +179,7 @@ final class ExamPrepSweep {
 
     /// Exam-title words that carry subject identity — everything minus the
     /// exam-shaped and glue words.
-    nonisolated static func subjectTokens(_ examTitle: String) -> Set<String> {
+    static func subjectTokens(_ examTitle: String) -> Set<String> {
         let stop: Set<String> = [
             "exam", "exams", "midterm", "final", "finals", "test", "quiz",
             "the", "a", "an", "of", "for", "on", "in", "my", "and", "to", "at"
@@ -189,7 +189,7 @@ final class ExamPrepSweep {
 
     /// Adjacent word+number pairs in the exam title — "chem 101",
     /// "bio 220" — the strongest deterministic identity a course has.
-    nonisolated static func coursePhrases(_ examTitle: String) -> [String] {
+    static func coursePhrases(_ examTitle: String) -> [String] {
         let tokens = normalize(examTitle)
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
@@ -203,18 +203,18 @@ final class ExamPrepSweep {
         return phrases
     }
 
-    nonisolated private static func normalize(_ text: String) -> String {
+    private static func normalize(_ text: String) -> String {
         text.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
     }
 
-    nonisolated private static func tokenSet(_ normalized: String) -> Set<String> {
+    private static func tokenSet(_ normalized: String) -> Set<String> {
         Set(normalized.components(separatedBy: " ").filter { $0.count >= 2 })
     }
 
-    nonisolated static func stamp(_ date: Date) -> String {
+    static func stamp(_ date: Date) -> String {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyyMMdd"
         fmt.locale = Locale(identifier: "en_US_POSIX")

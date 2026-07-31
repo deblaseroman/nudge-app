@@ -126,3 +126,15 @@
 - Should prep's copy ("Time to get ahead" / "…Start session 1 now?") be
   revised now that it is purely the start-early half? Left as-is — the plan
   scoped copy changes to due-soon.
+
+## Addendum (2026-07-31)
+
+The `clusterEvents` gap parameter's default value referenced
+`NudgeConfig.eventBlockGapHours` from a default-argument expression — a
+nonisolated autoclosure, which can't read the main-actor-isolated config
+under the app target's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. The
+compiler emits this as a WARNING in Swift 5 language mode (so the build
+passed and the item's error-grep missed it); Xcode surfaces it as an
+error, and it becomes one in Swift 6 mode. Replaced the default argument
+with a no-gap overload whose body reads the config in isolated context.
+Fixed in a follow-up commit on this branch.

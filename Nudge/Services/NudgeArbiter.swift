@@ -573,12 +573,19 @@ final class NudgeArbiter: NudgeArbitering {
     }
 
     /// Clusters (task, date) pairs into blocks by chained gap. Public-ish
-    /// (internal static) so it can be unit-tested. The default gap is the
-    /// event-block one; `buildDueSoonCandidates` reuses the same chaining
-    /// with `dueSoonBatchWindowMinutes` to batch same-hour deadlines.
+    /// (internal static) so it can be unit-tested. The no-gap overload uses
+    /// the event-block gap; `buildDueSoonCandidates` reuses the same
+    /// chaining with `dueSoonBatchWindowMinutes` to batch same-hour
+    /// deadlines. (An overload, not a default argument: a default-value
+    /// expression is a nonisolated autoclosure, so it can't read the
+    /// main-actor-isolated `NudgeConfig` — the overload's body can.)
+    static func clusterEvents(_ sorted: [(NudgeTask, Date)]) -> [[(NudgeTask, Date)]] {
+        clusterEvents(sorted, gapSeconds: NudgeConfig.eventBlockGapHours * 60 * 60)
+    }
+
     static func clusterEvents(
         _ sorted: [(NudgeTask, Date)],
-        gapSeconds: TimeInterval = NudgeConfig.eventBlockGapHours * 60 * 60
+        gapSeconds: TimeInterval
     ) -> [[(NudgeTask, Date)]] {
         guard !sorted.isEmpty else { return [] }
         var blocks: [[(NudgeTask, Date)]] = [[sorted[0]]]

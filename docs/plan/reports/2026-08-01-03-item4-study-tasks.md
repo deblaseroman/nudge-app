@@ -160,3 +160,20 @@
 
 - Should deleting an exam event cascade to its remaining prep tasks (and
   their tombstones)? Needs a product call before wiring.
+
+## Addendum (2026-07-31)
+
+The `nonisolated` markers on `ExamPrepSweep`'s pure helpers were both
+unnecessary and wrong: unnecessary because the app target compiles with
+`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so `ClaudeService` (the
+caller they were guarding) is main-actor-isolated anyway — and wrong
+because they made the helpers reference the now-main-actor-isolated
+`NudgeConfig` from nonisolated contexts. Warnings in Swift 5 mode
+(missed by the item's error-grep), errors in Xcode's editor and in Swift
+6 mode. Removed the markers; everything is uniformly main-actor. The
+fixture harness is unaffected (its scratch extraction carries no
+isolation). Fixed in a follow-up commit on this branch.
+
+Lesson recorded for future cycles: grep build output for `warning:` as
+well as `error:` — this project's Swift 5 language mode downgrades real
+isolation violations to warnings.
