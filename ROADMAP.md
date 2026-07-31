@@ -63,7 +63,7 @@ before it starts — these are all user-facing.
 ## 4 — UI and structure
 
 - ~~Tasks tab sections: Overdue → Today's plan → Open tasks → Events~~ — **superseded and done** (cycle 2026-08-01-05): replaced by the tab strip (Unscheduled / Today / Events / Overdue) below Start Session.
-- Vanishing-task bug: a task placed on a past day still carries a stale placement — needs a rollover sweep — *blocked: nothing; presentation half fixed by the tabs (a stale-placed task now shows in Unscheduled), so this is no longer data-loss-shaped, but the stale `plannedStartDate` remains until the sweep exists.*
+- ~~Vanishing-task bug~~ — **done, twice over** (correcting cycle 2026-08-01-05's report, which wrongly said the sweep didn't exist): `PlacementRollover` (batch 2026-07-30-02) clears past-day placements on launch/foreground, and the Unscheduled tab (2026-08-01-05) shows any stale placement that survives to render. Nothing outstanding.
 - Deleted-tasks section in Stats — *blocked: nothing.*
 - Stakes visuals on the widget (app only today) — *blocked: nothing.*
 

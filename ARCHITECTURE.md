@@ -290,7 +290,7 @@ reading.)
 - `Nudge/Models/CheckIn.swift` — Morning/evening check-in record.
 - `Nudge/Models/DailySession.swift` — Per-day brain-dump chat transcript (source for AI history).
 - `Nudge/Models/DailyStats.swift` — Per-day completion/activity counters for Stats.
-- `Nudge/Models/CompletedTaskRecord.swift` — Completed-task history (weekly) shown in Tasks/Stats.
+- `Nudge/Models/CompletedTaskRecord.swift` — Completed-task history (weekly) shown in Stats (the Tasks-tab "Completed (N)" control was removed in cycle 2026-08-01-05; the Tasks tab still writes records and purges pre-week rows on appear).
 - `Nudge/Models/EngagementState.swift` — Streaks, app-open counts, escalation level; written by `EngagementTracker`.
 - `Nudge/Models/NotificationEvent.swift` — Record of a notification lifecycle event (analytics/dedupe support).
 - `Nudge/Models/SentNotificationFlag.swift` — Marker preventing duplicate sends of the same notification.
