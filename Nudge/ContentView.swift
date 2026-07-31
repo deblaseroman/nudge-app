@@ -180,8 +180,14 @@ struct ContentView: View {
                 modelContext: modelContext
             )
 
-            // Extend the rolling calendar window when a week has passed.
-            // No-op if the user hasn't connected a calendar yet.
+            // Extend the rolling calendar window (daily; no-op without a
+            // connected calendar), THEN auto-plan the day. The auto-plan
+            // lives inside this Task, after the await, deliberately: it
+            // must see fresh events, and the sweeps above (rollover, exam
+            // prep) have already run synchronously in this branch — so the
+            // ordering is purge → rollover → prep sweep → calendar refresh
+            // → auto-plan, and the plan is never built against stale
+            // events or stale placements.
             //
             // Explicit @MainActor on the Task. `CalendarService` is
             // @MainActor and `modelContext` is bound to the main context;
@@ -190,9 +196,23 @@ struct ContentView: View {
             // *should* carry main isolation in from this SwiftUI closure
             // automatically, but being explicit removes any ambiguity
             // across Swift compiler versions / concurrency modes.
-            if profile.calendarSource == "Apple Calendar" {
-                Task { @MainActor in
+            Task { @MainActor in
+                if profile.calendarSource == "Apple Calendar" {
                     _ = await CalendarService.shared.refreshRollingWindow(
+                        modelContext: modelContext
+                    )
+                }
+                // First foreground of a new day → plan it (once; never
+                // touches manual placements; skips if a plan exists).
+                if let outcome = DayPlanEngine.autoPlanIfNewDay(
+                    profile: profile,
+                    modelContext: modelContext
+                ), case .placed = outcome {
+                    // Placements changed the store after the reevaluate
+                    // above — run the arbiter against the planned day.
+                    NudgeArbiter.shared.reevaluate(
+                        reason: .taskCreatedOrEdited,
+                        profile: profile,
                         modelContext: modelContext
                     )
                 }
