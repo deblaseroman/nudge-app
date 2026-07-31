@@ -60,6 +60,78 @@ struct TappedNudgeContext {
     }
 }
 
+/// The most recent Plan-my-day outcome from today — written by the planner
+/// (button now, morning auto-run when it exists), read back on the same
+/// App-Group-defaults pattern as `TappedNudgeContext`. Exists so no planner
+/// run can end silently: a refusal ("nothing to plan", "no room") is
+/// correct behavior, but correct-and-mute reads as a dead button (cycle
+/// 2026-08-02-01's diagnosis). Valid for the day it was written; a manual
+/// successful plan clears it (the placements ARE the feedback).
+struct PlanOutcomeContext {
+    enum Kind: String {
+        /// Tasks were placed by an automatic run — announce what happened.
+        case planned
+        /// Nothing open and unplaced to work with — a correct refusal.
+        case noCandidates
+        /// Candidates exist but no free gap fits any of them.
+        case noRoom
+        /// The planning window was empty (late-night tap, or a profile
+        /// whose sleep window is shorter than its quiet buffers). Backstop
+        /// — the wake-anchored `DayWindow` makes the all-day version of
+        /// this impossible on sane profiles.
+        case windowCollapsed
+    }
+
+    let kind: Kind
+    let placedCount: Int
+    let placedTitles: [String]
+    let isAuto: Bool
+    let date: Date
+
+    static let kindKey = "nudge.planOutcome.kind"
+    static let countKey = "nudge.planOutcome.count"
+    static let titlesKey = "nudge.planOutcome.titles"
+    static let autoKey = "nudge.planOutcome.auto"
+    static let dateKey = "nudge.planOutcome.date"
+
+    static func write(kind: Kind, placedCount: Int = 0, placedTitles: [String] = [], isAuto: Bool) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        defaults.set(kind.rawValue, forKey: kindKey)
+        defaults.set(placedCount, forKey: countKey)
+        defaults.set(placedTitles, forKey: titlesKey)
+        defaults.set(isAuto, forKey: autoKey)
+        defaults.set(Date(), forKey: dateKey)
+    }
+
+    static func clear() {
+        let defaults = SharedModelContainer.appGroupDefaults
+        for key in [kindKey, countKey, titlesKey, autoKey, dateKey] {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    /// Today's outcome, or nil (tidying the keys) once it's from a past day.
+    static func read(now: Date = Date()) -> PlanOutcomeContext? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard
+            let kindRaw = defaults.string(forKey: kindKey),
+            let kind = Kind(rawValue: kindRaw),
+            let date = defaults.object(forKey: dateKey) as? Date
+        else { return nil }
+        guard Calendar.current.isDate(date, inSameDayAs: now) else {
+            clear()
+            return nil
+        }
+        return PlanOutcomeContext(
+            kind: kind,
+            placedCount: defaults.integer(forKey: countKey),
+            placedTitles: (defaults.array(forKey: titlesKey) as? [String]) ?? [],
+            isAuto: defaults.bool(forKey: autoKey),
+            date: date
+        )
+    }
+}
+
 // MARK: - Composer (pure)
 
 /// Deterministic message selection. Priority order — first state that
@@ -92,6 +164,7 @@ enum TasksMessageComposer {
         aiMessage: TasksMessage? = nil,
         prepNote: PrepNoteContext? = nil,
         prepAnnouncement: PrepAnnouncementContext? = nil,
+        planOutcome: PlanOutcomeContext? = nil,
         now: Date
     ) -> TasksMessage {
         // ── AI SEAM (unused as of Aug 2026) ─────────────────────────────
@@ -178,6 +251,15 @@ enum TasksMessageComposer {
             )
         }
 
+        // 5.5 — today's Plan-my-day outcome (cycle 2026-08-02-02: a planner
+        // run must never end mute). Below the day's actionable facts and
+        // the one-time prep states, above the stable rationale and resting.
+        // Facts only, per DESIGN.md — a refusal states what IS, never a
+        // verdict on the user.
+        if let planOutcome, let message = planOutcomeMessage(planOutcome) {
+            return message
+        }
+
         // 6 — the AI Refine rationale (Aug 2026 — folded in
         // from the banner that used to render separately, so the tab has
         // one voice in one place). Sits BELOW overdue and high-stakes on
@@ -222,6 +304,46 @@ enum TasksMessageComposer {
             detail: "One study task per day, through the day before. "
                 + "Delete any you don't want — removed days stay removed."
         )
+    }
+
+    // MARK: Plan-outcome state
+
+    /// The message for today's planner outcome, or nil when this outcome
+    /// kind has nothing to say (a manual success — the placements on the
+    /// timeline are the feedback; narrating them would be noise).
+    private static func planOutcomeMessage(_ outcome: PlanOutcomeContext) -> TasksMessage? {
+        switch outcome.kind {
+        case .planned:
+            // Only an automatic run announces itself — the user didn't ask,
+            // so the plan explains where it came from. (Manual successes
+            // clear the context before this can render; the guard is a
+            // backstop.)
+            guard outcome.isAuto, outcome.placedCount > 0 else { return nil }
+            let titles = outcome.placedTitles.prefix(4)
+                .map { "“\($0)”" }.joined(separator: ", ")
+            return TasksMessage(
+                headline: "I set up today — \(outcome.placedCount) task\(outcome.placedCount == 1 ? "" : "s") placed into free time.",
+                detail: "Placed: \(titles). Tap any timeline block to move or remove it — "
+                    + "placements you made yourself weren't touched."
+            )
+        case .noCandidates:
+            return TasksMessage(
+                headline: "Nothing to plan right now.",
+                detail: "Everything open is either finished or already on today's timeline."
+            )
+        case .noRoom:
+            return TasksMessage(
+                headline: "No room left today — your calendar is full.",
+                detail: "Events, the buffers around them, and existing placements take the rest of today. "
+                    + "Unplaced tasks stay in the Unscheduled tab."
+            )
+        case .windowCollapsed:
+            return TasksMessage(
+                headline: "No planning window left today.",
+                detail: "Planning runs between wake (+30 min) and bedtime (−1 hour). "
+                    + "If this shows during the day, check your wake time and bedtime in Settings."
+            )
+        }
     }
 
     // MARK: Tapped-nudge explanations
@@ -393,6 +515,8 @@ struct TasksMessageBox: View {
     var prepNote: PrepNoteContext? = nil
     /// "I've added study time" announcement from the exam-prep sweep.
     var prepAnnouncement: PrepAnnouncementContext? = nil
+    /// Today's planner outcome (refusals + the auto-plan announcement).
+    var planOutcome: PlanOutcomeContext? = nil
     /// Fired when the note state actually RENDERS (not merely exists) —
     /// the owner stamps `PrepTombstone.noteShownAt`, which is what makes
     /// the note one-time. A passive display can't know it was read;
@@ -416,6 +540,7 @@ struct TasksMessageBox: View {
             rationale: rationale,
             prepNote: prepNote,
             prepAnnouncement: prepAnnouncement,
+            planOutcome: planOutcome,
             now: clock.now
         )
         let expandable = message.detail != nil

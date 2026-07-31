@@ -62,6 +62,9 @@ struct TasksTabView: View {
     /// app-group keys on appear/active — the message box's top-priority
     /// state. Nil once the context has expired.
     @State private var tappedNudgeContext: TappedNudgeContext?
+    /// Today's planner outcome for the message box (refusals + the auto-run
+    /// announcement). Same appear/active read pattern; expires daily.
+    @State private var planOutcome: PlanOutcomeContext?
 
     private var coordinator: SessionCoordinator { SessionCoordinator.shared }
 
@@ -294,6 +297,7 @@ struct TasksTabView: View {
                     rationale: refineRationale,
                     prepNote: pendingPrepNote,
                     prepAnnouncement: ExamPrepSweep.currentAnnouncement(),
+                    planOutcome: planOutcome,
                     onPrepNoteShown: {
                         if let note = pendingPrepNote { markPrepNoteShown(note) }
                     },
@@ -372,6 +376,7 @@ struct TasksTabView: View {
             // Durable tapped-nudge context for the message box — same
             // launch-path independence, but read-while-fresh, not one-shot.
             tappedNudgeContext = TappedNudgeContext.read()
+            planOutcome = PlanOutcomeContext.read()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Also consume when returning to the foreground while the Tasks
@@ -379,6 +384,7 @@ struct TasksTabView: View {
             if newPhase == .active {
                 consumePendingIdleTask()
                 tappedNudgeContext = TappedNudgeContext.read()
+                planOutcome = PlanOutcomeContext.read()
             }
         }
         .sheet(item: $placement) { ctx in
@@ -1336,6 +1342,7 @@ struct TasksTabView: View {
             #if DEBUG
             print("   ❌ WINDOW UNRESOLVABLE — sleep window shorter than its quiet buffers (misconfigured profile). Nothing placed.")
             #endif
+            recordPlanOutcome(.windowCollapsed)
             return
         }
         let dayStart = window.start
@@ -1350,6 +1357,7 @@ struct TasksTabView: View {
             print("   ❌ DAY ALREADY OVER — now is past bed−60; nothing left to place today. (Backstop guard;")
             print("      with the wake-anchored window this happens only late at night, never all day.)")
             #endif
+            recordPlanOutcome(.windowCollapsed)
             return
         }
 
@@ -1420,13 +1428,25 @@ struct TasksTabView: View {
 
         let spacing: TimeInterval = 15 * 60
         var placedCount = 0
+        var prepPlacedCount = 0
 
         for task in candidates {
-            guard placedCount < 4 else {
+            guard placedCount < NudgeConfig.planMaxPlacementsPerRun else {
                 #if DEBUG
-                print("   cap reached (4 placed) — remaining candidates not attempted")
+                print("   cap reached (\(NudgeConfig.planMaxPlacementsPerRun) placed) — remaining candidates not attempted")
                 #endif
                 break
+            }
+            // Prep cap: study blocks may claim at most
+            // `planMaxPrepPlacementsPerRun` of the run's slots, so a week
+            // of prep tasks can't turn the whole proposed day into a
+            // monoculture. Caps placement only — the tasks stay listed.
+            let isPrep = task.source == "prep"
+            if isPrep, prepPlacedCount >= NudgeConfig.planMaxPrepPlacementsPerRun {
+                #if DEBUG
+                print("   ✗ \(task.title) — prep cap (\(NudgeConfig.planMaxPrepPlacementsPerRun)) reached, not placed")
+                #endif
+                continue
             }
             let duration = TimeInterval(planningMinutes(for: task) * 60)
             guard let start = earliestGapStart(
@@ -1447,6 +1467,7 @@ struct TasksTabView: View {
             task.plannedStartDate = start
             task.plannedDurationMinutes = planningMinutes(for: task)
             task.plannedIsAuto = true
+            if isPrep { prepPlacedCount += 1 }
             // Occupy this slot + 15 min spacing for the next placement.
             busy.append((start, start.addingTimeInterval(duration + spacing)))
             placedCount += 1
@@ -1454,14 +1475,20 @@ struct TasksTabView: View {
 
         guard placedCount > 0 else {
             #if DEBUG
-            print("   result: placed 0 of \(candidates.count) candidate(s) → error haptic only — reads as a dead button")
+            let kind = candidates.isEmpty ? "no candidates" : "no room"
+            print("   result: placed 0 of \(candidates.count) candidate(s) → \(kind) message + error haptic")
             #endif
-            NudgeHaptics.error()
+            recordPlanOutcome(candidates.isEmpty ? .noCandidates : .noRoom)
             return
         }
         #if DEBUG
         print("   result: placed \(placedCount) of \(candidates.count) candidate(s) → success haptic; rows now in Today tab + timeline")
         #endif
+        // A successful manual plan needs no narration — the placements on
+        // the timeline are the feedback — and it clears any earlier refusal
+        // message ("clears on the next successful plan").
+        PlanOutcomeContext.clear()
+        planOutcome = nil
         withAnimation(NudgeAnimation.standard) { }
         try? modelContext.save()
         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -1717,6 +1744,17 @@ struct TasksTabView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// Records a no-placement planner outcome: persists it for the message
+    /// box (App Group, today-scoped), refreshes the box immediately, and
+    /// gives the shared refusal haptic. The message carries the
+    /// distinction between refusal kinds; the haptic only says "nothing
+    /// was placed."
+    private func recordPlanOutcome(_ kind: PlanOutcomeContext.Kind) {
+        PlanOutcomeContext.write(kind: kind, isAuto: false)
+        planOutcome = PlanOutcomeContext.read()
+        NudgeHaptics.error()
     }
 
     /// Re-runs every notification decision via the arbiter using the

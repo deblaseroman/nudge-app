@@ -249,6 +249,25 @@ enum NudgeConfig {
     /// sample contributes 20% and the prior mean carries 80%.
     static let durationLearningAlpha: Double = 0.2
 
+    // MARK: - Plan my day
+
+    /// Most tasks one planner run will place. Was an inline `4` in
+    /// `planMyDay` since its first version; hoisted here (cycle
+    /// 2026-08-02-02) when it gained a sibling below. Four ~45-minute
+    /// blocks plus events is a full day for the target user — the planner
+    /// proposes a starting point, not a packed schedule.
+    static let planMaxPlacementsPerRun: Int = 4
+
+    /// Most prep (study) tasks one planner run will place. Prep tasks are
+    /// dated, exam-category, and score high, so without a cap all four
+    /// slots can become study blocks — a monoculture, not a plan. Two of
+    /// four: near an exam, study still claims half the proposed day (and
+    /// two ~90-minute blocks is real study time), while at least two slots
+    /// stay open for the rest of life. Caps *placement* only — what
+    /// `ExamPrepSweep` creates is untouched, and the user can place more
+    /// study blocks by hand.
+    static let planMaxPrepPlacementsPerRun: Int = 2
+
     // MARK: - Event conflict gate
     //
     // Drives `BusyWindowResolver`. The arbiter refuses to fire any
