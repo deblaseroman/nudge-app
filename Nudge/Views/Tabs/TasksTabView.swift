@@ -1325,29 +1325,30 @@ struct TasksTabView: View {
     private func planMyDay() {
         let cal = Calendar.current
 
-        // Day window: wake + 30 min → bedtime − 60 min (today).
+        // Day window: one shared derivation (`DayWindow`, cycle
+        // 2026-08-02-02) — wake-anchored, so a past-midnight bedtime
+        // extends today instead of collapsing the window into yesterday.
         let wake = profile.wakeTime ?? profile.morningCheckInTime
-        let wakeComps = cal.dateComponents([.hour, .minute], from: wake)
-        let bedComps = cal.dateComponents([.hour, .minute], from: profile.bedtime)
-        var dayComps = cal.dateComponents([.year, .month, .day], from: Date())
-        dayComps.hour = wakeComps.hour; dayComps.minute = wakeComps.minute
-        guard let wakeToday = cal.date(from: dayComps) else { return }
-        dayComps.hour = bedComps.hour; dayComps.minute = bedComps.minute
-        guard let bedToday = cal.date(from: dayComps) else { return }
-
-        let dayStart = wakeToday.addingTimeInterval(30 * 60)
-        let dayEnd = bedToday.addingTimeInterval(-60 * 60)
+        #if DEBUG
+        print("🧭 [PlanMyDay] invoked \(Self.traceTime(Date()))")
+        #endif
+        guard let window = DayWindow.resolve(on: Date(), wake: wake, bedtime: profile.bedtime) else {
+            #if DEBUG
+            print("   ❌ WINDOW UNRESOLVABLE — sleep window shorter than its quiet buffers (misconfigured profile). Nothing placed.")
+            #endif
+            return
+        }
+        let dayStart = window.start
+        let dayEnd = window.end
         // Don't place in the past.
         let scanStart = max(dayStart, Date())
         #if DEBUG
-        print("🧭 [PlanMyDay] invoked \(Date().formatted(date: .abbreviated, time: .shortened))")
         print("   window: wake+30 \(Self.traceTime(dayStart)) → bed−60 \(Self.traceTime(dayEnd)), scan from \(Self.traceTime(scanStart))")
         #endif
         guard dayEnd > scanStart else {
             #if DEBUG
-            print("   ❌ EMPTY WINDOW — dayEnd ≤ scanStart. SILENT return: no haptic, no message, nothing placed.")
-            print("      A midnight-or-later bedtime collapses this window permanently (bed−60 lands at or before")
-            print("      the same day's start); a tap after bed−60 collapses it until tomorrow morning.")
+            print("   ❌ DAY ALREADY OVER — now is past bed−60; nothing left to place today. (Backstop guard;")
+            print("      with the wake-anchored window this happens only late at night, never all day.)")
             #endif
             return
         }
@@ -1504,8 +1505,10 @@ struct TasksTabView: View {
     /// merged busy intervals and the free gaps `planMyDay()` will scan, so a
     /// zero-placement run shows WHY. Merge logic mirrors the resolver's
     /// overlap rule but exists only for this printout.
+    /// Dates included deliberately: the trace line that exposed the window
+    /// bug read "11:30 PM" and the entire question was WHICH DAY that was.
     private nonisolated static func traceTime(_ d: Date) -> String {
-        d.formatted(date: .omitted, time: .shortened)
+        d.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func debugPrintBusyAndGaps(

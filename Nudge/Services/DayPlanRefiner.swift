@@ -58,19 +58,22 @@ final class DayPlanRefiner {
         }
 
         // ── Build the day window ──────────────────────────────────────────
+        // One shared derivation (`DayWindow`, cycle 2026-08-02-02) — wake-
+        // anchored, so a past-midnight bedtime extends today instead of
+        // collapsing the window into yesterday (this copy had the same
+        // same-calendar-day bug as planMyDay's).
         let cal = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
-        let wakeComps = cal.dateComponents([.hour, .minute], from: wake)
-        let bedComps = cal.dateComponents([.hour, .minute], from: profile.bedtime)
-        var dayComps = cal.dateComponents([.year, .month, .day], from: Date())
-        dayComps.hour = wakeComps.hour; dayComps.minute = wakeComps.minute
-        guard let wakeToday = cal.date(from: dayComps) else { return .failed("bad wake time") }
-        dayComps.hour = bedComps.hour; dayComps.minute = bedComps.minute
-        guard let bedToday = cal.date(from: dayComps) else { return .failed("bad bedtime") }
-
-        let dayStart = wakeToday.addingTimeInterval(30 * 60)
-        let dayEnd = bedToday.addingTimeInterval(-60 * 60)
+        guard let window = DayWindow.resolve(on: Date(), wake: wake, bedtime: profile.bedtime) else {
+            return .failed("day window failed to resolve")
+        }
+        let bedToday = window.bed
+        let dayStart = window.start
+        let dayEnd = window.end
         let scanStart = max(dayStart, Date())
+        // Day already over (now past bed−60) — nothing left to schedule
+        // into. `.noTasks` is the nearest existing outcome; its chat copy
+        // ("nothing open to schedule into today's free time") stays true.
         guard dayEnd > scanStart else { return .noTasks }
 
         let allTasks = (try? modelContext.fetch(FetchDescriptor<NudgeTask>())) ?? []

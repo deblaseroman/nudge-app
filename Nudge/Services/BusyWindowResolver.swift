@@ -103,35 +103,28 @@ final class BusyWindowResolver {
 
     // MARK: - Day load
 
-    /// Commitment load for `day`'s awake window: wake + postWakeQuietMinutes
-    /// → bedtime − preBedtimeQuietMinutes, the same window the planners use
-    /// (their inline wake+30 / bed−60 literals mirror these constants).
-    /// `wake`/`bedtime` are clock-time Dates from `UserProfile`; only their
-    /// hour/minute components are read, so any `day` — today or a future
-    /// fire day — can be assessed. Returns nil when the window is invalid
-    /// (e.g. a past-midnight bedtime collapses it) — callers should fail
-    /// OPEN on nil rather than suppress.
+    /// Commitment load for `day`'s awake window — `DayWindow.resolve`, the
+    /// one shared derivation (cycle 2026-08-02-02; this method's inline copy
+    /// had the same same-calendar-day bedtime bug as the planners: a
+    /// past-midnight bedtime collapsed the window and this returned nil, so
+    /// the day-fullness gate silently failed open for exactly those
+    /// profiles — now they get a real window). `wake`/`bedtime` are
+    /// clock-time Dates from `UserProfile`; only hour/minute are read, so
+    /// any `day` — today or a future fire day — can be assessed. Returns
+    /// nil only when the sleep window is shorter than its quiet buffers
+    /// (misconfigured profile) — callers should still fail OPEN on nil
+    /// rather than suppress.
     func dayLoad(
         on day: Date,
         wake: Date,
         bedtime: Date,
         modelContext: ModelContext
     ) -> DayLoad? {
-        let calendar = Calendar.current
-        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
-        let bedComps = calendar.dateComponents([.hour, .minute], from: bedtime)
-        var dayComps = calendar.dateComponents([.year, .month, .day], from: day)
-
-        dayComps.hour = wakeComps.hour
-        dayComps.minute = wakeComps.minute
-        guard let wakeOnDay = calendar.date(from: dayComps) else { return nil }
-        dayComps.hour = bedComps.hour
-        dayComps.minute = bedComps.minute
-        guard let bedOnDay = calendar.date(from: dayComps) else { return nil }
-
-        let start = wakeOnDay.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
-        let end = bedOnDay.addingTimeInterval(-Double(NudgeConfig.preBedtimeQuietMinutes) * 60)
-        guard end > start else { return nil }
+        guard let window = DayWindow.resolve(on: day, wake: wake, bedtime: bedtime) else {
+            return nil
+        }
+        let start = window.start
+        let end = window.end
 
         let windows = busyWindows(from: start, to: end, modelContext: modelContext)
         let busySeconds = windows.reduce(0.0) { total, window in
