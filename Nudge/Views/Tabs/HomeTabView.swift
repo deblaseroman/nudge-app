@@ -451,6 +451,11 @@ struct HomeTabView: View {
                     // precision reaches the store.
                     if isEvent {
                         task.prepLeadDays = ExamPrepSweep.validLeadBand(taskData.prepLeadDays)
+                    } else {
+                        // Appropriateness band — tasks only (events aren't
+                        // placed). Unknown strings parse to nil, which
+                        // falls to the deterministic inference at read.
+                        task.timeWindow = TaskTimeWindow.parse(taskData.timeWindow)
                     }
                     modelContext.insert(task)
                     newlyCreatedTasks.append(task)

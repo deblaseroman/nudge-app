@@ -210,6 +210,15 @@ final class NudgeTask {
     /// UI may write `stakes` directly, and it must set this flag too.
     var stakesIsUserSet: Bool = false
 
+    /// Coarse "when is this task appropriate" band — raw storage for
+    /// `TaskTimeWindow` ("anytime" | "daytime" | "businesshours"),
+    /// assigned by the capture classification (cycle 2026-08-02-03).
+    /// Nil = never classified → the planner falls back to the
+    /// deterministic inference via `effectiveTimeWindow`. Additive,
+    /// property-level default: existing stores open unchanged and their
+    /// rows behave exactly as before (inference default is `.anytime`).
+    var timeWindowRaw: String? = nil
+
     init(
         id: UUID = UUID(),
         title: String,
@@ -294,5 +303,21 @@ final class NudgeTask {
         guard !stakesIsUserSet else { return }
         guard let newValue else { return }
         stakesRaw = newValue.rawValue
+    }
+
+    /// Typed view of `timeWindowRaw`. Unknown or empty strings → nil.
+    var timeWindow: TaskTimeWindow? {
+        get { TaskTimeWindow.parse(timeWindowRaw) }
+        set { timeWindowRaw = newValue?.rawValue }
+    }
+
+    /// The band the planner actually uses: the classification when one
+    /// exists, else the deterministic keyword inference (whose own default
+    /// is `.anytime`). Resolved at READ time rather than stamped into the
+    /// store — the stored value stays exclusively "what the classifier
+    /// said", so a later, better classification pass can tell classified
+    /// rows from fallback rows.
+    var effectiveTimeWindow: TaskTimeWindow {
+        timeWindow ?? TaskTimeWindow.infer(title: title, category: taskCategory)
     }
 }

@@ -153,12 +153,12 @@ enum DayPlanEngine {
         #if DEBUG
         print("   candidates (open, non-event, unplaced) — \(candidates.count):")
         for task in planCandidates {
-            print("      • \(task.title) — plan #\(task.sequenceIndex ?? 0), \(planningMinutes(for: task))m")
+            print("      • \(task.title) — plan #\(task.sequenceIndex ?? 0), \(planningMinutes(for: task))m [\(task.effectiveTimeWindow.rawValue)]")
         }
         for task in scoredCandidates {
             let score = String(format: "%.2f", planScore(for: task, modelContext: modelContext))
             let prep = task.source == "prep" ? " [prep]" : ""
-            print("      • \(task.title) — score \(score), \(planningMinutes(for: task))m\(prep)")
+            print("      • \(task.title) — score \(score), \(planningMinutes(for: task))m\(prep) [\(task.effectiveTimeWindow.rawValue)]")
         }
         for task in tasks where !task.isInformationalEvent && !candidates.contains(where: { $0.id == task.id }) {
             let reason: String
@@ -175,6 +175,31 @@ enum DayPlanEngine {
             print("      ◦ excluded: \(task.title) — \(reason)")
         }
         #endif
+
+        // Placement bounds for a task's appropriateness band, intersected
+        // with today's scan window. Nil = the band has no time left today
+        // (or none at all — businessHours on a weekend); the task is left
+        // UNPLACED rather than placed at a time that makes it undoable.
+        func bandBounds(for band: TaskTimeWindow) -> (from: Date, to: Date)? {
+            func todayAt(_ hour: Int) -> Date? {
+                cal.date(bySettingHour: hour, minute: 0, second: 0, of: Date())
+            }
+            switch band {
+            case .anytime:
+                return (scanStart, dayEnd)
+            case .daytime:
+                guard let s = todayAt(NudgeConfig.daytimeStartHour),
+                      let e = todayAt(NudgeConfig.daytimeEndHour) else { return (scanStart, dayEnd) }
+                let from = max(scanStart, s), to = min(dayEnd, e)
+                return from < to ? (from, to) : nil
+            case .businessHours:
+                guard !cal.isDateInWeekend(Date()) else { return nil }
+                guard let s = todayAt(NudgeConfig.businessHoursStartHour),
+                      let e = todayAt(NudgeConfig.businessHoursEndHour) else { return (scanStart, dayEnd) }
+                let from = max(scanStart, s), to = min(dayEnd, e)
+                return from < to ? (from, to) : nil
+            }
+        }
 
         let spacing: TimeInterval = 15 * 60
         var placedCount = 0
@@ -200,20 +225,38 @@ enum DayPlanEngine {
                 continue
             }
             let duration = TimeInterval(planningMinutes(for: task) * 60)
+            // Appropriateness band (cycle 2026-08-02-03): placement is
+            // constrained to the band's hours; no in-band gap ⇒ unplaced,
+            // never "any gap will do" — that's how Call Grandma landed at
+            // 10:30 PM.
+            let band = task.effectiveTimeWindow
+            guard let bounds = bandBounds(for: band) else {
+                #if DEBUG
+                print("   ✗ \(task.title) [\(band.rawValue)] — band has no time left today; left unplaced")
+                #endif
+                continue
+            }
             guard let start = earliestGapStart(
                 fitting: duration,
                 busy: busy,
-                from: scanStart,
-                to: dayEnd
+                from: bounds.from,
+                to: bounds.to
             ) else {
                 #if DEBUG
-                print("   ✗ \(task.title) (\(Int(duration / 60))m) — no gap fits")
+                // Distinguish "the day is full" from "only out-of-band
+                // room remains" — the plan's trace requirement.
+                if band != .anytime,
+                   earliestGapStart(fitting: duration, busy: busy, from: scanStart, to: dayEnd) != nil {
+                    print("   ✗ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] — gaps exist but only OUT-OF-BAND; left unplaced")
+                } else {
+                    print("   ✗ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] — no gap fits")
+                }
                 #endif
                 continue
             }
 
             #if DEBUG
-            print("   ✓ \(task.title) (\(Int(duration / 60))m) → placed \(traceTime(start))")
+            print("   ✓ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] → placed \(traceTime(start))")
             #endif
             task.plannedStartDate = start
             task.plannedDurationMinutes = planningMinutes(for: task)

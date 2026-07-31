@@ -249,6 +249,21 @@ enum NudgeConfig {
     /// sample contributes 20% and the prior mean carries 80%.
     static let durationLearningAlpha: Double = 0.2
 
+    // MARK: - Task time windows (placement appropriateness)
+    //
+    // Boundaries for `TaskTimeWindow`'s bands. Deliberately round and few:
+    // the band is a judgment about a task's NATURE, so precise-looking
+    // boundaries would be invented precision. `businessHours` additionally
+    // requires a weekday — checked at the placement site, not encoded here.
+
+    /// `daytime` band: reasonable waking hours, 9 AM – 9 PM.
+    static let daytimeStartHour: Int = 9
+    static let daytimeEndHour: Int = 21
+
+    /// `businessHours` band: weekday working hours, 9 AM – 5 PM.
+    static let businessHoursStartHour: Int = 9
+    static let businessHoursEndHour: Int = 17
+
     // MARK: - Plan my day
 
     /// Most tasks one planner run will place. Was an inline `4` in

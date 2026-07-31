@@ -76,6 +76,7 @@ class ClaudeService {
     - Assign priority: "high", "medium", or "low" (default "medium")
     - Categorize: "exam", "school", "work", "health", "personal", "errand", or "other". Use "exam" for tests/midterms/finals/quizzes; "school" for any other coursework (assignments, readings, papers); "work" for jobs/shifts/meetings; "health" for doctor/gym/therapy/medication; "personal" for friends/family/hobbies; "errand" for quick utilitarian tasks (pick up, return, pay).
     - Assign stakes: "high", "medium", or "low" on EVERY item. \(ClaudeService.stakesRuleText)
+    - For TASKS, assign "timeWindow": when is this task APPROPRIATE to do, judged from its nature. EXACTLY one of: "anytime" (no constraint — study, reading, writing, laundry, tidying; THE DEFAULT, use it whenever unsure), "daytime" (reasonable waking hours — calling people, errands, chores that mean leaving the house or making noise), "businessHours" (weekday working hours — calling an office, a bank, a doctor's front desk, anything with staff). This is about the task's nature, never its deadline. Events get null.
     - For EVENTS with category "exam" ONLY, also set "prepLeadDays": how many days ahead studying should start. EXACTLY 3, 7, or 14 — a coarse band, never any other number. Judge from the exam title alone: course level and subject carry the signal (an organic chemistry final outranks an intro marketing quiz). 3 = light/low-stakes quiz or intro-level test; 7 = a typical course exam or midterm; 14 = a final, a cumulative exam, or a notoriously heavy subject. If you can't tell, use null. Every non-exam item gets null.
 
     CRITICAL — TASKS vs EVENTS:
@@ -199,8 +200,8 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null}
-    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime"}
+    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events.
 
     ORDERED PLANS (sequenceIndex):
     - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
@@ -1164,6 +1165,7 @@ struct TaskData: Codable {
     let dependsOnTask: String?      // title of the task this depends on (resolved client-side)
     let sequenceIndex: Int?         // 1-based order when the user states a plan ("first X, then Y")
     let prepLeadDays: Int?          // exam events only: coarse study-lead band (3|7|14); anything else → nil via ExamPrepSweep.validLeadBand
+    let timeWindow: String?         // tasks only: "anytime" | "daytime" | "businessHours" appropriateness band; unknown/missing → nil via TaskTimeWindow.parse
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -1178,6 +1180,7 @@ struct TaskData: Codable {
         case dependsOnTask = "depends_on_task"
         case sequenceIndex = "sequenceIndex"
         case prepLeadDays = "prepLeadDays"
+        case timeWindow = "timeWindow"
     }
 }
 
