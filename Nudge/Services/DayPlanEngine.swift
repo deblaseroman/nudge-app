@@ -128,16 +128,17 @@ enum DayPlanEngine {
         // by score. A placed plan task keeps its number in Today's plan AND
         // shows on the timeline.
         //
-        // A prep task is a candidate ONLY on its own study day (cycle
-        // 2026-08-02-03): the sweep already spread the work across days,
-        // and exam-category scoring let tomorrow's block win today's gaps,
-        // un-spreading it. Prep is the one source whose dates ARE the
-        // plan; ordinary dated tasks stay eligible early on purpose —
-        // working ahead of a deadline is the point of planning.
+        // A generated daily task — exam prep (cycle 2026-08-02-03) or a
+        // commitment daily (cycle 2026-08-03-01) — is a candidate ONLY on
+        // its own day: the sweep already spread the work across days, and
+        // letting tomorrow's block win today's gaps un-spreads it. These
+        // are the sources whose dates ARE the plan; ordinary dated tasks
+        // stay eligible early on purpose — working ahead of a deadline is
+        // the point of planning.
         let openUnplaced = tasks.filter { task in
             guard !task.isComplete, !task.isInformationalEvent,
                   task.plannedStartDate == nil else { return false }
-            if task.source == "prep" {
+            if task.source == "prep" || task.source == "commitment" {
                 guard let due = task.dueDate, cal.isDateInToday(due) else { return false }
             }
             return true
@@ -166,9 +167,9 @@ enum DayPlanEngine {
                 reason = "complete"
             } else if let p = task.plannedStartDate {
                 reason = "already placed \(p.formatted(date: .abbreviated, time: .shortened)) (\(task.plannedIsAuto ? "auto" : "manual"))"
-            } else if task.source == "prep" {
+            } else if task.source == "prep" || task.source == "commitment" {
                 let day = task.dueDate?.formatted(date: .abbreviated, time: .omitted) ?? "undated"
-                reason = "prep for another day (due \(day)) — places only on its own study day"
+                reason = "generated for another day (due \(day)) — places only on its own day"
             } else {
                 reason = "unexpected — open, unplaced, yet not a candidate"
             }
@@ -213,11 +214,12 @@ enum DayPlanEngine {
                 #endif
                 break
             }
-            // Prep cap: study blocks may claim at most
-            // `planMaxPrepPlacementsPerRun` of the run's slots, so a week
-            // of prep tasks can't turn the whole proposed day into a
-            // monoculture. Caps placement only — the tasks stay listed.
-            let isPrep = task.source == "prep"
+            // Generated-task cap: study blocks and commitment sessions may
+            // claim at most `planMaxPrepPlacementsPerRun` of the run's
+            // slots, so generated dailies can't turn the whole proposed
+            // day into a monoculture. Caps placement only — the tasks
+            // stay listed.
+            let isPrep = task.source == "prep" || task.source == "commitment"
             if isPrep, prepPlacedCount >= NudgeConfig.planMaxPrepPlacementsPerRun {
                 #if DEBUG
                 print("   ✗ \(task.title) — prep cap (\(NudgeConfig.planMaxPrepPlacementsPerRun)) reached, not placed")

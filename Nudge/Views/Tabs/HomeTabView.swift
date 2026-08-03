@@ -485,6 +485,13 @@ struct HomeTabView: View {
                     for task in newlyCreatedTasks {
                         NudgeIntelligence.shared.refreshSoon(for: task)
                     }
+                    // Expand any commitment whose numbers are now known —
+                    // covers both the fully-specified capture ("an hour a
+                    // day until Friday") and the answer turn that just
+                    // filled in the missing number via task_updates.
+                    // BEFORE the reevaluate, so fresh dailies are in the
+                    // store when candidates are built.
+                    ExamPrepSweep.shared.run(modelContext: modelContext)
                     // Single arbiter call replaces every per-feature scheduler.
                     NudgeArbiter.shared.reevaluate(
                         reason: .taskCreatedOrEdited,

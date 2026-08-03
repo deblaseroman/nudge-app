@@ -1478,14 +1478,15 @@ final class NudgeArbiter: NudgeArbitering {
         // is the effective deadline: the explicit clock time when one
         // exists, else end-of-day for bare due dates.
         //
-        // Generated study tasks (`source == "prep"`, Aug 2026) are
-        // excluded: their per-day due dates are self-imposed scaffolding
-        // the sweep invented, not deadlines the world will enforce — and
-        // "a deadline is a fact" is this kind's whole justification for
+        // Generated daily tasks (`source == "prep"`, Aug 2026; joined by
+        // `source == "commitment"`, cycle 2026-08-03-01) are excluded:
+        // their per-day due dates are self-imposed scaffolding the sweep
+        // invented, not deadlines the world will enforce — and "a
+        // deadline is a fact" is this kind's whole justification for
         // being budget-exempt. Without this, every study day would end
         // with a ~10 PM "due soon" banner for a synthetic midnight due.
         let dated = open
-            .filter { $0.dueDate != nil && $0.source != "prep" }
+            .filter { $0.dueDate != nil && $0.source != "prep" && $0.source != "commitment" }
             .map { ($0, $0.sortDeadline) }
             .filter { $0.1 > now && $0.1 < horizonEnd }
             .sorted { $0.1 < $1.1 }

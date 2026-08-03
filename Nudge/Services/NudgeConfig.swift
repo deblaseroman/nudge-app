@@ -443,6 +443,42 @@ enum NudgeConfig {
     /// can't know it was read, so time bounds it.
     static let prepMessageFreshnessMinutes: Int = 30
 
+    // MARK: - Commitment expansion
+    //
+    // Drives the commitment half of `ExamPrepSweep` (cycle 2026-08-03-01)
+    // — the general form of the exam sweep: a brain-dumped commitment
+    // ("an hour a day until Friday", "module 4 by Friday") expands into
+    // one generated task per day (`source == "commitment"`).
+
+    /// How many days ahead a rate/quantity commitment generates daily
+    /// tasks. Matches the exam sweep's largest lead band: a commitment
+    /// running months out gets a rolling 2-week window topped up daily,
+    /// not a hundred rows at once.
+    static let commitmentHorizonDays: Int = 14
+
+    /// Split-work session lengths round UP to multiples of this. Eight
+    /// hours across four days must be four two-hour sessions, not eight
+    /// scattered fragments — half-hour blocks are the coarsest unit that
+    /// still fits real gaps.
+    static let commitmentSessionBlockMinutes: Int = 30
+
+    /// Floor and ceiling on one split-work session. The floor keeps a
+    /// tiny total from smearing into meaningless slivers (the day count
+    /// shrinks instead); the ceiling keeps a huge total from producing a
+    /// day-swallowing block nobody starts (`DESIGN.md`: never show a
+    /// target that has become impossible) — the schedule then honestly
+    /// covers less than the stated total rather than pretending.
+    static let commitmentMinSessionMinutes: Int = 30
+    static let commitmentMaxSessionMinutes: Int = 240
+
+    /// Quantity carry-over cap, in days' worth of the daily count. A
+    /// missed day's shortfall adds to the next day, but the carried
+    /// amount stops growing after this many days' worth — a week of
+    /// misses shows the same number as three days of misses. An uncapped
+    /// carry produces a number the user cannot hit, and a number you
+    /// cannot hit is the reason not to start.
+    static let commitmentCarryCapDays: Int = 3
+
     // MARK: - Stakes backfill
     //
     // Drives `StakesBackfill`, the one-shot pass that classifies stakes on

@@ -32,6 +32,22 @@
 //  inputs so the copy-harness technique can run fixture exams against the
 //  exact shipped logic without SwiftData.
 //
+//  ── COMMITMENTS (cycle 2026-08-03-01) ────────────────────────────────
+//  This sweep is also the general form of itself: a brain-dumped
+//  commitment ("module 4 by Friday" = split work, "an hour a day until
+//  Friday" = rate, "three applications a day" = quantity) expands here
+//  into one `source == "commitment"` task per day, exactly the way an
+//  exam expands into prep tasks. Shared with the exam half — the run
+//  cadence, the (parent, day-stamp) idempotence via `missingStamps`, the
+//  `PrepTombstone` model (its `examEventId`/`examTitle` fields read as
+//  "parent id/title" for commitment rows — historical names, same
+//  mechanism), and the announce-through-the-message-box rule. Not shared
+//  — the parent source (a `NudgeCommitment` row converted from the
+//  captured task, not a calendar event), the per-day math (split ÷ days
+//  vs. one-per-day), and the window (deadline-bounded rolling horizon vs.
+//  lead band). An exam is a commitment whose deadline is an event and
+//  whose work is studying.
+//
 
 import Foundation
 import SwiftData
@@ -51,10 +67,29 @@ struct PrepAnnouncementContext: Equatable {
 
 /// "The user deleted a study task" — the one-time message-box note asking
 /// whether they still want study time for that exam. Backed by
-/// `PrepTombstone.noteShownAt`; per exam, never repeats.
+/// `PrepTombstone.noteShownAt`; per exam, never repeats. Commitments get
+/// the same note with commitment copy (`isCommitment` — the tombstone's
+/// parent ID matches a `NudgeCommitment` row instead of an exam event).
 struct PrepNoteContext: Equatable {
     let examTitle: String
     let examEventId: String
+    var isCommitment: Bool = false
+}
+
+/// "The sweep just expanded a commitment into daily tasks" — read by the
+/// Tasks message box, same lifecycle as `PrepAnnouncementContext` (valid
+/// on its creation day; freshness-windowed after first render).
+struct CommitmentAnnouncementContext: Equatable {
+    let title: String
+    let shape: CommitmentShape
+    /// Days from today through the commitment's last generated day.
+    let daysUntilEnd: Int
+    /// Per-day session length, when the shape has one.
+    let dailyMinutes: Int?
+    /// Per-day unit count, for quantity commitments.
+    let dailyCount: Int?
+    let createdAt: Date
+    let shownAt: Date?
 }
 
 // MARK: - Sweep
@@ -133,14 +168,13 @@ final class ExamPrepSweep {
         // One task per remaining day, today through the day BEFORE the
         // exam: 3 days out → 3 tasks. Capped by construction — daysRemaining
         // ≤ lead ≤ 14 — and by the stamp dedupe (one per exam per day).
-        var create: [String] = []
-        for offset in 0..<daysRemaining {
-            guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
-            let stamp = Self.stamp(day)
-            guard !existingPrepDayStamps.contains(stamp),
-                  !tombstonedDayStamps.contains(stamp) else { continue }
-            create.append(stamp)
-        }
+        let create = Self.missingStamps(
+            from: start,
+            dayOffsets: 0..<daysRemaining,
+            existing: existingPrepDayStamps,
+            tombstoned: tombstonedDayStamps,
+            calendar: calendar
+        )
 
         return Decision(
             examTitle: examTitle, leadDays: lead, daysRemaining: daysRemaining,
@@ -148,6 +182,54 @@ final class ExamPrepSweep {
             tombstonedStamps: tombstonedDayStamps.sorted(),
             existingStamps: existingPrepDayStamps.sorted(), createStamps: create
         )
+    }
+
+    /// The one day-window walk both halves of the sweep share: which of
+    /// these day offsets still need a generated task — not already
+    /// created (idempotence) and not deleted by the user (tombstones,
+    /// never recreated).
+    static func missingStamps(
+        from start: Date,
+        dayOffsets: Range<Int>,
+        existing: Set<String>,
+        tombstoned: Set<String>,
+        calendar: Calendar
+    ) -> [String] {
+        var create: [String] = []
+        for offset in dayOffsets {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
+            let stamp = Self.stamp(day)
+            guard !existing.contains(stamp), !tombstoned.contains(stamp) else { continue }
+            create.append(stamp)
+        }
+        return create
+    }
+
+    // MARK: Split-work session math (pure)
+
+    /// How a split-work total divides across the days available: session
+    /// length rounds UP to half-hour blocks (eight hours across four days
+    /// is four two-hour sessions, not eight fragments), floored and
+    /// capped by `NudgeConfig`, and the session count then shrinks below
+    /// the day count when the total doesn't need every day (one hour
+    /// across five days is two half-hour sessions, not five slivers).
+    /// When the total exceeds cap × days, the schedule honestly covers
+    /// less than the stated total rather than producing day-swallowing
+    /// blocks.
+    static func splitWorkPlan(
+        totalMinutes: Int,
+        daysAvailable: Int
+    ) -> (sessionMinutes: Int, sessions: Int) {
+        guard totalMinutes > 0, daysAvailable > 0 else { return (0, 0) }
+        let block = NudgeConfig.commitmentSessionBlockMinutes
+        let perDay = (totalMinutes + daysAvailable - 1) / daysAvailable
+        let rounded = ((perDay + block - 1) / block) * block
+        let session = min(
+            max(rounded, NudgeConfig.commitmentMinSessionMinutes),
+            NudgeConfig.commitmentMaxSessionMinutes
+        )
+        let sessions = min((totalMinutes + session - 1) / session, daysAvailable)
+        return (session, sessions)
     }
 
     // MARK: Dedupe matching (deterministic v1)
@@ -223,14 +305,39 @@ final class ExamPrepSweep {
 
     // MARK: The sweep
 
-    /// Finds exam events in their prep window and creates the missing study
-    /// tasks. Idempotent; safe on every launch/foreground. Returns the
-    /// number of tasks created.
+    /// Finds exam events in their prep window and commitments in their
+    /// generation window, and creates the missing daily tasks for both.
+    /// Idempotent; safe on every launch/foreground. Returns the number of
+    /// tasks created.
     @discardableResult
     func run(modelContext: ModelContext, now: Date = Date()) -> Int {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
+        let tombstones = (try? modelContext.fetch(FetchDescriptor<PrepTombstone>())) ?? []
 
+        let created = examPhase(
+            modelContext: modelContext, tombstones: tombstones,
+            today: today, now: now, calendar: calendar
+        ) + commitmentPhase(
+            modelContext: modelContext, tombstones: tombstones,
+            today: today, now: now, calendar: calendar
+        )
+
+        if created > 0 {
+            try? modelContext.save()
+        }
+        return created
+    }
+
+    // MARK: Exam phase
+
+    private func examPhase(
+        modelContext: ModelContext,
+        tombstones: [PrepTombstone],
+        today: Date,
+        now: Date,
+        calendar: Calendar
+    ) -> Int {
         let events = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
             predicate: #Predicate<NudgeTask> { $0.isInformationalEvent && !$0.isComplete }
         ))) ?? []
@@ -243,12 +350,11 @@ final class ExamPrepSweep {
             .sorted { $0.1 < $1.1 }
         guard !exams.isEmpty else { return 0 }
 
-        // One fetch each for the sweep's three cross-checks.
+        // One fetch each for the sweep's cross-checks.
         let prepSource = "prep"
         let allPrep = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
             predicate: #Predicate<NudgeTask> { $0.source == prepSource }
         ))) ?? []
-        let tombstones = (try? modelContext.fetch(FetchDescriptor<PrepTombstone>())) ?? []
         let openUserTasks = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
             predicate: #Predicate<NudgeTask> {
                 !$0.isComplete && !$0.isInformationalEvent && $0.source != prepSource
@@ -339,23 +445,208 @@ final class ExamPrepSweep {
             }
         }
 
-        if createdTotal > 0 {
-            try? modelContext.save()
-        }
         return createdTotal
+    }
+
+    // MARK: Commitment phase
+
+    /// Two steps, mirroring the exam phase's shape. First, every captured
+    /// commitment whose numbers are now known (the questions answered, or
+    /// never needed) is EXPANDED: a `NudgeCommitment` row takes over as
+    /// the durable parent and the capture task is deleted — its daily
+    /// tasks replace it in the list, and listing both would show the same
+    /// work twice. Second, every commitment still in its window gets its
+    /// missing daily tasks: split work generates once (the whole session
+    /// plan, front-loaded from today); a rate generates on a rolling
+    /// `commitmentHorizonDays` window topped up each run.
+    private func commitmentPhase(
+        modelContext: ModelContext,
+        tombstones: [PrepTombstone],
+        today: Date,
+        now: Date,
+        calendar: Calendar
+    ) -> Int {
+        // ── Step 1: expand ready parents ────────────────────────────────
+        let parents = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> {
+                $0.commitmentShapeRaw != nil && !$0.isComplete && !$0.isInformationalEvent
+            }
+        ))) ?? []
+        for parent in parents {
+            guard let shape = parent.commitmentShape,
+                  let due = parent.dueDate else { continue }   // end unknown → question outstanding
+            let endDay = calendar.startOfDay(for: due)
+            switch shape {
+            case .splitWork:
+                // Needs the total-effort answer, and at least one whole
+                // day before the deadline to place a session on — a
+                // same-day or past deadline stays an ordinary task
+                // (overdue handling covers it) rather than expanding
+                // into nothing.
+                guard let total = parent.estimatedMinutes, total > 0,
+                      (calendar.dateComponents([.day], from: today, to: endDay).day ?? 0) >= 1
+                else { continue }
+            case .rate:
+                guard endDay >= today else { continue }
+            case .quantity:
+                // Arms with the per-day count fields (item 3 of this
+                // cycle). Until then the parent stays an ordinary task.
+                continue
+            }
+            let commitment = NudgeCommitment(
+                title: parent.title,
+                shape: shape,
+                endDate: endDay,
+                totalMinutes: shape == .splitWork ? parent.estimatedMinutes : nil,
+                dailyMinutes: shape == .rate ? parent.estimatedMinutes : nil,
+                dailyCount: shape == .quantity ? parent.commitmentDailyCount : nil,
+                stakesRaw: parent.stakesRaw,
+                category: parent.category,
+                timeWindowRaw: parent.timeWindowRaw,
+                createdAt: now,
+                sourceTaskId: parent.id
+            )
+            modelContext.insert(commitment)
+            modelContext.delete(parent)
+            #if DEBUG
+            print("[ExamPrepSweep] expanded commitment \"\(commitment.title)\" (\(shape.rawValue)) "
+                + "end=\(Self.stamp(endDay)) total=\(commitment.totalMinutes.map(String.init) ?? "—")m "
+                + "daily=\(commitment.dailyMinutes.map(String.init) ?? "—")m")
+            #endif
+        }
+
+        // ── Step 2: generate missing dailies ────────────────────────────
+        let commitments = (try? modelContext.fetch(FetchDescriptor<NudgeCommitment>())) ?? []
+        guard !commitments.isEmpty else { return 0 }
+        let commitmentSource = "commitment"
+        let allDailies = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { $0.source == commitmentSource }
+        ))) ?? []
+
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        var created = 0
+        var announced = false
+
+        for commitment in commitments.sorted(by: { $0.endDate < $1.endDate }) {
+            guard let shape = commitment.shape, shape != .quantity else { continue }
+            let parentID = commitment.id.uuidString
+            let existingStamps = Set(
+                allDailies
+                    .filter { $0.linkedEventId == parentID }
+                    .compactMap { $0.dueDate.map { Self.stamp(calendar.startOfDay(for: $0)) } }
+            )
+            let tombstonedStamps = Set(
+                tombstones.filter { $0.examEventId == parentID }.map(\.dayStamp)
+            )
+
+            let stamps: [String]
+            let lastDayOffset: Int
+            switch shape {
+            case .splitWork:
+                // One-shot: the session plan is computed once, against the
+                // days available at expansion, and never re-divided — a
+                // later run re-planning over fewer remaining days would
+                // quietly inflate the sessions the user already saw. Any
+                // existing daily or tombstone means the plan was laid.
+                guard existingStamps.isEmpty, tombstonedStamps.isEmpty,
+                      let total = commitment.totalMinutes, total > 0 else { continue }
+                let daysRemaining = calendar.dateComponents(
+                    [.day], from: today, to: commitment.endDate
+                ).day ?? 0
+                guard daysRemaining >= 1 else { continue }
+                let daysAvailable = min(daysRemaining, NudgeConfig.commitmentHorizonDays)
+                let plan = Self.splitWorkPlan(totalMinutes: total, daysAvailable: daysAvailable)
+                guard plan.sessions > 0 else { continue }
+                commitment.dailyMinutes = plan.sessionMinutes
+                stamps = Self.missingStamps(
+                    from: today, dayOffsets: 0..<plan.sessions,
+                    existing: [], tombstoned: [], calendar: calendar
+                )
+                lastDayOffset = plan.sessions - 1
+            case .rate:
+                // Rolling: one task per day, today through the end date
+                // INCLUSIVE ("an hour a day until Friday" includes
+                // Friday), capped at the horizon and topped up each run.
+                let daysToEnd = calendar.dateComponents(
+                    [.day], from: today, to: commitment.endDate
+                ).day ?? -1
+                guard daysToEnd >= 0 else { continue }   // expired; row stays as memory
+                lastDayOffset = min(daysToEnd, NudgeConfig.commitmentHorizonDays - 1)
+                stamps = Self.missingStamps(
+                    from: today, dayOffsets: 0..<(lastDayOffset + 1),
+                    existing: existingStamps, tombstoned: tombstonedStamps, calendar: calendar
+                )
+            case .quantity:
+                continue
+            }
+
+            #if DEBUG
+            print("[ExamPrepSweep] commitment \"\(commitment.title)\" (\(shape.rawValue)) "
+                + "end=\(Self.stamp(commitment.endDate)) "
+                + "daily=\(commitment.dailyMinutes.map { "\($0)m" } ?? "—") "
+                + "existing=\(existingStamps.count) "
+                + "tombstoned=\(tombstonedStamps.isEmpty ? "—" : tombstonedStamps.sorted().joined(separator: ","))"
+                + " create=\(stamps.isEmpty ? "—" : stamps.joined(separator: ","))")
+            #endif
+
+            guard !stamps.isEmpty else { continue }
+
+            for stampValue in stamps {
+                guard let day = fmt.date(from: stampValue) else { continue }
+                let task = NudgeTask(
+                    title: commitment.title,
+                    // A bare due DAY, the prep-task convention: stored as
+                    // start of day, read by `sortDeadline` as end-of-day.
+                    dueDate: calendar.startOfDay(for: day),
+                    priority: "medium",
+                    category: commitment.category,
+                    source: "commitment",
+                    estimatedMinutes: commitment.dailyMinutes,
+                    linkedEventId: parentID
+                )
+                // Stakes inherited from the parent commitment, through the
+                // guarded automation path, never the init.
+                task.setStakesFromAutomation(commitment.stakes)
+                task.timeWindow = commitment.timeWindow
+                modelContext.insert(task)
+                created += 1
+            }
+
+            // Announce the soonest-ending commitment that got tasks this
+            // run — silent creation is not acceptable (DESIGN.md).
+            if !announced {
+                Self.writeCommitmentAnnouncement(
+                    title: commitment.title,
+                    shape: shape,
+                    daysUntilEnd: lastDayOffset,
+                    dailyMinutes: commitment.dailyMinutes,
+                    dailyCount: commitment.dailyCount,
+                    now: now
+                )
+                announced = true
+            }
+        }
+
+        return created
     }
 
     // MARK: Deletion tombstone
 
-    /// Records the deletion of a prep task. Call BEFORE deleting the task —
-    /// the tombstone is what survives it. No-op for anything that isn't a
-    /// linked prep task.
+    /// Records the deletion of a generated daily task — prep or commitment.
+    /// Call BEFORE deleting the task — the tombstone is what survives it.
+    /// No-op for anything that isn't a linked generated task.
     ///
-    /// The message-box note is per-EXAM and never repeats: if any earlier
-    /// tombstone for this exam has already shown its note, the new row is
-    /// inserted pre-stamped.
-    static func recordDeletionIfPrep(_ task: NudgeTask, modelContext: ModelContext) {
-        guard task.source == "prep", let examID = task.linkedEventId,
+    /// The message-box note is per-PARENT and never repeats: if any earlier
+    /// tombstone for this parent has already shown its note, the new row is
+    /// inserted pre-stamped. (`PrepTombstone.examEventId`/`examTitle` read
+    /// as "parent id/title" for commitment rows — historical names, one
+    /// mechanism.)
+    static func recordDeletionIfGenerated(_ task: NudgeTask, modelContext: ModelContext) {
+        guard task.source == "prep" || task.source == "commitment",
+              let examID = task.linkedEventId,
               let dueDate = task.dueDate else { return }
         let dayStamp = stamp(Calendar.current.startOfDay(for: dueDate))
 
@@ -364,10 +655,21 @@ final class ExamPrepSweep {
         ))) ?? []
         guard !existing.contains(where: { $0.dayStamp == dayStamp }) else { return }
 
-        // Prefer the live exam's title; fall back to stripping the study
-        // task's own prefix if the event is already gone.
         let examUUID = UUID(uuidString: examID)
         let examTitle: String = {
+            // Commitment daily: the parent row's title (the daily carries
+            // it verbatim, so the task title is its own fallback).
+            if task.source == "commitment" {
+                if let examUUID,
+                   let row = try? modelContext.fetch(FetchDescriptor<NudgeCommitment>(
+                       predicate: #Predicate<NudgeCommitment> { $0.id == examUUID }
+                   )).first {
+                    return row.title
+                }
+                return task.title
+            }
+            // Prep: prefer the live exam's title; fall back to stripping
+            // the study task's own prefix if the event is already gone.
             if let examUUID,
                let exam = try? modelContext.fetch(FetchDescriptor<NudgeTask>(
                    predicate: #Predicate<NudgeTask> { $0.id == examUUID }
@@ -434,5 +736,74 @@ final class ExamPrepSweep {
         let defaults = SharedModelContainer.appGroupDefaults
         guard defaults.object(forKey: announcementShownAtKey) == nil else { return }
         defaults.set(now, forKey: announcementShownAtKey)
+    }
+
+    // MARK: Commitment announcement storage (App Group)
+    //
+    // The prep announcement's mechanism verbatim — single slot, valid on
+    // its creation day, freshness-windowed after first render — with its
+    // own keys because the two can coexist (an exam sweep and a
+    // commitment expansion on the same morning must not overwrite each
+    // other's news).
+
+    static let commitmentAnnouncementTitleKey = "nudge.commitmentAnnouncement.title"
+    static let commitmentAnnouncementShapeKey = "nudge.commitmentAnnouncement.shape"
+    static let commitmentAnnouncementDaysKey = "nudge.commitmentAnnouncement.daysUntilEnd"
+    static let commitmentAnnouncementMinutesKey = "nudge.commitmentAnnouncement.dailyMinutes"
+    static let commitmentAnnouncementCountKey = "nudge.commitmentAnnouncement.dailyCount"
+    static let commitmentAnnouncementCreatedAtKey = "nudge.commitmentAnnouncement.createdAt"
+    static let commitmentAnnouncementShownAtKey = "nudge.commitmentAnnouncement.shownAt"
+
+    private static func writeCommitmentAnnouncement(
+        title: String,
+        shape: CommitmentShape,
+        daysUntilEnd: Int,
+        dailyMinutes: Int?,
+        dailyCount: Int?,
+        now: Date
+    ) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        defaults.set(title, forKey: commitmentAnnouncementTitleKey)
+        defaults.set(shape.rawValue, forKey: commitmentAnnouncementShapeKey)
+        defaults.set(daysUntilEnd, forKey: commitmentAnnouncementDaysKey)
+        defaults.set(dailyMinutes ?? 0, forKey: commitmentAnnouncementMinutesKey)
+        defaults.set(dailyCount ?? 0, forKey: commitmentAnnouncementCountKey)
+        defaults.set(now, forKey: commitmentAnnouncementCreatedAtKey)
+        defaults.removeObject(forKey: commitmentAnnouncementShownAtKey)
+    }
+
+    /// The commitment announcement the message box should show right now,
+    /// if any — same rules as `currentAnnouncement`.
+    static func currentCommitmentAnnouncement(now: Date = Date()) -> CommitmentAnnouncementContext? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard
+            let title = defaults.string(forKey: commitmentAnnouncementTitleKey),
+            let shape = CommitmentShape.parse(defaults.string(forKey: commitmentAnnouncementShapeKey)),
+            let createdAt = defaults.object(forKey: commitmentAnnouncementCreatedAtKey) as? Date,
+            Calendar.current.isDate(createdAt, inSameDayAs: now)
+        else { return nil }
+        let shownAt = defaults.object(forKey: commitmentAnnouncementShownAtKey) as? Date
+        if let shownAt {
+            let ageMinutes = now.timeIntervalSince(shownAt) / 60
+            guard ageMinutes <= Double(NudgeConfig.prepMessageFreshnessMinutes) else { return nil }
+        }
+        let minutes = defaults.integer(forKey: commitmentAnnouncementMinutesKey)
+        let count = defaults.integer(forKey: commitmentAnnouncementCountKey)
+        return CommitmentAnnouncementContext(
+            title: title,
+            shape: shape,
+            daysUntilEnd: defaults.integer(forKey: commitmentAnnouncementDaysKey),
+            dailyMinutes: minutes > 0 ? minutes : nil,
+            dailyCount: count > 0 ? count : nil,
+            createdAt: createdAt,
+            shownAt: shownAt
+        )
+    }
+
+    /// First-render stamp for the commitment announcement.
+    static func markCommitmentAnnouncementShown(now: Date = Date()) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.object(forKey: commitmentAnnouncementShownAtKey) == nil else { return }
+        defaults.set(now, forKey: commitmentAnnouncementShownAtKey)
     }
 }

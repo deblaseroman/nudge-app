@@ -164,6 +164,7 @@ enum TasksMessageComposer {
         aiMessage: TasksMessage? = nil,
         prepNote: PrepNoteContext? = nil,
         prepAnnouncement: PrepAnnouncementContext? = nil,
+        commitmentAnnouncement: CommitmentAnnouncementContext? = nil,
         planOutcome: PlanOutcomeContext? = nil,
         now: Date
     ) -> TasksMessage {
@@ -239,7 +240,7 @@ enum TasksMessageComposer {
         // decision and it stands (the sweep never recreates that day);
         // this just makes sure it was a decision, not an accident.
         if let prepNote {
-            return prepNoteMessage(examTitle: prepNote.examTitle)
+            return prepNoteMessage(examTitle: prepNote.examTitle, isCommitment: prepNote.isCommitment)
         }
 
         // 5 — the sweep created study tasks: say so. The user should never
@@ -249,6 +250,15 @@ enum TasksMessageComposer {
                 examTitle: prepAnnouncement.examTitle,
                 daysUntil: prepAnnouncement.daysUntil
             )
+        }
+
+        // 5.2 — a commitment was expanded into daily tasks: same rule,
+        // same slot (news about generated work, below the day's actionable
+        // facts). The two announcements have separate storage so a same-
+        // morning exam sweep can't overwrite this; whichever survives its
+        // own freshness window renders on later recomposes.
+        if let commitmentAnnouncement {
+            return commitmentAnnouncementMessage(commitmentAnnouncement)
         }
 
         // 5.5 — today's Plan-my-day outcome (cycle 2026-08-02-02: a planner
@@ -287,8 +297,16 @@ enum TasksMessageComposer {
     /// what starts the note's never-repeat clock and the announcement's
     /// freshness window.
 
-    static func prepNoteMessage(examTitle: String) -> TasksMessage {
-        TasksMessage(
+    static func prepNoteMessage(examTitle: String, isCommitment: Bool = false) -> TasksMessage {
+        if isCommitment {
+            return TasksMessage(
+                headline: "Do you still want daily time for “\(examTitle)”?",
+                detail: "A day's task for it was removed — that day won't be re-added. "
+                    + "The other days are still on your list; delete them too "
+                    + "if you'd rather drop it."
+            )
+        }
+        return TasksMessage(
             headline: "Do you still want study time for “\(examTitle)”?",
             detail: "A study task for it was removed — that day won't be re-added. "
                 + "Any other study days are still on your list; delete them too "
@@ -304,6 +322,41 @@ enum TasksMessageComposer {
             detail: "One study task per day, through the day before. "
                 + "Delete any you don't want — removed days stay removed."
         )
+    }
+
+    static func commitmentAnnouncementMessage(_ context: CommitmentAnnouncementContext) -> TasksMessage {
+        // "daysUntilEnd" counts from today to the LAST generated day —
+        // 0 = today only.
+        let span: String
+        switch context.daysUntilEnd {
+        case 0:  span = "for today"
+        case 1:  span = "for today and tomorrow"
+        default: span = "for the next \(context.daysUntilEnd + 1) days"
+        }
+        let perDay: String
+        if let minutes = context.dailyMinutes {
+            perDay = "\(durationPhrase(minutes: minutes)) a day"
+        } else if let count = context.dailyCount {
+            perDay = "\(count) a day"
+        } else {
+            perDay = "one task a day"
+        }
+        return TasksMessage(
+            headline: "“\(context.title)” is set up \(span) — \(perDay).",
+            detail: "One task per day, on your list and ready to place. "
+                + "Delete any day you don't want — removed days stay removed."
+        )
+    }
+
+    /// "60" → "an hour", "90" → "1.5 hours", "30" → "30 minutes".
+    private static func durationPhrase(minutes: Int) -> String {
+        if minutes == 60 { return "an hour" }
+        if minutes % 60 == 0 { return "\(minutes / 60) hours" }
+        if minutes > 60 {
+            let hours = Double(minutes) / 60
+            return String(format: "%g hours", hours)
+        }
+        return "\(minutes) minutes"
     }
 
     // MARK: Plan-outcome state
@@ -515,6 +568,9 @@ struct TasksMessageBox: View {
     var prepNote: PrepNoteContext? = nil
     /// "I've added study time" announcement from the exam-prep sweep.
     var prepAnnouncement: PrepAnnouncementContext? = nil
+    /// "This commitment is set up" announcement from the commitment
+    /// expansion (same sweep, own storage slot).
+    var commitmentAnnouncement: CommitmentAnnouncementContext? = nil
     /// Today's planner outcome (refusals + the auto-plan announcement).
     var planOutcome: PlanOutcomeContext? = nil
     /// Fired when the note state actually RENDERS (not merely exists) —
@@ -524,6 +580,8 @@ struct TasksMessageBox: View {
     var onPrepNoteShown: (() -> Void)? = nil
     /// Same, for the announcement — starts its freshness window.
     var onPrepAnnouncementShown: (() -> Void)? = nil
+    /// Same, for the commitment announcement.
+    var onCommitmentAnnouncementShown: (() -> Void)? = nil
 
     @State private var isExpanded = false
 
@@ -540,6 +598,7 @@ struct TasksMessageBox: View {
             rationale: rationale,
             prepNote: prepNote,
             prepAnnouncement: prepAnnouncement,
+            commitmentAnnouncement: commitmentAnnouncement,
             planOutcome: planOutcome,
             now: clock.now
         )
@@ -603,7 +662,10 @@ struct TasksMessageBox: View {
 
     private func reportPrepDisplays(_ message: TasksMessage) {
         if let prepNote,
-           message == TasksMessageComposer.prepNoteMessage(examTitle: prepNote.examTitle) {
+           message == TasksMessageComposer.prepNoteMessage(
+               examTitle: prepNote.examTitle,
+               isCommitment: prepNote.isCommitment
+           ) {
             onPrepNoteShown?()
         }
         if let prepAnnouncement,
@@ -612,6 +674,10 @@ struct TasksMessageBox: View {
                daysUntil: prepAnnouncement.daysUntil
            ) {
             onPrepAnnouncementShown?()
+        }
+        if let commitmentAnnouncement,
+           message == TasksMessageComposer.commitmentAnnouncementMessage(commitmentAnnouncement) {
+            onCommitmentAnnouncementShown?()
         }
     }
 }

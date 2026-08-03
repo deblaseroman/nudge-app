@@ -21,6 +21,11 @@ struct TasksTabView: View {
     /// only exist for exams whose prep tasks the user deleted, a handful
     /// at most.
     @Query private var prepTombstones: [PrepTombstone]
+    /// Expanded commitments — distinguishes a commitment tombstone (its
+    /// parent ID matches one of these rows) from an exam tombstone so the
+    /// message-box note gets the right copy. One row per expanded
+    /// commitment; unbounded @Query is fine.
+    @Query private var commitments: [NudgeCommitment]
 
     @Binding var selectedTab: AppTab
     @State private var activeSheet: TaskSheetDestination?
@@ -82,7 +87,13 @@ struct TasksTabView: View {
                 return false
             }
             .max { $0.deletedAt < $1.deletedAt }
-        return candidate.map { PrepNoteContext(examTitle: $0.examTitle, examEventId: $0.examEventId) }
+        return candidate.map { row in
+            PrepNoteContext(
+                examTitle: row.examTitle,
+                examEventId: row.examEventId,
+                isCommitment: commitments.contains { $0.id.uuidString == row.examEventId }
+            )
+        }
     }
 
     /// Stamps every un-shown tombstone row for the exam whose note just
@@ -297,12 +308,16 @@ struct TasksTabView: View {
                     rationale: refineRationale,
                     prepNote: pendingPrepNote,
                     prepAnnouncement: ExamPrepSweep.currentAnnouncement(),
+                    commitmentAnnouncement: ExamPrepSweep.currentCommitmentAnnouncement(),
                     planOutcome: planOutcome,
                     onPrepNoteShown: {
                         if let note = pendingPrepNote { markPrepNoteShown(note) }
                     },
                     onPrepAnnouncementShown: {
                         ExamPrepSweep.markAnnouncementShown()
+                    },
+                    onCommitmentAnnouncementShown: {
+                        ExamPrepSweep.markCommitmentAnnouncementShown()
                     }
                 )
                 HStack(alignment: .center) {
@@ -450,9 +465,10 @@ struct TasksTabView: View {
                             refreshNotifications()
                         },
                         onDelete: {
-                            // A deleted study task is a decision that
-                            // persists — tombstone before the row is gone.
-                            ExamPrepSweep.recordDeletionIfPrep(task, modelContext: modelContext)
+                            // A deleted generated task (study day or
+                            // commitment day) is a decision that persists —
+                            // tombstone before the row is gone.
+                            ExamPrepSweep.recordDeletionIfGenerated(task, modelContext: modelContext)
                             modelContext.delete(task)
                             try? modelContext.save()
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -789,10 +805,11 @@ struct TasksTabView: View {
             .padding(.vertical, 32)
     }
 
-    // MARK: Unscheduled tab (with per-exam prep collapsing)
+    // MARK: Unscheduled tab (with per-parent generated-task collapsing)
 
-    /// A row in the Unscheduled tab: a plain task, or an exam's prep tasks
-    /// folded into one group (visible head + collapsible rest).
+    /// A row in the Unscheduled tab: a plain task, or a parent's generated
+    /// daily tasks (exam prep OR commitment dailies — a 2-week rate is 14
+    /// rows) folded into one group (visible head + collapsible rest).
     private enum UnscheduledItem: Identifiable {
         case task(NudgeTask)
         case prepGroup(examId: String, head: NudgeTask, rest: [NudgeTask])
@@ -812,14 +829,15 @@ struct TasksTabView: View {
     /// "Show N more" control (the Events section's collapse idiom).
     private var unscheduledItems: [UnscheduledItem] {
         let listed = unscheduledTasks
+        let generatedSources: Set<String> = ["prep", "commitment"]
         let prepByExam = Dictionary(
-            grouping: listed.filter { $0.source == "prep" && $0.linkedEventId != nil },
+            grouping: listed.filter { generatedSources.contains($0.source) && $0.linkedEventId != nil },
             by: { $0.linkedEventId ?? "" }
         )
         var seenExams = Set<String>()
         var items: [UnscheduledItem] = []
         for task in listed {
-            if task.source == "prep", let examId = task.linkedEventId {
+            if generatedSources.contains(task.source), let examId = task.linkedEventId {
                 guard seenExams.insert(examId).inserted else { continue }
                 let group = prepByExam[examId] ?? [task]
                 items.append(.prepGroup(
@@ -854,7 +872,11 @@ struct TasksTabView: View {
                             if expandedPrepExams.contains(examId) {
                                 ForEach(rest, id: \.id) { taskRow($0) }
                             }
-                            prepToggleButton(examId: examId, hiddenCount: rest.count)
+                            prepToggleButton(
+                            examId: examId,
+                            hiddenCount: rest.count,
+                            unit: head.source == "prep" ? "study day" : "day"
+                        )
                         }
                     }
                 }
@@ -862,9 +884,10 @@ struct TasksTabView: View {
         }
     }
 
-    /// Per-exam "Show N more" control — same styling as the Events tab's
-    /// show-more-days button, one idiom for both collapses.
-    private func prepToggleButton(examId: String, hiddenCount: Int) -> some View {
+    /// Per-parent "Show N more" control — same styling as the Events tab's
+    /// show-more-days button, one idiom for all the collapses. `unit` is
+    /// "study day" for exam prep, "day" for commitment dailies.
+    private func prepToggleButton(examId: String, hiddenCount: Int, unit: String) -> some View {
         let isExpanded = expandedPrepExams.contains(examId)
         return Button {
             NudgeHaptics.light()
@@ -877,8 +900,8 @@ struct TasksTabView: View {
             }
         } label: {
             Text(isExpanded
-                 ? "Show fewer study days"
-                 : "Show \(hiddenCount) more study day\(hiddenCount == 1 ? "" : "s")")
+                 ? "Show fewer \(unit)s"
+                 : "Show \(hiddenCount) more \(unit)\(hiddenCount == 1 ? "" : "s")")
                 .font(.custom(NudgeTheme.fontMedium, size: 14))
                 .foregroundColor(NudgeTheme.primary)
                 .frame(maxWidth: .infinity)
@@ -1185,12 +1208,13 @@ struct TasksTabView: View {
 
     private func deleteTask(_ task: NudgeTask) {
         NudgeHaptics.light()
-        // A deleted study task is a decision that persists (`DESIGN.md`) —
-        // record the tombstone BEFORE the row is gone so `ExamPrepSweep`
-        // never recreates this day. (The DEBUG wipe-everything helper below
-        // deliberately does NOT tombstone: it resets a test store, and
-        // poisoning every exam's sweep would defeat the reset.)
-        ExamPrepSweep.recordDeletionIfPrep(task, modelContext: modelContext)
+        // A deleted generated task (study day or commitment day) is a
+        // decision that persists (`DESIGN.md`) — record the tombstone
+        // BEFORE the row is gone so `ExamPrepSweep` never recreates this
+        // day. (The DEBUG wipe-everything helper below deliberately does
+        // NOT tombstone: it resets a test store, and poisoning every
+        // sweep would defeat the reset.)
+        ExamPrepSweep.recordDeletionIfGenerated(task, modelContext: modelContext)
         withAnimation(NudgeAnimation.standard) {
             modelContext.delete(task)
         }
