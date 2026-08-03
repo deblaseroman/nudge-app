@@ -210,6 +210,23 @@ final class NudgeTask {
     /// UI may write `stakes` directly, and it must set this flag too.
     var stakesIsUserSet: Bool = false
 
+    /// Commitment shape detected at capture — raw storage for
+    /// `CommitmentShape` ("splitwork" | "rate" | "quantity"), set on the
+    /// PARENT task a brain dump like "an hour a day until Friday"
+    /// produces (cycle 2026-08-03-01). Non-nil marks the task as a
+    /// commitment awaiting expansion: once its numbers are known
+    /// (`estimatedMinutes` = total effort for splitWork / per-day
+    /// duration for rate; `dueDate` = the end; `commitmentDailyCount`
+    /// for quantity), `ExamPrepSweep` converts it into a
+    /// `NudgeCommitment` row plus daily `source == "commitment"` tasks
+    /// and deletes this parent. Nil = an ordinary task; additive,
+    /// property-level default, so existing stores open unchanged.
+    var commitmentShapeRaw: String? = nil
+    /// Quantity shape only: units per day ("three applications a day"
+    /// → 3), carried until expansion stamps it onto
+    /// `NudgeCommitment.dailyCount`. Inert on every other task.
+    var commitmentDailyCount: Int? = nil
+
     /// Coarse "when is this task appropriate" band — raw storage for
     /// `TaskTimeWindow` ("anytime" | "daytime" | "businesshours"),
     /// assigned by the capture classification (cycle 2026-08-02-03).
@@ -303,6 +320,14 @@ final class NudgeTask {
         guard !stakesIsUserSet else { return }
         guard let newValue else { return }
         stakesRaw = newValue.rawValue
+    }
+
+    /// Typed view of `commitmentShapeRaw`. Unknown or empty strings → nil
+    /// (an unrecognized shape from a drifting AI response reads as "not a
+    /// commitment", the safe default — the task stays an ordinary task).
+    var commitmentShape: CommitmentShape? {
+        get { CommitmentShape.parse(commitmentShapeRaw) }
+        set { commitmentShapeRaw = newValue?.rawValue }
     }
 
     /// Typed view of `timeWindowRaw`. Unknown or empty strings → nil.

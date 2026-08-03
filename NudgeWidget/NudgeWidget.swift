@@ -270,6 +270,7 @@ let widgetSchema = Schema([
     CategoryDurationStats.self,
     EventDurationStats.self,
     PrepTombstone.self,
+    NudgeCommitment.self,
 ])
 
 private let widgetAppGroupID = "group.com.deblaser.nudge"

@@ -19,6 +19,10 @@ struct HomeTabView: View {
     @Query(sort: \DailySession.startedAt, order: .reverse) private var sessions: [DailySession]
     @Query private var allTasks: [NudgeTask]
     @Query(filter: #Predicate<NudgeTask> { !$0.isComplete }) private var incompleteTasks: [NudgeTask]
+    /// Expanded commitments — the memory behind "a second module of the
+    /// same course should not ask again". Unbounded @Query is fine: one
+    /// row per expanded commitment, a handful ever.
+    @Query private var commitments: [NudgeCommitment]
 
     @State private var composerText = ""
     @State private var messages: [HomeChatMessage] = []
@@ -311,7 +315,8 @@ struct HomeTabView: View {
                 let response = try await ClaudeService.shared.sendChat(
                     conversationHistory: Array(history),
                     userMessage: messageText,
-                    existingTasks: existingContext
+                    existingTasks: existingContext,
+                    knownCommitmentSizes: knownCommitmentSizes
                 )
 
                 let assistantMessage = HomeChatMessage(role: .assistant, text: response.message)
@@ -456,6 +461,14 @@ struct HomeTabView: View {
                         // placed). Unknown strings parse to nil, which
                         // falls to the deterministic inference at read.
                         task.timeWindow = TaskTimeWindow.parse(taskData.timeWindow)
+                        // Commitment shape (cycle 2026-08-03-01) — marks the
+                        // task for expansion into daily tasks once its
+                        // numbers are known. Unknown strings parse to nil:
+                        // the task stays an ordinary task, the safe default.
+                        task.commitmentShape = CommitmentShape.parse(taskData.commitmentShape)
+                        if let count = taskData.commitmentDailyCount, count > 0 {
+                            task.commitmentDailyCount = min(count, 99)
+                        }
                     }
                     modelContext.insert(task)
                     newlyCreatedTasks.append(task)
@@ -509,6 +522,24 @@ struct HomeTabView: View {
 
             isWaitingForAI = false
         }
+    }
+
+    /// Previously-answered commitment sizes for the capture prompt's
+    /// KNOWN COMMITMENT SIZES context — one line per sized splitWork
+    /// commitment. The rows themselves are the memory; matching a new
+    /// commitment against them is the model's job (it rides the one
+    /// capture call, so there is no second round trip).
+    private var knownCommitmentSizes: [String] {
+        commitments
+            .filter { $0.shape == .splitWork }
+            .compactMap { commitment in
+                guard let total = commitment.totalMinutes, total > 0 else { return nil }
+                let hours = Double(total) / 60
+                let sized = hours == hours.rounded()
+                    ? "\(Int(hours)) hour\(Int(hours) == 1 ? "" : "s")"
+                    : String(format: "%.1f hours", hours)
+                return "\"\(commitment.title)\" ≈ \(sized)"
+            }
     }
 
     /// Simple keyword intent: is the user asking to plan / restructure / move

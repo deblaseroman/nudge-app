@@ -200,8 +200,8 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime"}
-    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null}
+    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events. "commitmentShape" / "commitmentDailyCount" are set per the COMMITMENTS section; null on everything that isn't a commitment.
 
     ORDERED PLANS (sequenceIndex):
     - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
@@ -209,6 +209,23 @@ class ClaudeService {
     - CAPTURE-FIRST: every item in the plan MUST be saved in new_tasks. Never drop or merely ask about an item — even if a duration or detail is fuzzy, save it now (you may still ask a follow-up in "message"). A previous bug dropped an item that was only asked about; do not repeat that.
     - Stated durations ("for an hour", "30 min") still go in estimatedMinutes. Do NOT set dueDate/dueTime from a plan's order — a plan is an ordered list, not a timed schedule.
     - When you capture a plan, your "message" MUST render it back as a numbered list so the user sees the order, e.g. "Got it — here's your plan: 1. Gym  2. CVS  3. Shower + breakfast  4. Python (1h)". Plain text is fine.
+
+    COMMITMENTS (rates, split work, daily quantities):
+    Some dumps state ONGOING work rather than a one-shot task. Detect the shape and set "commitmentShape" on that task (isEvent: false always — commitments are work, never events):
+    - "splitWork": a finite body of work with a deadline whose size the app can't know. "Finish module 4 by Friday", "get through the reading list before the exam". Set estimatedMinutes to the TOTAL effort in minutes IF the user states it ("about 6 hours" → 360); otherwise leave estimatedMinutes null.
+    - "rate": a stated per-day cadence. "An hour a day", "30 minutes every day". Set estimatedMinutes to the PER-DAY duration (an hour a day → 60). Set dueDate to the end date if one is stated.
+    - "quantity": a per-day COUNT. "Three job applications a day", "two chapters a day". Set commitmentDailyCount to the count (3, 2, …). This is ONE commitment, never N separate tasks. Set dueDate to the end date if stated.
+    A plain task with a deadline ("finish my essay by Friday") is NOT a commitment — commitmentShape null. Only use a shape when the dump states ongoing/divisible/daily work.
+
+    COMMITMENT FOLLOW-UP QUESTIONS — exactly two exist, and ONLY these two:
+    - A "splitWork" commitment with estimatedMinutes null → ask roughly how many hours the whole thing is. ("Roughly how many hours is Module 4?")
+    - A "rate" or "quantity" commitment with dueDate null → ask when it ends. ("Until when — what day does the app testing run to?")
+    Rules:
+    - Save everything FIRST (capture-first, same as timeless events). The question goes at the END of "message", never instead of saving.
+    - Combine every needed question (including the timeless-events one) into ONE short closing question — never one message per item, never a second follow-up for the same dump.
+    - NEVER ask anything else about a commitment. Not the course name, not the platform, not how it's going — a question that doesn't change what the app does costs attention and returns nothing.
+    - When the user answers, use task_updates on the existing task: total hours → estimatedMinutes (in minutes); an end date → dueDate. Do not create new tasks from an answer.
+    - KNOWN COMMITMENT SIZES: if the context lists a known size whose work is clearly the same kind (another module of the same course, the next chapter of the same book), set estimatedMinutes from it instead of asking. Mention the reuse briefly in "message" ("counting Module 5 at about 8 hours like the last one").
 
     task_updates format (for updating existing tasks by id):
     {"id": "uuid-string", "estimatedMinutes": 60, "priority": "high", "dueDate": "YYYY-MM-DD"}
@@ -294,7 +311,8 @@ class ClaudeService {
     func sendChat(
         conversationHistory: [ChatMessage],
         userMessage: String,
-        existingTasks: [ExistingTaskContext] = []
+        existingTasks: [ExistingTaskContext] = [],
+        knownCommitmentSizes: [String] = []
     ) async throws -> ClaudeResponse {
         let todayFormatter = DateFormatter()
         todayFormatter.dateFormat = "EEEE, MMMM d, yyyy"
@@ -437,6 +455,23 @@ class ClaudeService {
             If a task below has estimatedMinutes set, DO NOT ask about duration.
             [\n\(taskEntries)\n]
             =========================================
+            """
+        }
+
+        // Sizes the user has already answered for past commitments — the
+        // "remember the answers" half of the commitment questions: a second
+        // module of the same course must not ask again. Sourced from
+        // `NudgeCommitment` rows (splitWork with a totalMinutes answer);
+        // matching "is this the same kind of work" is delegated to the
+        // model so it rides the one capture call.
+        if !knownCommitmentSizes.isEmpty {
+            fullSystemPrompt += """
+
+
+            ===== KNOWN COMMITMENT SIZES =====
+            The user has previously sized these. If a NEW splitWork commitment is clearly the same kind of work, set estimatedMinutes from the matching size and DO NOT ask.
+            \(knownCommitmentSizes.map { "- \($0)" }.joined(separator: "\n"))
+            ==================================
             """
         }
 
@@ -1166,6 +1201,8 @@ struct TaskData: Codable {
     let sequenceIndex: Int?         // 1-based order when the user states a plan ("first X, then Y")
     let prepLeadDays: Int?          // exam events only: coarse study-lead band (3|7|14); anything else → nil via ExamPrepSweep.validLeadBand
     let timeWindow: String?         // tasks only: "anytime" | "daytime" | "businessHours" appropriateness band; unknown/missing → nil via TaskTimeWindow.parse
+    let commitmentShape: String?    // "splitWork" | "rate" | "quantity" on commitment tasks; unknown/missing → nil via CommitmentShape.parse
+    let commitmentDailyCount: Int?  // quantity commitments only: units per day
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -1181,6 +1218,8 @@ struct TaskData: Codable {
         case sequenceIndex = "sequenceIndex"
         case prepLeadDays = "prepLeadDays"
         case timeWindow = "timeWindow"
+        case commitmentShape = "commitmentShape"
+        case commitmentDailyCount = "commitmentDailyCount"
     }
 }
 

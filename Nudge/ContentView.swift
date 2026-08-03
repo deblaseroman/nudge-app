@@ -323,5 +323,6 @@ struct OnboardingPlaceholderView: View {
             CategoryDurationStats.self,
             EventDurationStats.self,
             PrepTombstone.self,
+            NudgeCommitment.self,
         ], inMemory: true)
 }
