@@ -87,6 +87,13 @@ final class NudgeCommitment {
     var dailyMinutes: Int?
     /// `quantity` only: units per day ("three applications" → 3).
     var dailyCount: Int?
+    /// `quantity` only: the accumulated shortfall from missed days, in
+    /// units, ALREADY capped at `commitmentCarryCapDays × dailyCount` at
+    /// every write — a week of misses stores the same number as three
+    /// days of misses. This row is the durable accumulator; the sweep
+    /// stamps it onto today's task as `carriedCount` for display, and
+    /// consumes each past day exactly once as it absorbs its shortfall.
+    var carryUnits: Int = 0
     /// Inherited onto every generated daily task (via
     /// `setStakesFromAutomation`, same as prep).
     var stakesRaw: String?

@@ -1154,6 +1154,13 @@ struct TasksTabView: View {
             let completionDate = Date()
             task.completedAt = completionDate
 
+            // Completing a count task wholesale (timeline long-press, or
+            // the final unit tap that funnels here) means the whole day's
+            // count — the two numbers must agree.
+            if let target = task.effectiveTargetCount {
+                task.completedCount = target
+            }
+
             // Create a persistent record so stats survive task deletion
             let sourceID = task.id
             let existing = try? modelContext.fetch(
@@ -1172,6 +1179,12 @@ struct TasksTabView: View {
             }
         } else {
             task.completedAt = nil
+
+            // Un-completing a count task steps back one unit — otherwise
+            // the count still reads "met" and the next tap re-completes.
+            if let target = task.effectiveTargetCount {
+                task.completedCount = max(0, target - 1)
+            }
 
             // Remove the record if unchecking
             let sourceID = task.id
@@ -1641,6 +1654,7 @@ enum StakesRowStyle {
 
 struct TaskRowView: View {
     @Bindable var task: NudgeTask
+    @Environment(\.modelContext) private var modelContext
     let isLastIncompleteTask: Bool
     let onOpen: () -> Void
     let onToggleComplete: () -> Void
@@ -1655,22 +1669,29 @@ struct TaskRowView: View {
                 .fill(priorityColor)
                 .frame(width: 10, height: 10)
 
-            Button(action: onToggleComplete) {
-                ZStack {
-                    Circle()
-                        .stroke(task.isComplete ? NudgeTheme.primary : NudgeTheme.border, lineWidth: 2)
-                        .fill(task.isComplete ? NudgeTheme.primary : Color.clear)
-                        .frame(width: 28, height: 28)
+            // Quantity tasks ("three applications a day") replace the single
+            // checkbox with per-unit progress: the task does not complete
+            // until the count is met. Everything else keeps the checkbox.
+            if let target = task.effectiveTargetCount, !task.isComplete {
+                countControl(target: target)
+            } else {
+                Button(action: onToggleComplete) {
+                    ZStack {
+                        Circle()
+                            .stroke(task.isComplete ? NudgeTheme.primary : NudgeTheme.border, lineWidth: 2)
+                            .fill(task.isComplete ? NudgeTheme.primary : Color.clear)
+                            .frame(width: 28, height: 28)
 
-                    if task.isComplete {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.white)
+                        if task.isComplete {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
+                .checkboxBounce(isComplete: $task.isComplete)
             }
-            .buttonStyle(.plain)
-            .checkboxBounce(isComplete: $task.isComplete)
 
             VStack(alignment: .leading, spacing: 4) {
                 ZStack(alignment: .leading) {
@@ -1762,6 +1783,83 @@ struct TaskRowView: View {
         .taskCompletionEffect(isComplete: $task.isComplete)
         .contentShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
         .onTapGesture(perform: onOpen)
+    }
+
+    // MARK: - Quantity count control (item 3, cycle 2026-08-03-01)
+
+    /// Per-unit completion for a count task. Under four units: one small
+    /// checkbox per unit, tap each (tap a filled one to step back). Four
+    /// or more: one control with the running number, tap to increment.
+    /// `target` is `effectiveTargetCount` — base plus capped carry — so
+    /// the displayed number is always the capped one. `NudgeTheme` colors
+    /// only; no new colors.
+    @ViewBuilder
+    private func countControl(target: Int) -> some View {
+        let done = min(task.completedCount ?? 0, target)
+        if target < 4 {
+            HStack(spacing: 6) {
+                ForEach(0..<target, id: \.self) { index in
+                    Button {
+                        setCount(index < done ? done - 1 : done + 1)
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .stroke(index < done ? NudgeTheme.primary : NudgeTheme.border, lineWidth: 2)
+                                .fill(index < done ? NudgeTheme.primary : Color.clear)
+                                .frame(width: 22, height: 22)
+
+                            if index < done {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(done) of \(target) done")
+            .accessibilityHint("Tap to mark one more done")
+        } else {
+            Button {
+                setCount(done + 1)
+            } label: {
+                Text("\(done)/\(target)")
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 12))
+                    .foregroundColor(done > 0 ? .white : NudgeTheme.textSecondary)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .background(done > 0 ? NudgeTheme.primary : Color.clear)
+                    .overlay(
+                        Capsule().stroke(
+                            done > 0 ? NudgeTheme.primary : NudgeTheme.border,
+                            lineWidth: 2
+                        )
+                    )
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(done) of \(target) done")
+            .accessibilityHint("Tap to mark one more done")
+        }
+    }
+
+    /// The one write path for unit progress. Reaching the target funnels
+    /// through `onToggleComplete` so a met count gets the full completion
+    /// treatment (record, save, haptics, arbiter); anything short of it
+    /// just persists the new count.
+    private func setCount(_ newValue: Int) {
+        guard let target = task.effectiveTargetCount else { return }
+        let clamped = max(0, min(newValue, target))
+        guard clamped != min(task.completedCount ?? 0, target) else { return }
+        NudgeHaptics.light()
+        task.completedCount = clamped
+        if clamped >= target {
+            onToggleComplete()
+        } else {
+            try? modelContext.save()
+        }
     }
 
     /// Leading importance dot. Reads STAKES (not priority) so importance is

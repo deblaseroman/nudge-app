@@ -227,6 +227,25 @@ final class NudgeTask {
     /// `NudgeCommitment.dailyCount`. Inert on every other task.
     var commitmentDailyCount: Int? = nil
 
+    /// Quantity-per-day fields (cycle 2026-08-03-01, item 3). "Three
+    /// applications a day" is ONE task with a count, not three tasks —
+    /// the model has no notion of partial completion, so the count
+    /// carries it. All nil on a normal task; additive, property-level
+    /// defaults.
+    ///
+    /// The day's base target in units. Set by the commitment sweep on
+    /// quantity dailies (from `NudgeCommitment.dailyCount`).
+    var targetCount: Int? = nil
+    /// Units done so far today. Nil reads as 0. The task completes only
+    /// when this reaches `effectiveTargetCount`.
+    var completedCount: Int? = nil
+    /// Capped carry from missed prior days, stamped onto TODAY's task by
+    /// the sweep (the durable accumulator is `NudgeCommitment.carryUnits`;
+    /// this is its display copy, so the number the row shows is always
+    /// the capped one). Never exceeds
+    /// `commitmentCarryCapDays × targetCount`.
+    var carriedCount: Int? = nil
+
     /// Coarse "when is this task appropriate" band — raw storage for
     /// `TaskTimeWindow` ("anytime" | "daytime" | "businesshours"),
     /// assigned by the capture classification (cycle 2026-08-02-03).
@@ -320,6 +339,13 @@ final class NudgeTask {
         guard !stakesIsUserSet else { return }
         guard let newValue else { return }
         stakesRaw = newValue.rawValue
+    }
+
+    /// The number the row displays and completion requires: the base
+    /// target plus the (already-capped) carry. Nil for non-count tasks.
+    var effectiveTargetCount: Int? {
+        guard let targetCount else { return nil }
+        return targetCount + (carriedCount ?? 0)
     }
 
     /// Typed view of `commitmentShapeRaw`. Unknown or empty strings → nil

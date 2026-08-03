@@ -489,9 +489,8 @@ final class ExamPrepSweep {
             case .rate:
                 guard endDay >= today else { continue }
             case .quantity:
-                // Arms with the per-day count fields (item 3 of this
-                // cycle). Until then the parent stays an ordinary task.
-                continue
+                guard let count = parent.commitmentDailyCount, count > 0,
+                      endDay >= today else { continue }
             }
             let commitment = NudgeCommitment(
                 title: parent.title,
@@ -531,7 +530,7 @@ final class ExamPrepSweep {
         var announced = false
 
         for commitment in commitments.sorted(by: { $0.endDate < $1.endDate }) {
-            guard let shape = commitment.shape, shape != .quantity else { continue }
+            guard let shape = commitment.shape else { continue }
             let parentID = commitment.id.uuidString
             let existingStamps = Set(
                 allDailies
@@ -566,7 +565,7 @@ final class ExamPrepSweep {
                     existing: [], tombstoned: [], calendar: calendar
                 )
                 lastDayOffset = plan.sessions - 1
-            case .rate:
+            case .rate, .quantity:
                 // Rolling: one task per day, today through the end date
                 // INCLUSIVE ("an hour a day until Friday" includes
                 // Friday), capped at the horizon and topped up each run.
@@ -579,8 +578,6 @@ final class ExamPrepSweep {
                     from: today, dayOffsets: 0..<(lastDayOffset + 1),
                     existing: existingStamps, tombstoned: tombstonedStamps, calendar: calendar
                 )
-            case .quantity:
-                continue
             }
 
             #if DEBUG
@@ -611,6 +608,12 @@ final class ExamPrepSweep {
                 // guarded automation path, never the init.
                 task.setStakesFromAutomation(commitment.stakes)
                 task.timeWindow = commitment.timeWindow
+                // Quantity: one task with a count, never N tasks. The
+                // carry stamp comes later, in the carry walk.
+                if shape == .quantity, let count = commitment.dailyCount, count > 0 {
+                    task.targetCount = count
+                    task.completedCount = 0
+                }
                 modelContext.insert(task)
                 created += 1
             }
@@ -630,7 +633,81 @@ final class ExamPrepSweep {
             }
         }
 
+        // ── Step 3: quantity carry-over ─────────────────────────────────
+        applyQuantityCarry(
+            commitments: commitments, modelContext: modelContext,
+            today: today, calendar: calendar
+        )
+
         return created
+    }
+
+    /// Rolls missed quantity units forward, capped at
+    /// `commitmentCarryCapDays` days' worth — a week of misses shows the
+    /// same number as three days of misses, because an uncapped carry is
+    /// a number the user cannot hit, and a number you cannot hit is the
+    /// reason not to start (`DESIGN.md`: never show an impossible target).
+    ///
+    /// Mechanics: `NudgeCommitment.carryUnits` is the durable accumulator.
+    /// Each PAST daily is consumed exactly once, in date order — its
+    /// shortfall (base + carry-in − done, floored at 0, capped) becomes
+    /// the new carry, and the row is then deleted: the carry IS the
+    /// reschedule (a missed day moves forward, it doesn't sit red in
+    /// Overdue — rescheduled with more urgency, not punishment), completed
+    /// history lives in `CompletedTaskRecord`, and consuming the row is
+    /// what makes re-running the walk a no-op. A user-deleted (tombstoned)
+    /// day simply never appears — no task, no target, carry passes
+    /// through unchanged. Today's task then gets the accumulator stamped
+    /// as `carriedCount`, so the displayed number is always the capped one.
+    private func applyQuantityCarry(
+        commitments: [NudgeCommitment],
+        modelContext: ModelContext,
+        today: Date,
+        calendar: Calendar
+    ) {
+        var mutated = false
+        for commitment in commitments {
+            guard commitment.shape == .quantity,
+                  let base = commitment.dailyCount, base > 0 else { continue }
+            let cap = base * NudgeConfig.commitmentCarryCapDays
+            let parentID = commitment.id.uuidString
+            let commitmentSource = "commitment"
+            let dailies = ((try? modelContext.fetch(FetchDescriptor<NudgeTask>(
+                predicate: #Predicate<NudgeTask> {
+                    $0.source == commitmentSource && $0.linkedEventId == parentID
+                }
+            ))) ?? []).sorted { ($0.dueDate ?? .distantPast) < ($1.dueDate ?? .distantPast) }
+
+            for task in dailies {
+                guard let due = task.dueDate,
+                      calendar.startOfDay(for: due) < today else { continue }
+                let effective = base + commitment.carryUnits
+                let done = task.isComplete
+                    ? effective
+                    : min(task.completedCount ?? 0, effective)
+                commitment.carryUnits = min(cap, max(0, effective - done))
+                modelContext.delete(task)
+                mutated = true
+                #if DEBUG
+                print("[ExamPrepSweep] \"\(commitment.title)\" consumed \(Self.stamp(due)): "
+                    + "did \(done)/\(effective) → carry \(commitment.carryUnits) (cap \(cap))")
+                #endif
+            }
+
+            if let todayTask = dailies.first(where: { task in
+                guard let due = task.dueDate else { return false }
+                return calendar.isDate(due, inSameDayAs: today)
+            }) {
+                let stamped = commitment.carryUnits > 0 ? commitment.carryUnits : nil
+                if todayTask.carriedCount != stamped {
+                    todayTask.carriedCount = stamped
+                    mutated = true
+                }
+            }
+        }
+        if mutated {
+            try? modelContext.save()
+        }
     }
 
     // MARK: Deletion tombstone
