@@ -23,15 +23,37 @@ import WidgetKit
 enum DayPlanEngine {
 
     enum Outcome {
-        case placed(count: Int, titles: [String])
+        /// `displaced` names auto placements evicted to make room for a
+        /// generated session (cycle 2026-08-03-01 item 4) — empty in the
+        /// common case. A displaced task is back in Unscheduled and the
+        /// announcement must say so; silently un-placing is the
+        /// vanishing-task shape.
+        case placed(count: Int, titles: [String], displaced: [String])
         /// Nothing open and unplaced — a correct refusal.
         case noCandidates
         /// Candidates exist but no free gap fits any of them.
-        case noRoom
+        /// `contention` carries the generated session that a displacement
+        /// WOULD have fit, except every helpful eviction was equal-or-
+        /// higher stakes — the app proposes, the user decides, so the
+        /// message box names the contention instead of evicting.
+        case noRoom(contention: String?)
         /// No planning window (late night, or a sleep window shorter than
         /// its quiet buffers). Backstop — `DayWindow`'s wake anchor makes
         /// the all-day version impossible on sane profiles.
         case windowCollapsed
+    }
+
+    /// Displacement ordering (higher = more consequential). Same
+    /// convention as the morning prompt's `morningStakesRank`: nil —
+    /// never classified — ranks ABOVE `.low`, because absence of
+    /// evidence is not a statement that the item is minor.
+    private static func stakesRank(_ stakes: TaskStakes?) -> Int {
+        switch stakes {
+        case .high:   return 3
+        case .medium: return 2
+        case nil:     return 1
+        case .low:    return 0
+        }
     }
 
     // MARK: - Core planning
@@ -103,10 +125,20 @@ enum DayPlanEngine {
             .busyWindows(from: dayStart, to: dayEnd, modelContext: modelContext)
             .map { ($0.start, $0.end) }
 
+        // AUTO placements' intervals, tracked by task so displacement (item
+        // 4, cycle 2026-08-03-01) can simulate an eviction by removing
+        // exactly the interval it added. Manual placements and events are
+        // deliberately never tracked — they are never displaced.
+        var autoPlacedIntervals: [UUID: (start: Date, end: Date)] = [:]
+
         for task in tasks where task.isInformationalEvent == false {
             guard let p = task.plannedStartDate, cal.isDateInToday(p) else { continue }
             let mins = task.plannedDurationMinutes ?? planningMinutes(for: task)
-            busy.append((p, p.addingTimeInterval(Double(mins) * 60)))
+            let interval = (p, p.addingTimeInterval(Double(mins) * 60))
+            busy.append(interval)
+            if task.plannedIsAuto {
+                autoPlacedIntervals[task.id] = interval
+            }
         }
 
         // "Get ready" buffer: block the hour BEFORE each event. We can't know
@@ -206,6 +238,94 @@ enum DayPlanEngine {
         var placedCount = 0
         var prepPlacedCount = 0
         var placedTitles: [String] = []
+        var displacedTitles: [String] = []
+        var contentionTitle: String?
+        // At most ONE displacement per run — a planner that reshuffles the
+        // whole day to wedge everything in stops reading as a proposal.
+        var displacementUsed = false
+
+        // Displacement (item 4): a generated session found no in-band gap.
+        // Evict an AUTO placement only when that actually helps — removing
+        // it must open a gap the session genuinely fits (two 45-minute
+        // gaps around a small task don't become a 2-hour slot), and it
+        // must be STRICTLY lower stakes than the session. Helpful-but-
+        // equal candidates displace nothing; the contention is reported so
+        // the user decides. Returns the new start and the evicted task.
+        func attemptDisplacement(
+            for session: NudgeTask,
+            duration: TimeInterval,
+            bounds: (from: Date, to: Date)
+        ) -> (start: Date, evicted: NudgeTask)? {
+            let sessionRank = stakesRank(session.stakes)
+            var helpful: [(task: NudgeTask, interval: (start: Date, end: Date))] = []
+            for (id, interval) in autoPlacedIntervals {
+                guard let candidate = tasks.first(where: { $0.id == id }),
+                      candidate.plannedIsAuto,
+                      candidate.plannedStartDate != nil,
+                      candidate.id != session.id else { continue }
+                let busyWithout = busy.filter {
+                    $0.start != interval.start || $0.end != interval.end
+                }
+                if earliestGapStart(
+                    fitting: duration, busy: busyWithout,
+                    from: bounds.from, to: bounds.to
+                ) != nil {
+                    helpful.append((candidate, interval))
+                }
+            }
+            #if DEBUG
+            if !helpful.isEmpty {
+                print("   displacement check for \(session.title) (stakes rank \(sessionRank)):")
+                for entry in helpful {
+                    print("      · evicting \"\(entry.task.title)\" (rank \(stakesRank(entry.task.stakes))) would fit it")
+                }
+            }
+            #endif
+            let lower = helpful.filter { stakesRank($0.task.stakes) < sessionRank }
+            guard let evict = lower.min(by: { lhs, rhs in
+                let lr = stakesRank(lhs.task.stakes), rr = stakesRank(rhs.task.stakes)
+                if lr != rr { return lr < rr }
+                // Same rank: disturb the later part of the day.
+                return (lhs.task.plannedStartDate ?? .distantPast)
+                     > (rhs.task.plannedStartDate ?? .distantPast)
+            }) else {
+                if !helpful.isEmpty, contentionTitle == nil {
+                    // Equal-stakes contention: displace nothing, say so.
+                    contentionTitle = session.title
+                }
+                return nil
+            }
+
+            // A displaced task returns to Unscheduled — visible and
+            // re-placeable, never silently moved to another day.
+            evict.task.plannedStartDate = nil
+            evict.task.plannedDurationMinutes = nil
+            evict.task.plannedIsAuto = false
+            busy.removeAll {
+                $0.start == evict.interval.start && $0.end == evict.interval.end
+            }
+            autoPlacedIntervals.removeValue(forKey: evict.task.id)
+            // If the evictee was placed by THIS run, unwind its counters.
+            if let index = placedTitles.firstIndex(of: evict.task.title) {
+                placedTitles.remove(at: index)
+                placedCount -= 1
+                if evict.task.source == "prep" || evict.task.source == "commitment" {
+                    prepPlacedCount -= 1
+                }
+            }
+            displacedTitles.append(evict.task.title)
+            displacementUsed = true
+
+            guard let start = earliestGapStart(
+                fitting: duration, busy: busy, from: bounds.from, to: bounds.to
+            ) else {
+                // Can't happen — the helpful test just verified the fit
+                // against the same intervals — but never leave an eviction
+                // unexplained if it somehow does.
+                return nil
+            }
+            return (start, evict.task)
+        }
 
         for task in candidates {
             guard placedCount < NudgeConfig.planMaxPlacementsPerRun else {
@@ -238,12 +358,22 @@ enum DayPlanEngine {
                 #endif
                 continue
             }
-            guard let start = earliestGapStart(
+            var start = earliestGapStart(
                 fitting: duration,
                 busy: busy,
                 from: bounds.from,
                 to: bounds.to
-            ) else {
+            )
+            var displacedFor: NudgeTask?
+            // Only a GENERATED session may displace: its date IS its slot
+            // — today is the one day it exists for — where an ordinary
+            // task can simply wait for tomorrow's gaps.
+            if start == nil, isPrep, !displacementUsed,
+               let result = attemptDisplacement(for: task, duration: duration, bounds: bounds) {
+                start = result.start
+                displacedFor = result.evicted
+            }
+            guard let start else {
                 #if DEBUG
                 // Distinguish "the day is full" from "only out-of-band
                 // room remains" — the plan's trace requirement.
@@ -258,7 +388,12 @@ enum DayPlanEngine {
             }
 
             #if DEBUG
-            print("   ✓ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] → placed \(traceTime(start))")
+            if let displacedFor {
+                print("   ✓ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] → placed \(traceTime(start)) "
+                    + "by DISPLACING \"\(displacedFor.title)\" back to Unscheduled")
+            } else {
+                print("   ✓ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] → placed \(traceTime(start))")
+            }
             #endif
             task.plannedStartDate = start
             task.plannedDurationMinutes = planningMinutes(for: task)
@@ -266,7 +401,9 @@ enum DayPlanEngine {
             if isPrep { prepPlacedCount += 1 }
             placedTitles.append(task.title)
             // Occupy this slot + 15 min spacing for the next placement.
-            busy.append((start, start.addingTimeInterval(duration + spacing)))
+            let interval = (start, start.addingTimeInterval(duration + spacing))
+            busy.append(interval)
+            autoPlacedIntervals[task.id] = interval
             placedCount += 1
         }
 
@@ -280,14 +417,16 @@ enum DayPlanEngine {
         guard placedCount > 0 else {
             #if DEBUG
             let kind = candidates.isEmpty ? "no candidates" : "no room"
-            print("   result: placed 0 of \(candidates.count) candidate(s) → \(kind)")
+            print("   result: placed 0 of \(candidates.count) candidate(s) → \(kind)"
+                + (contentionTitle.map { " (equal-stakes contention over \"\($0)\")" } ?? ""))
             #endif
-            return candidates.isEmpty ? .noCandidates : .noRoom
+            return candidates.isEmpty ? .noCandidates : .noRoom(contention: contentionTitle)
         }
         #if DEBUG
-        print("   result: placed \(placedCount) of \(candidates.count) candidate(s)")
+        print("   result: placed \(placedCount) of \(candidates.count) candidate(s)"
+            + (displacedTitles.isEmpty ? "" : ", displaced \(displacedTitles.count)"))
         #endif
-        return .placed(count: placedCount, titles: placedTitles)
+        return .placed(count: placedCount, titles: placedTitles, displaced: displacedTitles)
     }
 
     // MARK: - Morning auto-run
@@ -341,11 +480,12 @@ enum DayPlanEngine {
         defaults.set(Calendar.current.startOfDay(for: now), forKey: autoPlanLastRunDayKey)
 
         let outcome = planToday(profile: profile, modelContext: modelContext, clearAutoFirst: false)
-        if case .placed(let count, let titles) = outcome {
+        if case .placed(let count, let titles, let displaced) = outcome {
             PlanOutcomeContext.write(
                 kind: .planned,
                 placedCount: count,
                 placedTitles: titles,
+                displacedTitles: displaced,
                 isAuto: true
             )
         }

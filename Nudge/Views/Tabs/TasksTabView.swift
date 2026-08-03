@@ -1347,14 +1347,17 @@ struct TasksTabView: View {
         case .placed:
             // The placements on the timeline are the feedback; clear any
             // earlier refusal message ("clears on the next successful
-            // plan").
+            // plan"). A displacement during a manual REPLAN needs no
+            // narration either: the replan released every auto placement
+            // first, so "released and not re-placed" is the pass's normal
+            // shape, already visible in Unscheduled.
             PlanOutcomeContext.clear()
             planOutcome = nil
             NudgeHaptics.success()
         case .noCandidates:
             recordPlanOutcome(.noCandidates)
-        case .noRoom:
-            recordPlanOutcome(.noRoom)
+        case .noRoom(let contention):
+            recordPlanOutcome(.noRoom, contentionTitle: contention)
         case .windowCollapsed:
             recordPlanOutcome(.windowCollapsed)
         }
@@ -1542,8 +1545,8 @@ struct TasksTabView: View {
     /// gives the shared refusal haptic. The message carries the
     /// distinction between refusal kinds; the haptic only says "nothing
     /// was placed."
-    private func recordPlanOutcome(_ kind: PlanOutcomeContext.Kind) {
-        PlanOutcomeContext.write(kind: kind, isAuto: false)
+    private func recordPlanOutcome(_ kind: PlanOutcomeContext.Kind, contentionTitle: String? = nil) {
+        PlanOutcomeContext.write(kind: kind, contentionTitle: contentionTitle, isAuto: false)
         planOutcome = PlanOutcomeContext.read()
         NudgeHaptics.error()
     }

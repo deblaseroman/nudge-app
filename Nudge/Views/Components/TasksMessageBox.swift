@@ -85,27 +85,50 @@ struct PlanOutcomeContext {
     let kind: Kind
     let placedCount: Int
     let placedTitles: [String]
+    /// Auto placements evicted back to Unscheduled to fit a generated
+    /// session (item 4) — the announcement must name them; a silent
+    /// un-placement is the vanishing-task shape.
+    let displacedTitles: [String]
+    /// The generated session an eviction WOULD have fit, except every
+    /// helpful candidate was equal-or-higher stakes — reported instead of
+    /// evicted (the app proposes, the user decides). `noRoom` only.
+    let contentionTitle: String?
     let isAuto: Bool
     let date: Date
 
     static let kindKey = "nudge.planOutcome.kind"
     static let countKey = "nudge.planOutcome.count"
     static let titlesKey = "nudge.planOutcome.titles"
+    static let displacedKey = "nudge.planOutcome.displaced"
+    static let contentionKey = "nudge.planOutcome.contention"
     static let autoKey = "nudge.planOutcome.auto"
     static let dateKey = "nudge.planOutcome.date"
 
-    static func write(kind: Kind, placedCount: Int = 0, placedTitles: [String] = [], isAuto: Bool) {
+    static func write(
+        kind: Kind,
+        placedCount: Int = 0,
+        placedTitles: [String] = [],
+        displacedTitles: [String] = [],
+        contentionTitle: String? = nil,
+        isAuto: Bool
+    ) {
         let defaults = SharedModelContainer.appGroupDefaults
         defaults.set(kind.rawValue, forKey: kindKey)
         defaults.set(placedCount, forKey: countKey)
         defaults.set(placedTitles, forKey: titlesKey)
+        defaults.set(displacedTitles, forKey: displacedKey)
+        if let contentionTitle {
+            defaults.set(contentionTitle, forKey: contentionKey)
+        } else {
+            defaults.removeObject(forKey: contentionKey)
+        }
         defaults.set(isAuto, forKey: autoKey)
         defaults.set(Date(), forKey: dateKey)
     }
 
     static func clear() {
         let defaults = SharedModelContainer.appGroupDefaults
-        for key in [kindKey, countKey, titlesKey, autoKey, dateKey] {
+        for key in [kindKey, countKey, titlesKey, displacedKey, contentionKey, autoKey, dateKey] {
             defaults.removeObject(forKey: key)
         }
     }
@@ -126,6 +149,8 @@ struct PlanOutcomeContext {
             kind: kind,
             placedCount: defaults.integer(forKey: countKey),
             placedTitles: (defaults.array(forKey: titlesKey) as? [String]) ?? [],
+            displacedTitles: (defaults.array(forKey: displacedKey) as? [String]) ?? [],
+            contentionTitle: defaults.string(forKey: contentionKey),
             isAuto: defaults.bool(forKey: autoKey),
             date: date
         )
@@ -374,10 +399,15 @@ enum TasksMessageComposer {
             guard outcome.isAuto, outcome.placedCount > 0 else { return nil }
             let titles = outcome.placedTitles.prefix(4)
                 .map { "“\($0)”" }.joined(separator: ", ")
+            let displaced = outcome.displacedTitles.isEmpty
+                ? ""
+                : " To make room, "
+                    + outcome.displacedTitles.map { "“\($0)”" }.joined(separator: " and ")
+                    + " went back to Unscheduled — re-place it wherever suits you."
             return TasksMessage(
                 headline: "I set up today — \(outcome.placedCount) task\(outcome.placedCount == 1 ? "" : "s") placed into free time.",
                 detail: "Placed: \(titles). Tap any timeline block to move or remove it — "
-                    + "placements you made yourself weren't touched."
+                    + "placements you made yourself weren't touched." + displaced
             )
         case .noCandidates:
             return TasksMessage(
@@ -385,6 +415,17 @@ enum TasksMessageComposer {
                 detail: "Everything open is either finished or already on today's timeline."
             )
         case .noRoom:
+            // Equal-stakes contention (item 4): a session would fit if
+            // something placed moved, but nothing placed matters less than
+            // it does. The app proposes, the user decides — name the
+            // contention, evict nothing.
+            if let contention = outcome.contentionTitle {
+                return TasksMessage(
+                    headline: "Today is full — “\(contention)” didn't fit.",
+                    detail: "Everything placed today matters as much as it does, so nothing was moved. "
+                        + "If you want it today, move or remove a timeline block and it can take that spot."
+                )
+            }
             return TasksMessage(
                 headline: "No room left today — your calendar is full.",
                 detail: "Events, the buffers around them, and existing placements take the rest of today. "
