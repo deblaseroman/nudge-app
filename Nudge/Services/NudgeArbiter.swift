@@ -361,7 +361,50 @@ final class NudgeArbiter: NudgeArbitering {
         for cand in scheduled {
             schedule(cand, modelContext: modelContext)
         }
+
+        #if DEBUG
+        debugDumpPendingCensus()
+        #endif
     }
+
+    #if DEBUG
+    /// Item-4 instrumentation (cycle 2026-08-03-03): what is ACTUALLY
+    /// pending with the OS after a reevaluate — count, spread by day, the
+    /// furthest fire date, and headroom against the iOS 64-pending limit
+    /// (the system keeps the 64 soonest-firing requests and silently drops
+    /// the rest, so overflow eats the far tail first). The async hop is
+    /// read-only and prints after `schedule()`'s synchronous adds have been
+    /// handed to the center.
+    private func debugDumpPendingCensus() {
+        Task { @MainActor in
+            let pending = await center.pendingNotificationRequests()
+            let ours = pending.filter { $0.identifier.hasPrefix(prefix) }
+            let now = Date()
+            let fireDates = ours.compactMap {
+                ($0.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
+            }
+            let calendar = Calendar.current
+            var byDay: [Int: Int] = [:]
+            for date in fireDates {
+                let days = calendar.dateComponents(
+                    [.day],
+                    from: calendar.startOfDay(for: now),
+                    to: calendar.startOfDay(for: date)
+                ).day ?? 0
+                byDay[days, default: 0] += 1
+            }
+            let furthest = fireDates.max()
+            let spread = byDay.keys.sorted()
+                .map { "+\($0)d: \(byDay[$0] ?? 0)" }
+                .joined(separator: "  ")
+            print("[NudgeArbiter] PENDING CENSUS: \(ours.count) arbiter-owned of \(pending.count) total (iOS keeps the soonest-firing 64; headroom \(64 - pending.count)).")
+            print("  by day: \(spread)")
+            if let furthest {
+                print("  furthest: \(furthest)")
+            }
+        }
+    }
+    #endif
 
     // MARK: - Cancel
 
