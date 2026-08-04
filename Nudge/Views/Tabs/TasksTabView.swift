@@ -35,9 +35,11 @@ struct TasksTabView: View {
     /// every launch lands on Today, so the entry point never moves around —
     /// the Overdue badge carries the "look here" signal instead.
     @State private var selectedListTab: TaskListTab = .today
-    /// The message box's interactive shell (cycle 2026-08-03-04 — visual
-    /// prototype; every message behind it is a stub).
-    @State private var isMessageShellOpen = false
+    /// The message box's interactive shell (cycles 2026-08-03-04/-05 —
+    /// visual prototype; everything behind it is a stub). Non-nil = open,
+    /// carrying the composed message the box was showing so the shell's
+    /// dialogue can seed from it.
+    @State private var messageShellSeed: TasksMessage?
     /// Events tab lens. Two lenses on the same data, not two buckets — a
     /// high-stakes event tomorrow appears under both.
     @State private var eventLens: EventLens = .thisWeek
@@ -308,11 +310,13 @@ struct TasksTabView: View {
                 TasksMessageBox(
                     tasks: tasks,
                     tappedNudge: tappedNudgeContext,
-                    onCharacterTap: {
-                        // Cycle 2026-08-03-04: the character opens the
-                        // interactive shell (visual prototype, all stubs).
+                    onOpenShell: { message in
+                        // Cycles 2026-08-03-04/-05: character, chevron, and
+                        // row all open the interactive shell (visual
+                        // prototype, all stubs), seeded with what the box
+                        // was saying.
                         withAnimation(NudgeAnimation.standard) {
-                            isMessageShellOpen = true
+                            messageShellSeed = message
                         }
                     },
                     rationale: refineRationale,
@@ -396,10 +400,10 @@ struct TasksTabView: View {
         // floating app tab bar still renders above the dim layer; accepted
         // under the plan's timebox, noted in the report.
         .overlay {
-            if isMessageShellOpen {
-                MessageBoxChatShell(onDismiss: {
+            if let seed = messageShellSeed {
+                MessageBoxChatShell(seed: seed, onDismiss: {
                     withAnimation(NudgeAnimation.standard) {
-                        isMessageShellOpen = false
+                        messageShellSeed = nil
                     }
                 })
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))

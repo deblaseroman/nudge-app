@@ -578,6 +578,32 @@ enum TasksMessageComposer {
 
 // MARK: - Character slot
 
+/// What face the character wears (cycle 2026-08-03-05). Three cases on
+/// purpose — every case is art someone has to draw:
+///   • `neutral` — the resting face; the collapsed box and idle shell.
+///   • `asking`  — a question is on the table (the shell's whole reason
+///     to exist; the one state that must read differently at a glance).
+///   • `pleased` — an answer just landed; the acknowledgment beat.
+/// Deliberately NO worried/disappointed case: a character that looks
+/// concerned about the user's list is `DESIGN.md`'s never-shame rule
+/// violated in art instead of copy.
+enum MessageBoxExpression: String, CaseIterable {
+    case neutral
+    case asking
+    case pleased
+
+    /// THE mapping — the one place real art lands later. All nil for now
+    /// (grey placeholder); when assets exist this becomes
+    /// `Image("pigeon-\(rawValue)")` and no call site changes.
+    var image: Image? {
+        switch self {
+        case .neutral: return nil
+        case .asking:  return nil
+        case .pleased: return nil
+        }
+    }
+}
+
 /// The square on the box's left where a character lands — a messenger
 /// pigeon, eventually one per surface. 56×56: exactly twice the task row's
 /// 28pt leading checkbox, big enough for an illustration to read as a
@@ -586,15 +612,15 @@ enum TasksMessageComposer {
 /// height; the box is the app's voice, not a list item. Until an asset
 /// exists it renders a plain grey placeholder from the theme.
 ///
-/// One parameter on purpose: dropping the mascot in is ONE line at the call
-/// site — `MessageBoxCharacterSlot(image: Image("pigeon-tasks"))` — and
-/// touches nothing else.
+/// Takes an EXPRESSION, not an image (cycle 2026-08-03-05): call sites
+/// say what the character feels; `MessageBoxExpression.image` is the one
+/// mapping from feeling to art.
 struct MessageBoxCharacterSlot: View {
-    var image: Image? = nil
+    var expression: MessageBoxExpression = .neutral
 
     var body: some View {
         Group {
-            if let image {
+            if let image = expression.image {
                 image
                     .resizable()
                     .scaledToFit()
@@ -622,12 +648,15 @@ struct MessageBoxCharacterSlot: View {
 struct TasksMessageBox: View {
     let tasks: [NudgeTask]
     let tappedNudge: TappedNudgeContext?
-    /// Tapping the CHARACTER (not the row) opens the interactive shell
-    /// (cycle 2026-08-03-04 — visual prototype, see `MessageBoxChatShell`).
-    /// The row's own tap keeps toggling the detail expansion, unchanged.
-    /// Nil (the default) leaves the slot inert — every existing call site
-    /// behaves exactly as before.
-    var onCharacterTap: (() -> Void)? = nil
+    /// Opens the interactive shell (cycle 2026-08-03-04; one surface, TWO
+    /// ways in since -05: the character AND the row/chevron both land
+    /// here). The composed message rides along so the shell can seed its
+    /// dialogue with what the box was actually saying — the in-place
+    /// detail expansion is superseded by the shell when this is set, so
+    /// the detail must stay reachable through it. Nil (the default) keeps
+    /// the legacy in-place expand/collapse — callers that never opted in
+    /// behave exactly as before.
+    var onOpenShell: ((TasksMessage) -> Void)? = nil
     var rationale: String? = nil
     /// One-time "still want study time for X?" note (tombstone-backed).
     var prepNote: PrepNoteContext? = nil
@@ -670,17 +699,7 @@ struct TasksMessageBox: View {
         let expandable = message.detail != nil
 
         HStack(alignment: .center, spacing: 14) {
-            // The slot's own tap wins over the row's expand/collapse tap
-            // (child gestures take precedence), so the character is the
-            // doorway to the shell while the rest of the row keeps its
-            // existing behavior.
             MessageBoxCharacterSlot()
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard let onCharacterTap else { return }
-                    NudgeHaptics.light()
-                    onCharacterTap()
-                }
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(message.headline)
@@ -701,6 +720,9 @@ struct TasksMessageBox: View {
 
             Spacer(minLength: 0)
 
+            // Visibility rule unchanged from today (collapsed state must
+            // show what it shows today) — the chevron appears only when
+            // there's detail; what changed is where it LEADS.
             if expandable {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 11, weight: .semibold))
@@ -716,6 +738,15 @@ struct TasksMessageBox: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
         .onTapGesture {
+            // One surface, two ways in (cycle 2026-08-03-05): with a shell
+            // wired, character, chevron, and row all open it — the shell
+            // carries the detail the in-place expansion used to show.
+            // Without one, the legacy in-place expansion stands.
+            if let onOpenShell {
+                NudgeHaptics.light()
+                onOpenShell(message)
+                return
+            }
             guard expandable else { return }
             NudgeHaptics.light()
             withAnimation(NudgeAnimation.standard) {
@@ -757,7 +788,7 @@ struct TasksMessageBox: View {
     }
 }
 
-// MARK: - Interactive shell (cycle 2026-08-03-04 — VISUAL PROTOTYPE)
+// MARK: - Interactive shell (cycles 2026-08-03-04/-05 — VISUAL PROTOTYPE)
 
 /// One line of the shell's stub conversation.
 private struct MessageBoxChatLine: Identifiable {
@@ -766,33 +797,44 @@ private struct MessageBoxChatLine: Identifiable {
     let isUser: Bool
 }
 
-/// The expanded surface behind the character tap — roughly iOS's
-/// swipe-down-reply shape: a dimmed backdrop (tap to collapse) with a card
-/// holding the conversation, tappable options, and a free-text field.
+/// The expanded surface — a FRAMED DIALOGUE BOX (cycle 2026-08-03-05),
+/// retro-game shaped: a defined double frame, the character portrait
+/// beside the text, and lines sitting IN the frame rather than floating
+/// as chat bubbles. Restraint carries the feel — no pixel fonts, no
+/// sprites, no reveal animation (text appears immediately: a delay before
+/// you can read is the wrong trade for this audience).
 ///
-/// ── EVERYTHING BEHIND IT IS A STUB ──────────────────────────────────────
-/// Hard-coded conversation, a fake question with two options, canned
-/// replies, no persistence, no `ClaudeService`, nothing written anywhere.
-/// This exists so the INTERACTION can be judged before anything real is
-/// wired to it; the capture pipeline is a separate, bigger cycle. Home
-/// chat is untouched — this is a parallel surface for comparison.
+/// Frame recipe, since the theme has no border weights: a 2pt
+/// `textPrimary` outer stroke with the existing 1pt `border` hairline
+/// inset 5pt inside it — the double line is what reads "dialogue frame"
+/// without any custom asset. Radius is the theme's `radiusCard`; colors
+/// are all `NudgeTheme`.
+///
+/// ── EVERYTHING BEHIND IT IS STILL A STUB ────────────────────────────────
+/// The dialogue seeds from the box's real composed message (so the detail
+/// the old in-place expansion showed stays reachable — the shell replaced
+/// it as where the row's tap leads), then a fake question with two
+/// options and canned replies. No persistence, no `ClaudeService`,
+/// nothing written anywhere. Home chat untouched.
 struct MessageBoxChatShell: View {
+    /// What the collapsed box was saying when opened — seeds the dialogue.
+    var seed: TasksMessage? = nil
     let onDismiss: () -> Void
 
-    @State private var lines: [MessageBoxChatLine] = [
-        MessageBoxChatLine(
-            text: "“Problem set 4” is due Friday — it's the biggest thing on your list.",
-            isUser: false
-        ),
-        MessageBoxChatLine(
-            text: "Should the first session go today or tomorrow?",
-            isUser: false
-        ),
-    ]
+    @State private var lines: [MessageBoxChatLine] = []
     /// The fake question's options; nil once answered (or after free text).
     @State private var options: [String]? = ["Start today", "Start tomorrow"]
+    @State private var answered = false
     @State private var draft = ""
     @FocusState private var inputFocused: Bool
+
+    /// The portrait tracks the conversation state — the whole point of
+    /// the expression enum: asking while the question is open, pleased
+    /// right after an answer, neutral otherwise.
+    private var expression: MessageBoxExpression {
+        if options != nil { return .asking }
+        return answered ? .pleased : .neutral
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -804,94 +846,118 @@ struct MessageBoxChatShell: View {
                     onDismiss()
                 }
 
-            // The surface. Anchored near the top (where the collapsed box
-            // lives) so the keyboard never covers it.
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 14) {
-                    MessageBoxCharacterSlot()
-                    Text("Nudge")
-                        .font(.custom(NudgeTheme.fontSemiBold, size: 16))
-                        .foregroundColor(NudgeTheme.textPrimary)
-                    Spacer()
-                }
+            // The dialogue frame. Anchored near the top (where the
+            // collapsed box lives) so the keyboard never covers it.
+            HStack(alignment: .top, spacing: 14) {
+                // Portrait beside the text, dialogue-box style.
+                MessageBoxCharacterSlot(expression: expression)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(lines) { line in
-                            chatBubble(line)
-                        }
-                    }
-                }
-                .frame(maxHeight: 300)
-
-                if let options {
-                    HStack(spacing: 8) {
-                        ForEach(options, id: \.self) { option in
-                            Button {
-                                answer(option)
-                            } label: {
-                                Text(option)
-                                    .font(.custom(NudgeTheme.fontMedium, size: 14))
-                                    .foregroundColor(NudgeTheme.primary)
-                                    .padding(.horizontal, 14)
-                                    .frame(height: 34)
-                                    .overlay(
-                                        Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
-                                    )
+                VStack(alignment: .leading, spacing: 12) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(lines) { line in
+                                dialogueLine(line)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
-                }
+                    .frame(maxHeight: 260)
 
-                HStack(spacing: 10) {
-                    TextField("Or say it your way…", text: $draft, axis: .vertical)
-                        .font(.custom(NudgeTheme.fontBody, size: 15))
-                        .foregroundColor(NudgeTheme.textPrimary)
-                        .lineLimit(1...3)
-                        .focused($inputFocused)
-                        .onSubmit(sendDraft)
-                    Button(action: sendDraft) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 26))
-                            .foregroundColor(
-                                draft.trimmingCharacters(in: .whitespaces).isEmpty
-                                    ? NudgeTheme.textPlaceholder
-                                    : NudgeTheme.primary
-                            )
+                    if let options {
+                        HStack(spacing: 8) {
+                            ForEach(options, id: \.self) { option in
+                                Button {
+                                    answer(option)
+                                } label: {
+                                    Text(option)
+                                        .font(.custom(NudgeTheme.fontMedium, size: 14))
+                                        .foregroundColor(NudgeTheme.primary)
+                                        .padding(.horizontal, 14)
+                                        .frame(height: 34)
+                                        .overlay(
+                                            Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
-                    .buttonStyle(.plain)
+
+                    HStack(spacing: 10) {
+                        TextField("Or say it your way…", text: $draft, axis: .vertical)
+                            .font(.custom(NudgeTheme.fontBody, size: 15))
+                            .foregroundColor(NudgeTheme.textPrimary)
+                            .lineLimit(1...3)
+                            .focused($inputFocused)
+                            .onSubmit(sendDraft)
+                        Button(action: sendDraft) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 26))
+                                .foregroundColor(
+                                    draft.trimmingCharacters(in: .whitespaces).isEmpty
+                                        ? NudgeTheme.textPlaceholder
+                                        : NudgeTheme.primary
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(NudgeTheme.surfaceAlt)
+                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(NudgeTheme.surfaceAlt)
-                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
             }
-            .padding(16)
+            .padding(18)
             .background(NudgeTheme.background)
-            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet))
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            // The double frame: 2pt ink outline + the theme's hairline
+            // inset inside it. Weights are stated in the report; every
+            // color is the theme's.
             .overlay(
-                RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet)
+                RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
+                    .stroke(NudgeTheme.textPrimary, lineWidth: 2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: NudgeTheme.radiusCard - 5)
                     .stroke(NudgeTheme.border, lineWidth: 1)
+                    .padding(5)
             )
             .padding(.horizontal, 20)
             .padding(.top, 8)
         }
+        .onAppear { seedLines() }
     }
 
-    private func chatBubble(_ line: MessageBoxChatLine) -> some View {
-        HStack {
-            if line.isUser { Spacer(minLength: 40) }
-            Text(line.text)
-                .font(.custom(NudgeTheme.fontBody, size: 15))
-                .foregroundColor(line.isUser ? .white : NudgeTheme.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(line.isUser ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
-                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
-            if !line.isUser { Spacer(minLength: 40) }
+    /// Dialogue lines sit flat in the frame — no bubbles. The app speaks
+    /// in primary text; the user's replies are right-aligned in the
+    /// accent color, which is enough to keep the two voices apart.
+    private func dialogueLine(_ line: MessageBoxChatLine) -> some View {
+        Text(line.text)
+            .font(.custom(NudgeTheme.fontBody, size: 15))
+            .foregroundColor(line.isUser ? NudgeTheme.primary : NudgeTheme.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: line.isUser ? .trailing : .leading)
+    }
+
+    /// Text appears immediately — deliberately NO typewriter reveal.
+    private func seedLines() {
+        guard lines.isEmpty else { return }
+        var seeded: [MessageBoxChatLine] = []
+        if let seed {
+            seeded.append(MessageBoxChatLine(text: seed.headline, isUser: false))
+            if let detail = seed.detail {
+                seeded.append(MessageBoxChatLine(text: detail, isUser: false))
+            }
+        } else {
+            seeded.append(MessageBoxChatLine(
+                text: "“Problem set 4” is due Friday — it's the biggest thing on your list.",
+                isUser: false
+            ))
         }
-        .frame(maxWidth: .infinity, alignment: line.isUser ? .trailing : .leading)
+        seeded.append(MessageBoxChatLine(
+            text: "Should the first session go today or tomorrow?",
+            isUser: false
+        ))
+        lines = seeded
     }
 
     /// Option tap: the answer becomes a user line, the options retire, and
@@ -901,6 +967,7 @@ struct MessageBoxChatShell: View {
         withAnimation(NudgeAnimation.standard) {
             lines.append(MessageBoxChatLine(text: option, isUser: true))
             options = nil
+            answered = true
             lines.append(MessageBoxChatLine(
                 text: "Noted. (Prototype — nothing is saved yet.)",
                 isUser: false
@@ -916,6 +983,7 @@ struct MessageBoxChatShell: View {
         withAnimation(NudgeAnimation.standard) {
             lines.append(MessageBoxChatLine(text: text, isUser: true))
             options = nil
+            answered = true
             lines.append(MessageBoxChatLine(
                 text: "Noted. (Prototype — nothing is saved yet.)",
                 isUser: false
