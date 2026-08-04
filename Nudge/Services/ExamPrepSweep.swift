@@ -303,6 +303,20 @@ final class ExamPrepSweep {
         return fmt.string(from: date)
     }
 
+    /// The due date a generated daily task carries: the END of its own day
+    /// (23:59), matching capture's bare-date convention (cycle
+    /// 2026-08-03-02 item 1). The generators used to store start-of-day —
+    /// fine for `sortDeadline` (which reads a bare date as end-of-day)
+    /// but the row subtitle feeds the RAW dueDate to
+    /// `CountdownState.remainingLine`, whose overdue rule always wins, so
+    /// today's session was born reading "20 hours ago". A session is due
+    /// tonight, not this morning. Day-stamp idempotence is unaffected:
+    /// every stamp read normalizes through `startOfDay` first.
+    static func sessionDueDate(on day: Date, calendar: Calendar = .current) -> Date {
+        let start = calendar.startOfDay(for: day)
+        return calendar.date(bySettingHour: 23, minute: 59, second: 0, of: start) ?? start
+    }
+
     // MARK: The sweep
 
     /// Finds exam events in their prep window and commitments in their
@@ -408,11 +422,11 @@ final class ExamPrepSweep {
                 guard let day = fmt.date(from: stamp) else { continue }
                 let task = NudgeTask(
                     title: "Study for \(exam.title)",
-                    // A bare due DAY, stored the way calendar imports store
-                    // theirs (start of day) — `sortDeadline` reads it as
-                    // end-of-day, so the task is "due" that evening without
-                    // inventing a clock time.
-                    dueDate: calendar.startOfDay(for: day),
+                    // Due at the END of its own day (23:59, capture's
+                    // bare-date convention) — start-of-day made today's
+                    // study task read "N hours ago" from birth (cycle
+                    // 2026-08-03-02 item 1).
+                    dueDate: Self.sessionDueDate(on: day, calendar: calendar),
                     priority: "medium",
                     category: TaskCategory.exam.rawValue,
                     source: "prep",
@@ -431,6 +445,12 @@ final class ExamPrepSweep {
                 modelContext.insert(task)
                 createdTotal += 1
             }
+            #if DEBUG
+            if !decision.createStamps.isEmpty {
+                print("   ↳ \(decision.createStamps.count) study task(s) created, "
+                    + "each due 23:59 of its own day (was start-of-day before 2026-08-03-02)")
+            }
+            #endif
 
             // Announce the SOONEST exam that got tasks this run — silent
             // creation is not acceptable (DESIGN.md). Exams are processed in
@@ -595,9 +615,8 @@ final class ExamPrepSweep {
                 guard let day = fmt.date(from: stampValue) else { continue }
                 let task = NudgeTask(
                     title: commitment.title,
-                    // A bare due DAY, the prep-task convention: stored as
-                    // start of day, read by `sortDeadline` as end-of-day.
-                    dueDate: calendar.startOfDay(for: day),
+                    // Due at the END of its own day — see `sessionDueDate`.
+                    dueDate: Self.sessionDueDate(on: day, calendar: calendar),
                     priority: "medium",
                     category: commitment.category,
                     source: "commitment",
@@ -617,6 +636,10 @@ final class ExamPrepSweep {
                 modelContext.insert(task)
                 created += 1
             }
+            #if DEBUG
+            print("   ↳ \(stamps.count) daily task(s) created for \"\(commitment.title)\" "
+                + "(\(shape.rawValue)), each due 23:59 of its own day")
+            #endif
 
             // Announce the soonest-ending commitment that got tasks this
             // run — silent creation is not acceptable (DESIGN.md).
