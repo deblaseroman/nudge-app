@@ -88,6 +88,9 @@ struct CommitmentAnnouncementContext: Equatable {
     let dailyMinutes: Int?
     /// Per-day unit count, for quantity commitments.
     let dailyCount: Int?
+    /// True when the first generated day is tomorrow (the user's answer,
+    /// or the no-room-today default) — the copy says so.
+    let startsTomorrow: Bool
     let createdAt: Date
     let shownAt: Date?
 }
@@ -230,6 +233,125 @@ final class ExamPrepSweep {
         )
         let sessions = min((totalMinutes + session - 1) / session, daysAvailable)
         return (session, sessions)
+    }
+
+    // MARK: Commitment readiness + start day (pure over inputs)
+
+    /// Whether a captured commitment parent has the numbers expansion
+    /// needs — nil when a question is still outstanding (or the deadline
+    /// leaves no room). Shared by `commitmentPhase` and `HomeTabView`'s
+    /// start-day follow-up so the two can't disagree on "ready".
+    static func expansionReadiness(
+        _ parent: NudgeTask,
+        today: Date,
+        calendar: Calendar = .current
+    ) -> CommitmentShape? {
+        guard let shape = parent.commitmentShape,
+              !parent.isComplete, !parent.isInformationalEvent,
+              let due = parent.dueDate else { return nil }
+        let endDay = calendar.startOfDay(for: due)
+        switch shape {
+        case .splitWork:
+            guard let total = parent.estimatedMinutes, total > 0,
+                  (calendar.dateComponents([.day], from: today, to: endDay).day ?? 0) >= 1
+            else { return nil }
+        case .rate:
+            guard endDay >= today else { return nil }
+        case .quantity:
+            guard let count = parent.commitmentDailyCount, count > 0,
+                  endDay >= today else { return nil }
+        }
+        return shape
+    }
+
+    /// Whether starting today is a genuine choice (cycle 2026-08-03-02
+    /// item 3). This flow is capped at two questions for a reason, so the
+    /// question is asked only when both answers are truly available.
+    enum StartDayDecision {
+        /// Today has no room for the first session — a question with one
+        /// answer is noise; start tomorrow silently.
+        case tomorrowOnly
+        /// Dropping today would force the remaining sessions longer
+        /// (split work arithmetic) — no choice to offer; state what's
+        /// happening instead of asking.
+        case todayForced
+        /// Both work: ask.
+        case choice
+    }
+
+    /// Minutes left in today's plannable window (wake+30 → bed−60, via
+    /// `DayWindow`). Nil = unknown (no profile / degenerate window) —
+    /// callers fail OPEN (assume room), matching `dayLoad`'s convention.
+    static func plannableMinutesRemainingToday(now: Date, profile: UserProfile?) -> Int? {
+        guard let profile else { return nil }
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        guard let window = DayWindow.resolve(on: now, wake: wake, bedtime: profile.bedtime)
+        else { return nil }
+        let remaining = window.end.timeIntervalSince(max(now, window.start))
+        return max(0, Int(remaining / 60))
+    }
+
+    /// The first session's length, for the room-today check. Split work
+    /// uses the real session plan; a rate uses its stated (or prior)
+    /// duration; a quantity day has no duration model — 30 minutes is the
+    /// conservative stand-in.
+    static func firstSessionMinutes(
+        shape: CommitmentShape,
+        totalMinutes: Int?,
+        dailyMinutes: Int?,
+        category: TaskCategory?,
+        daysFromTodayToDeadline: Int
+    ) -> Int {
+        switch shape {
+        case .splitWork:
+            guard let total = totalMinutes, total > 0 else {
+                return NudgeConfig.commitmentMinSessionMinutes
+            }
+            let days = min(max(daysFromTodayToDeadline, 1), NudgeConfig.commitmentHorizonDays)
+            return splitWorkPlan(totalMinutes: total, daysAvailable: days).sessionMinutes
+        case .rate:
+            if let daily = dailyMinutes, daily > 0 { return daily }
+            if let category { return NudgeConfig.categoryEffortPriors[category] ?? 30 }
+            return 30
+        case .quantity:
+            return 30
+        }
+    }
+
+    static func startDayDecision(
+        shape: CommitmentShape,
+        totalMinutes: Int?,
+        dailyMinutes: Int?,
+        category: TaskCategory?,
+        endDay: Date,
+        now: Date,
+        profile: UserProfile?,
+        calendar: Calendar = .current
+    ) -> StartDayDecision {
+        let today = calendar.startOfDay(for: now)
+        let daysToDeadline = max(calendar.dateComponents([.day], from: today, to: endDay).day ?? 0, 0)
+        let session = firstSessionMinutes(
+            shape: shape, totalMinutes: totalMinutes, dailyMinutes: dailyMinutes,
+            category: category, daysFromTodayToDeadline: daysToDeadline
+        )
+        if let remaining = plannableMinutesRemainingToday(now: now, profile: profile),
+           remaining < session {
+            return .tomorrowOnly
+        }
+        // Growth check — split work only: a rate/quantity that skips today
+        // just starts tomorrow; nothing grows.
+        if shape == .splitWork, let total = totalMinutes, total > 0 {
+            let daysToday = min(max(daysToDeadline, 1), NudgeConfig.commitmentHorizonDays)
+            let daysTomorrow = daysToDeadline - 1
+            guard daysTomorrow >= 1 else { return .todayForced }
+            let fromToday = splitWorkPlan(totalMinutes: total, daysAvailable: daysToday).sessionMinutes
+            let fromTomorrow = splitWorkPlan(
+                totalMinutes: total,
+                daysAvailable: min(daysTomorrow, NudgeConfig.commitmentHorizonDays)
+            ).sessionMinutes
+            if fromTomorrow > fromToday { return .todayForced }
+        }
+        return .choice
     }
 
     // MARK: Dedupe matching (deterministic v1)
@@ -487,35 +609,68 @@ final class ExamPrepSweep {
         calendar: Calendar
     ) -> Int {
         // ── Step 1: expand ready parents ────────────────────────────────
+        let profile = (try? modelContext.fetch(FetchDescriptor<UserProfile>()))?.first
         let parents = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
             predicate: #Predicate<NudgeTask> {
                 $0.commitmentShapeRaw != nil && !$0.isComplete && !$0.isInformationalEvent
             }
         ))) ?? []
         for parent in parents {
-            guard let shape = parent.commitmentShape,
-                  let due = parent.dueDate else { continue }   // end unknown → question outstanding
+            // Readiness (shared with HomeTabView's follow-up logic): a
+            // missing number means a question is outstanding; a same-day
+            // or past split-work deadline stays an ordinary task
+            // (overdue handling covers it) rather than expanding into
+            // nothing.
+            guard let shape = Self.expansionReadiness(parent, today: today, calendar: calendar),
+                  let due = parent.dueDate else { continue }
             let endDay = calendar.startOfDay(for: due)
-            switch shape {
-            case .splitWork:
-                // Needs the total-effort answer, and at least one whole
-                // day before the deadline to place a session on — a
-                // same-day or past deadline stays an ordinary task
-                // (overdue handling covers it) rather than expanding
-                // into nothing.
-                guard let total = parent.estimatedMinutes, total > 0,
-                      (calendar.dateComponents([.day], from: today, to: endDay).day ?? 0) >= 1
-                else { continue }
-            case .rate:
-                guard endDay >= today else { continue }
-            case .quantity:
-                guard let count = parent.commitmentDailyCount, count > 0,
-                      endDay >= today else { continue }
+
+            // The start-today-or-tomorrow question is outstanding: asked
+            // today, not yet answered. Wait — an ask from a PAST day has
+            // expired (the day it asked about no longer exists) and falls
+            // through to the viability default below.
+            if parent.commitmentStartDate == nil,
+               let asked = parent.commitmentStartAskedAt,
+               calendar.isDate(asked, inSameDayAs: now) {
+                #if DEBUG
+                print("[ExamPrepSweep] \"\(parent.title)\" waiting on start-day answer — not expanded")
+                #endif
+                continue
             }
+
+            // First day: the chosen answer when one exists, else the
+            // viability default — captured at 10pm, tomorrow is the only
+            // possible answer, so no question was needed.
+            var startDay = today
+            if let chosen = parent.commitmentStartDate {
+                startDay = max(today, calendar.startOfDay(for: chosen))
+            } else if Self.startDayDecision(
+                shape: shape,
+                totalMinutes: shape == .splitWork ? parent.estimatedMinutes : nil,
+                dailyMinutes: shape == .rate ? parent.estimatedMinutes : nil,
+                category: parent.taskCategory,
+                endDay: endDay,
+                now: now,
+                profile: profile,
+                calendar: calendar
+            ) == .tomorrowOnly,
+                let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) {
+                startDay = tomorrow
+            }
+            // Starting tomorrow must still leave a schedule: split work
+            // needs a day before the deadline, and nothing may start past
+            // the end. Deadline pressure beats bedtime.
+            if shape == .splitWork,
+               (calendar.dateComponents([.day], from: startDay, to: endDay).day ?? 0) < 1 {
+                startDay = today
+            }
+            if startDay > endDay { startDay = today }
+
             let commitment = NudgeCommitment(
                 title: parent.title,
                 shape: shape,
                 endDate: endDay,
+                startDate: startDay > today ? startDay : nil,
                 totalMinutes: shape == .splitWork ? parent.estimatedMinutes : nil,
                 dailyMinutes: shape == .rate ? parent.estimatedMinutes : nil,
                 dailyCount: shape == .quantity ? parent.commitmentDailyCount : nil,
@@ -529,7 +684,8 @@ final class ExamPrepSweep {
             modelContext.delete(parent)
             #if DEBUG
             print("[ExamPrepSweep] expanded commitment \"\(commitment.title)\" (\(shape.rawValue)) "
-                + "end=\(Self.stamp(endDay)) total=\(commitment.totalMinutes.map(String.init) ?? "—")m "
+                + "start=\(Self.stamp(startDay)) end=\(Self.stamp(endDay)) "
+                + "total=\(commitment.totalMinutes.map(String.init) ?? "—")m "
                 + "daily=\(commitment.dailyMinutes.map(String.init) ?? "—")m")
             #endif
         }
@@ -561,6 +717,15 @@ final class ExamPrepSweep {
                 tombstones.filter { $0.examEventId == parentID }.map(\.dayStamp)
             )
 
+            // Generation begins on the commitment's start day (the
+            // today-or-tomorrow answer / viability default), which decays
+            // to plain "today" once that day arrives.
+            let genStart: Date = {
+                guard let start = commitment.startDate else { return today }
+                return max(today, calendar.startOfDay(for: start))
+            }()
+            let startOffset = calendar.dateComponents([.day], from: today, to: genStart).day ?? 0
+
             let stamps: [String]
             let lastDayOffset: Int
             switch shape {
@@ -573,7 +738,7 @@ final class ExamPrepSweep {
                 guard existingStamps.isEmpty, tombstonedStamps.isEmpty,
                       let total = commitment.totalMinutes, total > 0 else { continue }
                 let daysRemaining = calendar.dateComponents(
-                    [.day], from: today, to: commitment.endDate
+                    [.day], from: genStart, to: commitment.endDate
                 ).day ?? 0
                 guard daysRemaining >= 1 else { continue }
                 let daysAvailable = min(daysRemaining, NudgeConfig.commitmentHorizonDays)
@@ -581,23 +746,24 @@ final class ExamPrepSweep {
                 guard plan.sessions > 0 else { continue }
                 commitment.dailyMinutes = plan.sessionMinutes
                 stamps = Self.missingStamps(
-                    from: today, dayOffsets: 0..<plan.sessions,
+                    from: genStart, dayOffsets: 0..<plan.sessions,
                     existing: [], tombstoned: [], calendar: calendar
                 )
-                lastDayOffset = plan.sessions - 1
+                lastDayOffset = startOffset + plan.sessions - 1
             case .rate, .quantity:
-                // Rolling: one task per day, today through the end date
-                // INCLUSIVE ("an hour a day until Friday" includes
+                // Rolling: one task per day, the start day through the end
+                // date INCLUSIVE ("an hour a day until Friday" includes
                 // Friday), capped at the horizon and topped up each run.
                 let daysToEnd = calendar.dateComponents(
-                    [.day], from: today, to: commitment.endDate
+                    [.day], from: genStart, to: commitment.endDate
                 ).day ?? -1
                 guard daysToEnd >= 0 else { continue }   // expired; row stays as memory
-                lastDayOffset = min(daysToEnd, NudgeConfig.commitmentHorizonDays - 1)
+                let lastLocalOffset = min(daysToEnd, NudgeConfig.commitmentHorizonDays - 1)
                 stamps = Self.missingStamps(
-                    from: today, dayOffsets: 0..<(lastDayOffset + 1),
+                    from: genStart, dayOffsets: 0..<(lastLocalOffset + 1),
                     existing: existingStamps, tombstoned: tombstonedStamps, calendar: calendar
                 )
+                lastDayOffset = startOffset + lastLocalOffset
             }
 
             #if DEBUG
@@ -650,6 +816,7 @@ final class ExamPrepSweep {
                     daysUntilEnd: lastDayOffset,
                     dailyMinutes: commitment.dailyMinutes,
                     dailyCount: commitment.dailyCount,
+                    startsTomorrow: startOffset > 0,
                     now: now
                 )
                 announced = true
@@ -847,6 +1014,7 @@ final class ExamPrepSweep {
     // other's news).
 
     static let commitmentAnnouncementTitleKey = "nudge.commitmentAnnouncement.title"
+    static let commitmentAnnouncementStartsTomorrowKey = "nudge.commitmentAnnouncement.startsTomorrow"
     static let commitmentAnnouncementShapeKey = "nudge.commitmentAnnouncement.shape"
     static let commitmentAnnouncementDaysKey = "nudge.commitmentAnnouncement.daysUntilEnd"
     static let commitmentAnnouncementMinutesKey = "nudge.commitmentAnnouncement.dailyMinutes"
@@ -860,10 +1028,12 @@ final class ExamPrepSweep {
         daysUntilEnd: Int,
         dailyMinutes: Int?,
         dailyCount: Int?,
+        startsTomorrow: Bool,
         now: Date
     ) {
         let defaults = SharedModelContainer.appGroupDefaults
         defaults.set(title, forKey: commitmentAnnouncementTitleKey)
+        defaults.set(startsTomorrow, forKey: commitmentAnnouncementStartsTomorrowKey)
         defaults.set(shape.rawValue, forKey: commitmentAnnouncementShapeKey)
         defaults.set(daysUntilEnd, forKey: commitmentAnnouncementDaysKey)
         defaults.set(dailyMinutes ?? 0, forKey: commitmentAnnouncementMinutesKey)
@@ -895,6 +1065,7 @@ final class ExamPrepSweep {
             daysUntilEnd: defaults.integer(forKey: commitmentAnnouncementDaysKey),
             dailyMinutes: minutes > 0 ? minutes : nil,
             dailyCount: count > 0 ? count : nil,
+            startsTomorrow: defaults.bool(forKey: commitmentAnnouncementStartsTomorrowKey),
             createdAt: createdAt,
             shownAt: shownAt
         )

@@ -79,6 +79,11 @@ final class NudgeCommitment {
     /// buffer-day pattern); for `rate`/`quantity` the cadence runs through
     /// this day inclusive — "an hour a day until Friday" includes Friday.
     var endDate: Date
+    /// The commitment's first day (start-of-day), when it isn't simply
+    /// "the day it was expanded" — set from the start-today-or-tomorrow
+    /// answer or the viability default (cycle 2026-08-03-02 item 3).
+    /// Generation windows begin at `max(today, startDate)`; nil = today.
+    var startDate: Date? = nil
     /// `splitWork` only: the user's total-effort answer, in minutes.
     /// THIS is the remembered answer the known-sizes context serves back.
     var totalMinutes: Int?
@@ -125,6 +130,7 @@ final class NudgeCommitment {
         title: String,
         shape: CommitmentShape,
         endDate: Date,
+        startDate: Date? = nil,
         totalMinutes: Int? = nil,
         dailyMinutes: Int? = nil,
         dailyCount: Int? = nil,
@@ -138,6 +144,7 @@ final class NudgeCommitment {
         self.title = title
         self.shapeRaw = shape.rawValue
         self.endDate = endDate
+        self.startDate = startDate
         self.totalMinutes = totalMinutes
         self.dailyMinutes = dailyMinutes
         self.dailyCount = dailyCount

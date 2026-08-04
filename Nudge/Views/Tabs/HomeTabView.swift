@@ -319,8 +319,11 @@ struct HomeTabView: View {
                     knownCommitmentSizes: knownCommitmentSizes
                 )
 
-                let assistantMessage = HomeChatMessage(role: .assistant, text: response.message)
-                messages.append(assistantMessage)
+                // The assistant bubble is appended AFTER updates/creates
+                // are applied (cycle 2026-08-03-02 item 3): the start-day
+                // follow-up needs the freshly written commitment state to
+                // decide whether to append its question or statement to
+                // this same closing message.
 
                 // Apply updates to existing tasks (e.g. duration after clarifying
                 // question, or a time correction like "actually class is at 9 pm").
@@ -343,6 +346,19 @@ struct HomeTabView: View {
                         if let isComplete = update.isComplete {
                             existingTask.isComplete = isComplete
                             existingTask.completedAt = isComplete ? Date() : nil
+                        }
+                        // The user's answer to the app-asked start-day
+                        // question ("today" / "tomorrow") — settles the
+                        // outstanding ask; the sweep expands on it.
+                        if let startDay = update.commitmentStartDay?.lowercased() {
+                            let cal = Calendar.current
+                            let today = cal.startOfDay(for: Date())
+                            if startDay == "tomorrow" {
+                                existingTask.commitmentStartDate =
+                                    cal.date(byAdding: .day, value: 1, to: today)
+                            } else if startDay == "today" {
+                                existingTask.commitmentStartDate = today
+                            }
                         }
 
                         // Re-resolve dueDate / dueTime / specificTime together —
@@ -474,6 +490,17 @@ struct HomeTabView: View {
                     newlyCreatedTasks.append(task)
                 }
 
+                // Start-day follow-up (item 3, cycle 2026-08-03-02):
+                // decided app-side with the same arithmetic the sweep
+                // uses — the model is never trusted with it — and
+                // appended to the SAME closing message.
+                var assistantText = response.message
+                if let followUp = commitmentStartDayFollowUp(newlyCreated: newlyCreatedTasks) {
+                    let trimmed = assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    assistantText = trimmed.isEmpty ? followUp : trimmed + " " + followUp
+                }
+                messages.append(HomeChatMessage(role: .assistant, text: assistantText))
+
                 persistSession()
 
                 try? modelContext.save()
@@ -529,6 +556,66 @@ struct HomeTabView: View {
 
             isWaitingForAI = false
         }
+    }
+
+    /// The start-today-or-tomorrow flow (cycle 2026-08-03-02 item 3),
+    /// run over every unexpanded, fully-specified commitment parent this
+    /// turn touched. Decided deterministically with the sweep's own
+    /// arithmetic — the model never computes room or session growth:
+    ///   • no room today → start tomorrow silently (a question with one
+    ///     answer is noise; the message box announcement says "from
+    ///     tomorrow")
+    ///   • dropping today would grow the sessions → start today and SAY
+    ///     so (no choice to offer, so state what's happening)
+    ///   • both genuinely available → ask, and hold that commitment's
+    ///     expansion until the answer (or until the day rolls over and
+    ///     the question expires)
+    /// At most one appended sentence per turn — the flow is capped at
+    /// two questions for a reason; a second choice-commitment in the
+    /// same dump just expands on the default.
+    private func commitmentStartDayFollowUp(newlyCreated: [NudgeTask]) -> String? {
+        let cal = Calendar.current
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+
+        // New parents first (the @Query may not reflect this turn's
+        // inserts yet), then surviving existing ones, deduped.
+        let newIDs = Set(newlyCreated.map(\.id))
+        let candidates = newlyCreated + allTasks.filter { !newIDs.contains($0.id) }
+
+        var sentence: String?
+        for parent in candidates {
+            guard parent.commitmentShapeRaw != nil,
+                  parent.commitmentStartDate == nil,
+                  parent.commitmentStartAskedAt == nil,
+                  let shape = ExamPrepSweep.expansionReadiness(parent, today: today),
+                  let due = parent.dueDate else { continue }
+
+            let decision = ExamPrepSweep.startDayDecision(
+                shape: shape,
+                totalMinutes: shape == .splitWork ? parent.estimatedMinutes : nil,
+                dailyMinutes: shape == .rate ? parent.estimatedMinutes : nil,
+                category: parent.taskCategory,
+                endDay: cal.startOfDay(for: due),
+                now: now,
+                profile: profile
+            )
+            switch decision {
+            case .tomorrowOnly:
+                parent.commitmentStartDate = cal.date(byAdding: .day, value: 1, to: today)
+            case .todayForced:
+                if sentence == nil {
+                    sentence = "I'm starting “\(parent.title)” today — waiting until "
+                        + "tomorrow would make each session longer."
+                }
+            case .choice:
+                if sentence == nil {
+                    parent.commitmentStartAskedAt = now
+                    sentence = "Want to start “\(parent.title)” today, or from tomorrow?"
+                }
+            }
+        }
+        return sentence
     }
 
     /// Previously-answered commitment sizes for the capture prompt's

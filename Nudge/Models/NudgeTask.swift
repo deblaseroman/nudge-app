@@ -226,6 +226,18 @@ final class NudgeTask {
     /// → 3), carried until expansion stamps it onto
     /// `NudgeCommitment.dailyCount`. Inert on every other task.
     var commitmentDailyCount: Int? = nil
+    /// The chosen/derived first day of the commitment (start-of-day).
+    /// Set by the user's "today or tomorrow" answer, or by the app when
+    /// only one answer is possible (captured at 10pm → tomorrow). Nil =
+    /// undecided; expansion falls back to a viability default. (Cycle
+    /// 2026-08-03-02 item 3.)
+    var commitmentStartDate: Date? = nil
+    /// When the app asked "start today or tomorrow?" in chat. While this
+    /// is TODAY and `commitmentStartDate` is nil the question is
+    /// outstanding and expansion waits; a stale ask (yesterday's) expires
+    /// and expansion proceeds on the default — the question was about a
+    /// day that no longer exists.
+    var commitmentStartAskedAt: Date? = nil
 
     /// Quantity-per-day fields (cycle 2026-08-03-01, item 3). "Three
     /// applications a day" is ONE task with a count, not three tasks —

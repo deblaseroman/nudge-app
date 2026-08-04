@@ -351,12 +351,19 @@ enum TasksMessageComposer {
 
     static func commitmentAnnouncementMessage(_ context: CommitmentAnnouncementContext) -> TasksMessage {
         // "daysUntilEnd" counts from today to the LAST generated day —
-        // 0 = today only.
+        // 0 = today only. When the series starts tomorrow (the user's
+        // answer, or a captured-too-late-today default), say so.
         let span: String
-        switch context.daysUntilEnd {
-        case 0:  span = "for today"
-        case 1:  span = "for today and tomorrow"
-        default: span = "for the next \(context.daysUntilEnd + 1) days"
+        if context.startsTomorrow {
+            span = context.daysUntilEnd <= 1
+                ? "for tomorrow"
+                : "from tomorrow through the next \(context.daysUntilEnd) days"
+        } else {
+            switch context.daysUntilEnd {
+            case 0:  span = "for today"
+            case 1:  span = "for today and tomorrow"
+            default: span = "for the next \(context.daysUntilEnd + 1) days"
+            }
         }
         let perDay: String
         if let minutes = context.dailyMinutes {

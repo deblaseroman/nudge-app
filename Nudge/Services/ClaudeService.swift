@@ -226,6 +226,7 @@ class ClaudeService {
     - NEVER ask anything else about a commitment. Not the course name, not the platform, not how it's going — a question that doesn't change what the app does costs attention and returns nothing.
     - When the user answers, use task_updates on the existing task: total hours → estimatedMinutes (in minutes); an end date → dueDate. Do not create new tasks from an answer.
     - KNOWN COMMITMENT SIZES: if the context lists a known size whose work is clearly the same kind (another module of the same course, the next chapter of the same book), set estimatedMinutes from it instead of asking. Mention the reuse briefly in "message" ("counting Module 5 at about 8 hours like the last one").
+    - START DAY: the app itself sometimes appends "start today, or from tomorrow?" to your message. NEVER ask that question yourself — the app only asks when the choice is real. When the user's reply answers it ("tomorrow", "start today", "tomorrow's fine"), emit task_updates for that commitment's task with "commitmentStartDay": "today" or "tomorrow" and change nothing else.
 
     task_updates format (for updating existing tasks by id):
     {"id": "uuid-string", "estimatedMinutes": 60, "priority": "high", "dueDate": "YYYY-MM-DD"}
@@ -1233,6 +1234,7 @@ struct TaskUpdate: Codable {
     let priority: String?
     let dueTime: String?
     let category: String?
+    let commitmentStartDay: String?  // "today" | "tomorrow" — the user's answer to the app-asked start-day question
 }
 
 // MARK: - Feature 4 Response Types (Prep Plan)
