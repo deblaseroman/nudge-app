@@ -991,6 +991,7 @@ class ClaudeService {
         - prep: an invitation to start early on a task whose deadline still has room. May propose one small first step.
         - floater: a mid-day check-in about an open task with NO deadline — it points the task out for a day with room. Mention it's there; never invent urgency for it.
         - idle: asks whether the day has gotten started. Names NO task — keep it a single gentle, concrete question.
+        - comeBack: delivered only after several quiet days with no engagement. Factual and forward-looking about the named upcoming thing — a reason to come back. NEVER mention absence, time away, quiet days, streaks, or anything missed; the reader may have had a bad week, and noticing their absence is one more thing telling them they failed.
         """
 
         let items = requests.map { request -> String in

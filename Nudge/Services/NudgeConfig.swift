@@ -506,6 +506,27 @@ enum NudgeConfig {
     /// trigger from becoming a bill before anyone reads the console.
     static let copyGenMaxPerDay: Int = 6
 
+    // MARK: - Come-back nudge (cycle 2026-08-03-03)
+    //
+    // Drives `NudgeArbiter.buildComeBackCandidates`. Scheduled on every
+    // reevaluate at lastEngagement + `comeBackAfterDays`; engagement keeps
+    // pushing it forward, so it only ever FIRES after that many quiet days.
+
+    /// Days without engagement (app open, notification response, task
+    /// completion) before the come-back fires. Matches `copyCacheDays`:
+    /// the come-back is the last scheduled nudge in the cached window.
+    static let comeBackAfterDays: Int = 3
+
+    /// Hours after wake the come-back lands — same slot as prep
+    /// (`prepAnchorHoursAfterWake`): late-morning, when what's-coming-up
+    /// is still actionable that day.
+    static let comeBackAnchorHoursAfterWake: Double = 2
+
+    /// How far past the fire date the come-back looks for the thing it
+    /// names ("Chem quiz Friday"). ≤ 6 so a bare weekday name is always
+    /// unambiguous.
+    static let comeBackLookaheadDays: Int = 6
+
     // MARK: - Stakes backfill
     //
     // Drives `StakesBackfill`, the one-shot pass that classifies stakes on

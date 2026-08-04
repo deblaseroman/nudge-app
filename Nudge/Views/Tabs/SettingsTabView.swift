@@ -146,6 +146,13 @@ struct SettingsTabView: View {
                         subtitle: "A morning paralysis nudge if you haven't started anything 3 hrs after wake.",
                         isOn: $profile.sessionStarterNotificationsEnabled
                     )
+                    // Cycle 2026-08-03-03. Only ever fires after three
+                    // quiet days — every engagement pushes it forward.
+                    toggleSettingsRow(
+                        title: "Looking ahead",
+                        subtitle: "After a few days away, one note about what's coming up — never about the days themselves.",
+                        isOn: $profile.comeBackNotificationsEnabled
+                    )
                 }
 
                 settingsCard(title: "Calendar source", value: profile.calendarSource.isEmpty ? "Not connected yet" : profile.calendarSource)

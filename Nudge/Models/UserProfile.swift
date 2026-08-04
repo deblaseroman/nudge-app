@@ -82,6 +82,15 @@ final class UserProfile {
     /// attribute fails at LAUNCH on an existing store, not at build.
     var dueSoonReminderNotificationsEnabled: Bool = true
 
+    /// Gates the arbiter's come-back nudge (`buildComeBackCandidates`,
+    /// cycle 2026-08-03-03) — the forward-looking nudge that only fires
+    /// after `NudgeConfig.comeBackAfterDays` days with no engagement. Own
+    /// field per the one-toggle-per-feature rule above.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var comeBackNotificationsEnabled: Bool = true
+
     // MARK: - Quiet hours
     //
     // "When do I not want to be interrupted?" — deliberately SEPARATE from

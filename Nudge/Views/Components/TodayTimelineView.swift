@@ -381,6 +381,7 @@ struct TodayTimelineView: View {
         case .dueSoon:       return "due soon"
         case .morningPrompt: return "morning check-in"
         case .floater:       return "open work check-in"
+        case .comeBack:      return "looking ahead"
         }
     }
 }

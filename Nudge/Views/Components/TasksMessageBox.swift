@@ -518,6 +518,13 @@ enum TasksMessageComposer {
                 headline: "That was the morning check-in.",
                 detail: "It names the biggest thing on your list as the day starts."
             )
+        case .comeBack:
+            // Forward-looking here too: explain what the nudge points at,
+            // never the quiet days that preceded it (DESIGN.md never-shame).
+            return TasksMessage(
+                headline: "That was a look at what's coming up.",
+                detail: "It points out the next thing on your calendar or list. Everything here is where you left it."
+            )
         }
     }
 

@@ -309,8 +309,9 @@ final class NudgeArbiter: NudgeArbitering {
         candidates.append(contentsOf: buildPrepCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildDueSoonCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildFloaterCheckInCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildComeBackCandidates(profile: profile, modelContext: modelContext))
         #if DEBUG
-        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater).")
+        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater + comeBack).")
         #endif
 
         // 2. Run gates
@@ -1843,6 +1844,194 @@ final class NudgeArbiter: NudgeArbitering {
             return (targets: [planNext], placedOut: placedOut)
         }
         return (targets: eligible, placedOut: placedOut)
+    }
+
+    /// The come-back nudge (cycle 2026-08-03-03): one candidate at
+    /// `lastEngagement + comeBackAfterDays`, wake-anchored. Scheduled on
+    /// EVERY reevaluate — the declarative rebuild is the suppression
+    /// mechanism: any engagement triggers a reevaluate soon after (app
+    /// open, notification response, completion), which cancels and
+    /// re-schedules it another `comeBackAfterDays` out. It only ever FIRES
+    /// when nothing pushed it forward — exactly the user who has been away.
+    ///
+    /// ── AWAY MEANS ────────────────────────────────────────────────────
+    /// No app open (`AppOpenLog`), no notification response (`NudgeOutcome`
+    /// rows with a tapped result — a user acting on nudges without opening
+    /// the app is a user the app is WORKING for), no task checked off
+    /// (`CompletedTaskRecord`, which widget completions also write).
+    /// `.dismissed` deliberately doesn't count: swiping a banner away is
+    /// clearing noise, not the app working. The anchor is computed from
+    /// that evidence, not from "now" — a background-task reevaluate on day
+    /// 2 of an absence must NOT push the fire date out.
+    ///
+    /// ── COPY ──────────────────────────────────────────────────────────
+    /// Factual and forward-looking, about what's COMING — never the
+    /// absence ("Chem quiz Friday" is a reason to come back; "you haven't
+    /// opened Nudge in three days" is a reproach with nothing to act on).
+    /// The template names the next upcoming event or deadline inside
+    /// `comeBackLookaheadDays`; with nothing upcoming it states the open
+    /// count; with no open work at all it stands down (a contentless
+    /// notification is worse than silence — morning-prompt precedent).
+    /// Day names are absolute (weekday), never "today"/"tomorrow": the
+    /// body is baked ~3 days before it fires. Cached AI copy (kind
+    /// `.comeBack`) rides the normal `resolvedBody` swap.
+    ///
+    /// Discretionary (`countsAgainstBudget: true`), so quiet hours, busy
+    /// windows, budget, and spacing all apply. Event-block reminders are
+    /// untouchable by construction: they bypass the budget and pass
+    /// straight through `pickWinners` before any discretionary candidate
+    /// is even considered, so nothing here can suppress them.
+    private func buildComeBackCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.comeBackNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] comeBack: SKIP — comeBackNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        let now = Date()
+        let calendar = Calendar.current
+
+        // Last engagement: the newest of the three signals.
+        var lastEngagement = AppOpenLog.timestamps().last ?? now
+        var completionDescriptor = FetchDescriptor<CompletedTaskRecord>(
+            sortBy: [SortDescriptor(\.completedAt, order: .reverse)]
+        )
+        completionDescriptor.fetchLimit = 1
+        if let completion = (try? modelContext.fetch(completionDescriptor))?.first {
+            lastEngagement = max(lastEngagement, completion.completedAt)
+        }
+        let tappedRaws = [
+            NudgeOutcomeResult.tappedStart.rawValue,
+            NudgeOutcomeResult.tappedOpen.rawValue,
+            NudgeOutcomeResult.tappedSnooze.rawValue
+        ]
+        var responseDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> { tappedRaws.contains($0.resultRaw) },
+            sortBy: [SortDescriptor(\.actedAt, order: .reverse)]
+        )
+        responseDescriptor.fetchLimit = 5
+        for row in (try? modelContext.fetch(responseDescriptor)) ?? [] {
+            if let actedAt = row.actedAt {
+                lastEngagement = max(lastEngagement, actedAt)
+            }
+        }
+
+        // Fire on day lastEngagement + comeBackAfterDays at wake +
+        // comeBackAnchorHoursAfterWake — the same bounded-walk idiom as
+        // `prepFireDate`: if that anchor has already passed (deep absence
+        // + a background-task reevaluate), roll forward to the next one.
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        func anchor(on day: Date) -> Date? {
+            var comps = calendar.dateComponents([.year, .month, .day], from: day)
+            comps.hour = wakeComps.hour
+            comps.minute = wakeComps.minute
+            guard let dayWake = calendar.date(from: comps) else { return nil }
+            return dayWake.addingTimeInterval(NudgeConfig.comeBackAnchorHoursAfterWake * 60 * 60)
+        }
+        guard var day = calendar.date(
+            byAdding: .day,
+            value: NudgeConfig.comeBackAfterDays,
+            to: calendar.startOfDay(for: lastEngagement)
+        ) else { return [] }
+        var fireDate: Date? = nil
+        for _ in 0..<7 {
+            if let candidate = anchor(on: day), candidate > now {
+                fireDate = candidate
+                break
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        guard let fireDate else { return [] }
+
+        // The thing worth coming back for: the earliest upcoming event or
+        // dated open task after the FIRE date, inside the lookahead.
+        let lookaheadEnd = calendar.date(
+            byAdding: .day, value: NudgeConfig.comeBackLookaheadDays, to: fireDate
+        ) ?? fireDate
+        var openDescriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete }
+        )
+        openDescriptor.fetchLimit = 100
+        let all = (try? modelContext.fetch(openDescriptor)) ?? []
+        let upcoming = all
+            .compactMap { task -> (NudgeTask, Date)? in
+                guard let deadline = task.specificTime
+                        ?? (task.dueDate != nil ? task.sortDeadline : nil),
+                      deadline > fireDate, deadline < lookaheadEnd
+                else { return nil }
+                return (task, deadline)
+            }
+            .min { $0.1 < $1.1 }
+        let openTasks = all.filter { !$0.isInformationalEvent }
+
+        guard upcoming != nil || !openTasks.isEmpty else {
+            #if DEBUG
+            print("[NudgeArbiter] comeBack: SKIP — nothing upcoming and nothing open; standing down rather than sending a contentless nudge.")
+            #endif
+            return []
+        }
+
+        #if DEBUG
+        print("[NudgeArbiter] comeBack: lastEngagement=\(lastEngagement) → fire=\(fireDate)"
+            + (upcoming.map { " naming '\($0.0.title)'" } ?? " (no upcoming item; open-count copy)"))
+        #endif
+
+        return [NudgeCandidate(
+            id: "\(prefix)comeBack.\(stamp(calendar.startOfDay(for: fireDate)))",
+            kind: .comeBack,
+            fireDate: fireDate,
+            title: "Looking ahead",
+            body: NudgeArbiter.comeBackBody(
+                upcoming: upcoming,
+                openCount: openTasks.count,
+                fireDate: fireDate
+            ),
+            categoryID: .comeBack,
+            interruption: NudgeUrgencyTier.normal.interruption,
+            // No taskID: the nudge is about the whole list, and pointing
+            // the fatigue system at whatever it happens to name would
+            // count an ignored come-back against exactly the wrong task
+            // (the morning prompt's reasoning, same solution).
+            taskID: nil,
+            tier: .normal,
+            urgency: 0.6,
+            importance: 0.6,
+            receptivity: 1.0,
+            countsAgainstBudget: true,
+            estimatedMinutes: nil,
+            namedTaskID: upcoming?.0.id
+        )]
+    }
+
+    /// The come-back's deterministic body. Facts about what's ahead, in
+    /// absolute day terms — this string is baked days before delivery, so
+    /// "tomorrow" would be a lie by the time it's read.
+    static func comeBackBody(
+        upcoming: (NudgeTask, Date)?,
+        openCount: Int,
+        fireDate: Date
+    ) -> String {
+        if let (task, deadline) = upcoming {
+            let calendar = Calendar.current
+            let days = calendar.dateComponents(
+                [.day],
+                from: calendar.startOfDay(for: fireDate),
+                to: calendar.startOfDay(for: deadline)
+            ).day ?? 0
+            let fmt = DateFormatter()
+            fmt.dateFormat = days > 6 ? "MMM d" : "EEEE"
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            return "“\(task.title)” is coming up \(fmt.string(from: deadline)). Your list is ready when you are."
+        }
+        if openCount == 1 {
+            return "One open task is on your list, nothing pressing. Ready when you are."
+        }
+        return "\(openCount) open tasks are on your list, nothing pressing. Ready when you are."
     }
 
     // MARK: - Gates

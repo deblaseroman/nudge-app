@@ -149,17 +149,21 @@ enum NudgeCopyStore {
               !task.isComplete
         else { return nil }
 
+        // The same effective-deadline instant generation used: an event's
+        // start time, else a dated task's end-of-day deadline.
+        let currentDue = task.specificTime
+            ?? (task.dueDate != nil ? task.sortDeadline : nil)
         if let writtenDue = entry.dueAtGeneration {
             // Same deadline (to the minute), and it hasn't passed by the
             // time this notification fires.
-            guard task.dueDate != nil,
-                  abs(task.sortDeadline.timeIntervalSince(writtenDue)) < 60,
-                  task.sortDeadline > fireDate
+            guard let currentDue,
+                  abs(currentDue.timeIntervalSince(writtenDue)) < 60,
+                  currentDue > fireDate
             else { return nil }
         } else {
             // Copy written for an undated task ("no deadline" phrasing);
             // a deadline added since makes it wrong.
-            guard task.dueDate == nil else { return nil }
+            guard currentDue == nil else { return nil }
         }
         return entry.body
     }
@@ -345,7 +349,11 @@ final class NudgeCopyGenerator {
                 taskID: task?.id,
                 taskTitle: task?.title,
                 dueDescription: task.flatMap { dueDescription(for: $0, now: now) },
-                dueAtGeneration: task.flatMap { $0.dueDate != nil ? $0.sortDeadline : nil }
+                // The effective-deadline instant `validBody` re-checks at
+                // scheduling: event start time, else end-of-day deadline.
+                dueAtGeneration: task.flatMap {
+                    $0.specificTime ?? ($0.dueDate != nil ? $0.sortDeadline : nil)
+                }
             ))
         }
 
@@ -396,6 +404,33 @@ final class NudgeCopyGenerator {
         // Idle: one kind-generic line — the question is task-agnostic by
         // design.
         add(kind: .idle, task: nil)
+
+        // Come-back: the earliest upcoming event or deadline in roughly
+        // the window the come-back's own lookahead uses — the thing worth
+        // coming back for. Events need their own fetch (the open list
+        // above excludes them).
+        var eventDescriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { $0.isInformationalEvent && !$0.isComplete }
+        )
+        eventDescriptor.fetchLimit = 50
+        let events = (try? modelContext.fetch(eventDescriptor)) ?? []
+        let comeBackHorizon = calendar.date(
+            byAdding: .day,
+            value: NudgeConfig.comeBackAfterDays + NudgeConfig.comeBackLookaheadDays,
+            to: now
+        ) ?? now
+        let comeBackTarget = (open + events)
+            .compactMap { task -> (NudgeTask, Date)? in
+                guard let deadline = task.specificTime
+                        ?? (task.dueDate != nil ? task.sortDeadline : nil),
+                      deadline > now, deadline < comeBackHorizon
+                else { return nil }
+                return (task, deadline)
+            }
+            .min { $0.1 < $1.1 }
+        if let (target, _) = comeBackTarget {
+            add(kind: .comeBack, task: target)
+        }
 
         return requests
     }

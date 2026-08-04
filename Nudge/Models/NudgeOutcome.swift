@@ -55,6 +55,14 @@ enum NudgeOutcomeKind: String, Codable, CaseIterable {
     /// low-stakes work when there's free time, where get-ahead targets dated
     /// work approaching a deadline.
     case floater
+    /// The come-back nudge (cycle 2026-08-03-03): scheduled on every
+    /// reevaluate at `lastEngagement + comeBackAfterDays`, so it only ever
+    /// FIRES when no engagement (app open, notification response, task
+    /// completion) pushed it forward for that long — the declarative
+    /// rebuild is the suppression mechanism. Copy is factual and
+    /// forward-looking about what's coming; never about the absence
+    /// (`DESIGN.md` never-shame).
+    case comeBack
 }
 
 extension NudgeOutcomeKind {
@@ -107,6 +115,11 @@ extension NudgeOutcomeKind {
         case .dueSoon:
             return false
         case .idle, .getAhead, .prep, .morningPrompt, .floater:
+            return true
+        // The come-back's success case IS opening the app — the one thing
+        // the classifier can always see. Its rows carry no taskID, so the
+        // per-task fatigue gate never counts them regardless.
+        case .comeBack:
             return true
         }
     }

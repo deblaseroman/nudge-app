@@ -263,6 +263,7 @@ struct ContentView: View {
             profile.sessionStarterNotificationsEnabled.description,
             profile.floaterCheckInNotificationsEnabled.description,
             profile.eventReminderNotificationsEnabled.description,
+            profile.comeBackNotificationsEnabled.description,
             // Quiet hours. All three, not just the toggle: with custom hours
             // active, moving a time is the whole change and the toggle never
             // moves — a token that only watched the switch would leave the

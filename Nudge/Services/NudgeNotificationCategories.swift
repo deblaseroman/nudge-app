@@ -49,6 +49,11 @@ enum NudgeNotificationCategoryID: String {
     /// with `NudgeOutcomeKind.floater` — same reason: two different nudges
     /// sharing one identity made their data unreadable.
     case floater = "category.floater"
+    /// Come-back nudge (cycle 2026-08-03-03) — NO action buttons, same
+    /// reasoning as `eventBlock`: the whole ask IS "tap to open", so a
+    /// button set would invite a decision it doesn't need. Tap-to-open and
+    /// swipe-to-dismiss are the entire interaction surface.
+    case comeBack = "category.comeBack"
 }
 
 enum NudgeNotificationActionID: String {
@@ -217,9 +222,19 @@ enum NudgeNotificationCategories {
             intentIdentifiers: [],
             options: dismissible
         )
+        // Come-back: actionless like the event heads-up — its ask is
+        // tap-to-open itself. `dismissible` stays so `.dismissed` rows
+        // get written.
+        let comeBack = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.comeBack.rawValue,
+            actions: [],
+            intentIdentifiers: [],
+            options: dismissible
+        )
 
         UNUserNotificationCenter.current().setNotificationCategories([
-            eventBlock, idle, getAhead, prep, dueSoon, morningPrompt, floater
+            eventBlock, idle, getAhead, prep, dueSoon, morningPrompt, floater,
+            comeBack
         ])
     }
 }
