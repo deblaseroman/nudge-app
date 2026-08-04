@@ -217,16 +217,35 @@ class ClaudeService {
     - "quantity": a per-day COUNT. "Three job applications a day", "two chapters a day". Set commitmentDailyCount to the count (3, 2, …). This is ONE commitment, never N separate tasks. Set dueDate to the end date if stated.
     A plain task with a deadline ("finish my essay by Friday") is NOT a commitment — commitmentShape null. Only use a shape when the dump states ongoing/divisible/daily work.
 
-    COMMITMENT FOLLOW-UP QUESTIONS — exactly two exist, and ONLY these two:
-    - A "splitWork" commitment with estimatedMinutes null → ask roughly how many hours the whole thing is. ("Roughly how many hours is Module 4?")
-    - A "rate" or "quantity" commitment with dueDate null → ask when it ends. ("Until when — what day does the app testing run to?")
-    Rules:
-    - Save everything FIRST (capture-first, same as timeless events). The question goes at the END of "message", never instead of saving.
-    - Combine every needed question (including the timeless-events one) into ONE short closing question — never one message per item, never a second follow-up for the same dump.
-    - NEVER ask anything else about a commitment. Not the course name, not the platform, not how it's going — a question that doesn't change what the app does costs attention and returns nothing.
-    - When the user answers, use task_updates on the existing task: total hours → estimatedMinutes (in minutes); an end date → dueDate. Do not create new tasks from an answer.
-    - KNOWN COMMITMENT SIZES: if the context lists a known size whose work is clearly the same kind (another module of the same course, the next chapter of the same book), set estimatedMinutes from it instead of asking. Mention the reuse briefly in "message" ("counting Module 5 at about 8 hours like the last one").
-    - START DAY: the app itself sometimes appends "start today, or from tomorrow?" to your message. NEVER ask that question yourself — the app only asks when the choice is real. When the user's reply answers it ("tomorrow", "start today", "tomorrow's fine"), emit task_updates for that commitment's task with "commitmentStartDay": "today" or "tomorrow" and change nothing else.
+    FOLLOW-UP QUESTIONS — one judgment rule, not a list of cases:
+    You MAY end "message" with a follow-up question only when ALL THREE are true:
+    1. The answer genuinely cannot be inferred — not from the dump, not from the task list, not from the context you have (the dates, the CURRENT LOCAL CLOCK TIME, the known commitment sizes).
+    2. The answer changes what the app CREATES — how many tasks, on which days, how long each is, what daily count. If the app would create the same thing either way, the question costs the user attention and returns nothing: do not ask it.
+    3. You did NOT already fill the field. If you set dueDate, estimatedMinutes, or commitmentDailyCount on the task you are saving, that value is decided — asking about it (including "…right?" / "or keep going?" confirmations) is a re-ask, even bundled onto a legitimate question. The user can edit any task later; confirmation is what the editable list is for.
+
+    Hard limits, non-negotiable:
+    - Save everything FIRST. Capture is never blocked on a question — questions go at the END of "message", after the save.
+    - AT MOST TWO questions per capture, combined into ONE short closing message. The timeless-event time question counts toward the two. Never a second follow-up message for the same dump.
+    - Prefer zero. Two is a ceiling, not a target — an interrogation after a brain dump is the exact failure this app exists to avoid.
+    - Something stated once is stated: "three things by friday" dates all three things, and a shared deadline IS the end date of any rate or quantity in the list. Never re-ask it — and never ask for CONFIRMATION of something you already set ("wrap up Friday, or keep going?" is a re-ask wearing a hat). If you set the field, the question is answered.
+    - Never ask the start-today-or-tomorrow question (the app appends that itself — see START DAY), and never re-ask a size listed under KNOWN COMMITMENT SIZES.
+
+    When the user answers, use task_updates on the saved task — total effort → estimatedMinutes (in minutes); an end date → dueDate; a per-day count → commitmentDailyCount. Do not create new tasks from an answer.
+
+    JUDGMENT EXAMPLES:
+    - "finish module 4 of my python course by friday" → split work; the size can't be inferred and it decides how the week gets divided (8 hours is four 2-hour days; 2 hours is one) → ask: "Roughly how many hours is module 4?"
+    - "testing my app, an hour a day" → a rate with no end; without one it's infinite, and the end decides how many days get created → ask: "Until when should the testing run?"
+    - "do laundry" → an undated one-off saves as a floater by design; a due date wouldn't change what's created → ask nothing.
+    - "read chapter 5 by tomorrow" → the size can't be inferred here either, but the deadline leaves one day — one task tomorrow is what gets created at ANY size → ask nothing; the answer wouldn't change anything.
+    - "apply to jobs every day" → a daily quantity with neither a number nor an end; both change what's created → one message, two questions: "How many a day — and until when?"
+    - "finish the reading and the problem set by sunday" → the shared deadline covers both, and neither is ongoing/divisible work → ask nothing.
+    - "by sunday: revise my resume, and practice interviews 30 minutes a day" → "by sunday" dates BOTH — it is the rate's end date, already set → ask nothing about dates; nothing else changes what's created either → ask nothing at all.
+    - "by saturday: outline my thesis chapter, and stretch 15 minutes a day" → the outline is split work with no size → ask its size, and ONLY that. The stretching's end date is already Saturday because the shared deadline set it; asking "or keep going past Saturday?" is a confirmation of a field you already filled — a re-ask, not a question. One question total.
+      WRONG closing: "How many hours is the chapter — and should the stretching wrap up Saturday, or keep going?"  (second half re-asks a dueDate you already set)
+      RIGHT closing: "Roughly how many hours is the chapter?"
+
+    KNOWN COMMITMENT SIZES: if the context lists a known size whose work is clearly the same kind (another module of the same course, the next chapter of the same book), set estimatedMinutes from it instead of asking. Mention the reuse briefly in "message" ("counting Module 5 at about 8 hours like the last one").
+    START DAY: the app itself sometimes appends "start today, or from tomorrow?" to your message. NEVER ask that question yourself — the app only asks when the choice is real. When the user's reply answers it ("tomorrow", "start today", "tomorrow's fine"), emit task_updates for that commitment's task with "commitmentStartDay": "today" or "tomorrow" and change nothing else.
 
     task_updates format (for updating existing tasks by id):
     {"id": "uuid-string", "estimatedMinutes": 60, "priority": "high", "dueDate": "YYYY-MM-DD"}
@@ -1235,6 +1254,7 @@ struct TaskUpdate: Codable {
     let dueTime: String?
     let category: String?
     let commitmentStartDay: String?  // "today" | "tomorrow" — the user's answer to the app-asked start-day question
+    let commitmentDailyCount: Int?   // the user's answer to a per-day count question ("how many a day?")
 }
 
 // MARK: - Feature 4 Response Types (Prep Plan)

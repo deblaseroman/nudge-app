@@ -347,6 +347,11 @@ struct HomeTabView: View {
                             existingTask.isComplete = isComplete
                             existingTask.completedAt = isComplete ? Date() : nil
                         }
+                        // The user's answer to a per-day count question —
+                        // same clamp as the capture write path.
+                        if let count = update.commitmentDailyCount, count > 0 {
+                            existingTask.commitmentDailyCount = min(count, 99)
+                        }
                         // The user's answer to the app-asked start-day
                         // question ("today" / "tomorrow") — settles the
                         // outstanding ask; the sweep expands on it.
