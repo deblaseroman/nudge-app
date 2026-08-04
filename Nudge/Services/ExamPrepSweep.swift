@@ -664,13 +664,20 @@ final class ExamPrepSweep {
                 let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) {
                 startDay = tomorrow
             }
-            // Starting tomorrow must still leave a schedule: split work
-            // needs a day before the deadline, and nothing may start past
-            // the end. Deadline pressure beats bedtime.
-            if shape == .splitWork,
-               (calendar.dateComponents([.day], from: startDay, to: endDay).day ?? 0) < 1 {
-                startDay = today
-            }
+            // A forced start day is ACTED ON, not just un-asked (cycle
+            // 2026-08-03-04 item 1). The old rule here — "split work needs
+            // a day before the deadline; deadline pressure beats bedtime" —
+            // snapped a tomorrowOnly start back to today, so a commitment
+            // captured at 10:30pm due tomorrow silently generated a session
+            // for the remainder of tonight. The rule now: tomorrowOnly
+            // means tomorrow, and when tomorrow IS the deadline day the
+            // one-day schedule lands on the deadline day itself — a bare
+            // due date resolves to 23:59, so a session that day still
+            // precedes it (the generation step below counts that day as
+            // available). Only a start strictly past the end day (a
+            // rate/quantity ending today, captured after the window) still
+            // falls back to today: its end date is inclusive, so today is
+            // the commitment's real last day.
             if startDay > endDay { startDay = today }
 
             let commitment = NudgeCommitment(
@@ -744,9 +751,19 @@ final class ExamPrepSweep {
                 // existing daily or tombstone means the plan was laid.
                 guard existingStamps.isEmpty, tombstonedStamps.isEmpty,
                       let total = commitment.totalMinutes, total > 0 else { continue }
-                let daysRemaining = calendar.dateComponents(
+                let gapDays = calendar.dateComponents(
                     [.day], from: genStart, to: commitment.endDate
                 ).day ?? 0
+                // Sessions normally occupy the days BEFORE the deadline day.
+                // When the start day IS the deadline day (a tomorrowOnly
+                // start with the deadline tomorrow — cycle 2026-08-03-04
+                // item 1), that day is the one remaining work day: a bare
+                // due date resolves to 23:59, so a session there still
+                // precedes it. Without this, the guard below regressed the
+                // forced-tomorrow start into "expanded into nothing".
+                let daysRemaining = gapDays >= 1
+                    ? gapDays
+                    : (genStart <= commitment.endDate ? 1 : 0)
                 guard daysRemaining >= 1 else { continue }
                 let daysAvailable = min(daysRemaining, NudgeConfig.commitmentHorizonDays)
                 let plan = Self.splitWorkPlan(totalMinutes: total, daysAvailable: daysAvailable)
