@@ -25,7 +25,19 @@ enum NudgeConfig {
     // MARK: - Daily budget + spacing
     /// Maximum discretionary nudges per day. Event-block reminders do NOT
     /// count against this budget — they're factual time reminders.
-    static let dailyNudgeBudget: Int = 3
+    ///
+    /// 10 (cycle 2026-08-04-02, was 3) — DELIBERATELY HIGH, and not a
+    /// final value. The missed-placement series alone can want 4 slots,
+    /// and at 3 it would crowd out every other kind; 10 is an observation
+    /// setting, so real days show everything the arbiter would fire and
+    /// the kinds that earn their place can be chosen from evidence. At
+    /// this level the budget mostly stops binding: with the default
+    /// profile (wake 8:00, bed 23:00) the awake window is 08:30–22:00 =
+    /// 810 min, and `minNudgeSpacingMinutes` (90) caps that at 10
+    /// fence-post slots BEFORE budget-exempt winners (morning prompt,
+    /// event blocks, due-soon) claim theirs — so spacing, not this number,
+    /// is now the practical ceiling.
+    static let dailyNudgeBudget: Int = 10
 
     /// Minimum gap between any two nudges (discretionary or factual).
     static let minNudgeSpacingMinutes: Int = 90
@@ -539,10 +551,11 @@ enum NudgeConfig {
     /// scheduled window working.
     static let copyCacheDays: Int = 3
 
-    /// Tasks per kind the generation pass writes copy for. Only ~3
-    /// discretionary nudges a day can fire (`dailyNudgeBudget`), so a
-    /// handful per kind covers the morning prompt's rotation and normal
-    /// completion churn across the window; every-task-every-kind is waste.
+    /// Tasks per kind the generation pass writes copy for. Spacing caps a
+    /// day at ~10 nudges across ALL kinds (`dailyNudgeBudget` +
+    /// `minNudgeSpacingMinutes`), so a handful per kind still covers the
+    /// morning prompt's rotation and normal completion churn across the
+    /// window; every-task-every-kind is waste.
     static let copyGenTasksPerKind: Int = 4
 
     /// Minimum minutes between generation attempts (success or failure).

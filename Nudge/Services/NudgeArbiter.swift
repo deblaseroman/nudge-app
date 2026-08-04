@@ -386,6 +386,12 @@ final class NudgeArbiter: NudgeArbitering {
             scheduled: scheduled,
             context: gateContext
         )
+        debugBudgetImpact(
+            eligible: eligible,
+            scheduled: scheduled,
+            profile: profile,
+            context: gateContext
+        )
         #endif
 
         // 4. Schedule
@@ -3554,6 +3560,67 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    // MARK: - DEBUG: daily budget impact
+
+    /// Before/after for raising `dailyNudgeBudget` 3 → 10 (cycle
+    /// 2026-08-04-02 item 3), per work-order item 5. BEFORE replays this
+    /// run's winner pick under the pre-change budget of 3; AFTER is what
+    /// actually got scheduled. Read-only.
+    ///
+    /// Also prints the day's EFFECTIVE ceiling — the number the budget can
+    /// no longer be blamed for. `minNudgeSpacingMinutes` fence-posts the
+    /// awake window (with the default profile, 810 min / 90 min → 10
+    /// slots), and every budget-exempt winner (morning prompt, event
+    /// blocks, due-soon) consumes a slot discretionary candidates can't
+    /// use — so the practical cap on a real day sits below the nominal
+    /// spacing ceiling, and both sit at-or-below the budget of 10.
+    /// Spacing, not budget, is now the binding constraint.
+    private func debugBudgetImpact(
+        eligible: [NudgeCandidate],
+        scheduled: [NudgeCandidate],
+        profile: UserProfile,
+        context: GateContext
+    ) {
+        let oldBudget = 3
+        let calendar = Calendar.current
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        let awakeMinutes: Int
+        if let window = quietWindow(for: profile) {
+            awakeMinutes = ((window.startMinute - window.endMinute) + 1440) % 1440
+        } else {
+            awakeMinutes = 1440
+        }
+        let spacingSlots = awakeMinutes / NudgeConfig.minNudgeSpacingMinutes + 1
+        print("[BudgetImpact] budget \(oldBudget) → \(NudgeConfig.dailyNudgeBudget); "
+            + "spacing ceiling = \(awakeMinutes)m awake / \(NudgeConfig.minNudgeSpacingMinutes)m "
+            + "spacing → \(spacingSlots) slots/day before budget-exempt winners claim theirs.")
+
+        let oldWinners = pickWinners(from: eligible, context: context, budget: oldBudget)
+        let oldIDs = Set(oldWinners.map(\.id))
+        let freed = scheduled.filter { !oldIDs.contains($0.id) }
+
+        let byDay = Dictionary(grouping: scheduled) { calendar.startOfDay(for: $0.fireDate) }
+        for (day, winners) in byDay.sorted(by: { $0.key < $1.key }) {
+            let discretionary = winners.filter(\.countsAgainstBudget).count
+            let exempt = winners.count - discretionary
+            print("  \(stamp(day)): \(discretionary) discretionary + \(exempt) exempt "
+                + "= \(winners.count) scheduled (old budget allowed \(min(discretionary, oldBudget)) "
+                + "discretionary; effective spacing ceiling \(spacingSlots - exempt) after exempt).")
+        }
+        if freed.isEmpty {
+            print("  → NO CHANGE: the old budget of \(oldBudget) wasn't binding on this data — "
+                + "nothing new fires at \(NudgeConfig.dailyNudgeBudget).")
+        } else {
+            for cand in freed.sorted(by: { $0.fireDate < $1.fireDate }) {
+                print("  → FREED: \(cand.kind.rawValue) @ \(fmt.string(from: cand.fireDate)) "
+                    + "— fires at budget \(NudgeConfig.dailyNudgeBudget), was cut at \(oldBudget).")
+            }
+        }
+    }
+
     /// Names the FIRST gate in `passesGates` that rejects `candidate`. The
     /// order here mirrors that function; it re-derives rather than shares
     /// code because `passesGates` returns a bare Bool and making it report
@@ -3605,9 +3672,24 @@ final class NudgeArbiter: NudgeArbitering {
     /// Picks all event-block reminders (they're factual + budget-exempt)
     /// plus the top-scoring discretionary candidate per fire-day, capped
     /// by the daily budget, and spaced by the min-spacing window.
+    ///
+    /// An overload rather than a `budget:` default argument for the same
+    /// reason `clusterEvents` has one: a default-value expression is a
+    /// nonisolated autoclosure, so it can't read the main-actor-isolated
+    /// `NudgeConfig`. The parameterized form exists for
+    /// `debugBudgetImpact`, which replays the winner pick under the
+    /// pre-change budget.
     private func pickWinners(
         from candidates: [NudgeCandidate],
         context: GateContext
+    ) -> [NudgeCandidate] {
+        pickWinners(from: candidates, context: context, budget: NudgeConfig.dailyNudgeBudget)
+    }
+
+    private func pickWinners(
+        from candidates: [NudgeCandidate],
+        context: GateContext,
+        budget: Int
     ) -> [NudgeCandidate] {
         var winners: [NudgeCandidate] = []
         let calendar = Calendar.current
@@ -3625,7 +3707,7 @@ final class NudgeArbiter: NudgeArbitering {
             let sorted = dayCandidates.sorted { $0.score > $1.score }
             var chosen: [NudgeCandidate] = []
             for cand in sorted {
-                guard chosen.count < NudgeConfig.dailyNudgeBudget else { break }
+                guard chosen.count < budget else { break }
                 // Min spacing — must be far enough from every already-chosen
                 // notification (event blocks included).
                 let combined = chosen + winners

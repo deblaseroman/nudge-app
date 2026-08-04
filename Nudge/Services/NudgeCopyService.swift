@@ -324,8 +324,8 @@ final class NudgeCopyGenerator {
     }
 
     /// The top candidates per kind — capped at
-    /// `NudgeConfig.copyGenTasksPerKind` each, because only ~3 discretionary
-    /// nudges a day can actually fire: generating for every task × kind ×
+    /// `NudgeConfig.copyGenTasksPerKind` each, because spacing caps a day
+    /// at ~10 nudges across ALL kinds: generating for every task × kind ×
     /// day is waste, and the cap still covers rotation and completion churn
     /// across the cache window.
     static func buildRequests(
