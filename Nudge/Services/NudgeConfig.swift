@@ -479,6 +479,33 @@ enum NudgeConfig {
     /// cannot hit is the reason not to start.
     static let commitmentCarryCapDays: Int = 3
 
+    // MARK: - AI nudge copy (generate-ahead cache, cycle 2026-08-03-03)
+    //
+    // Drives `NudgeCopyGenerator` / `NudgeCopyStore`. The arbiter only
+    // READS the cache — generation runs on its own triggers, and every
+    // read falls back to the deterministic template.
+
+    /// How long cached copy stays servable. Three days because a user who
+    /// stops opening the app is exactly the one who still needs the
+    /// scheduled window working.
+    static let copyCacheDays: Int = 3
+
+    /// Tasks per kind the generation pass writes copy for. Only ~3
+    /// discretionary nudges a day can fire (`dailyNudgeBudget`), so a
+    /// handful per kind covers the morning prompt's rotation and normal
+    /// completion churn across the window; every-task-every-kind is waste.
+    static let copyGenTasksPerKind: Int = 4
+
+    /// Minimum minutes between generation attempts (success or failure).
+    /// Collapses duplicate triggers in one launch sequence and stops a
+    /// flaky network from turning every foreground into an API call.
+    static let copyGenMinMinutesBetween: Int = 15
+
+    /// Hard per-day ceiling on generation passes. The DEBUG count print is
+    /// the real watchdog for too-loose triggers; this stops a runaway
+    /// trigger from becoming a bill before anyone reads the console.
+    static let copyGenMaxPerDay: Int = 6
+
     // MARK: - Stakes backfill
     //
     // Drives `StakesBackfill`, the one-shot pass that classifies stakes on

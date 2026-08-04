@@ -962,6 +962,139 @@ class ClaudeService {
         return result
     }
 
+    // MARK: - Batch nudge-copy generation (cycle 2026-08-03-03)
+
+    /// Writes notification body copy for a batch of (kind, task) pairs in
+    /// ONE request — the cache-ahead pass `NudgeCopyGenerator` runs a few
+    /// times a day. One call per pass, never one per kind.
+    ///
+    /// Same coverage contract as `classifyStakes`: matching is by INDEX,
+    /// and the response must cover the request exactly or the whole pass
+    /// is thrown away — a partial answer applied silently would leave some
+    /// kinds "generated" and some not, with nothing to say which.
+    ///
+    /// The tone rules live HERE, in the prompt (DESIGN.md governs every
+    /// generated string): facts not verdicts, propose never promise, no
+    /// implied failure, never shame. The copy may be delivered up to three
+    /// days after it is written, so relative day words are banned outright
+    /// — "tomorrow" is a lie two days later; the absolute phrase in
+    /// `due` never goes stale before the cache does.
+    func generateNudgeCopy(
+        requests: [NudgeCopyGenerator.NudgeCopyRequest]
+    ) async throws -> [Int: String] {
+        guard !requests.isEmpty else { return [:] }
+        guard !apiKey.isEmpty else { throw ClaudeError.missingAPIKey }
+
+        let kindBriefs = """
+        NUDGE KINDS (what each notification is for):
+        - morningPrompt: the first thing the user reads in the morning. States the day's biggest item and, when it has one, its deadline. A statement, never a question.
+        - prep: an invitation to start early on a task whose deadline still has room. May propose one small first step.
+        - floater: a mid-day check-in about an open task with NO deadline — it points the task out for a day with room. Mention it's there; never invent urgency for it.
+        - idle: asks whether the day has gotten started. Names NO task — keep it a single gentle, concrete question.
+        """
+
+        let items = requests.map { request -> String in
+            var line = "\(request.index). kind=\(request.kind.rawValue)"
+            if let title = request.taskTitle {
+                line += " | task: \"\(title)\""
+            }
+            if let due = request.dueDescription {
+                line += " | \(due)"
+            }
+            return line
+        }.joined(separator: "\n")
+
+        let prompt = """
+        Write iOS notification BODY copy for a task app's nudges. One body per item below.
+
+        \(kindBriefs)
+
+        TONE RULES — every one is a hard rule, not a style preference:
+        - State facts, never verdicts. The deadline, the task, what's possible now.
+        - Propose, never promise. No "you'll be fine", "you've got this", "and you're all set" — no outcome the app can't deliver.
+        - Never imply failure, lateness, or a pattern of avoidance. No guilt framed as motivation.
+        - Warm and plain, not peppy. No exclamation marks, no emoji (the app adds its own urgency markers).
+        - NEVER use "today", "tomorrow", "tonight", or any relative day word — this copy may be delivered up to three days after you write it. Use the absolute day given in the item ("Friday", "Aug 7") or no day at all.
+        - Name the task naturally (quotes optional); don't rename or summarize it.
+        - One sentence, two short ones at most. Under 140 characters.
+
+        Return ONLY a JSON array. No prose, no markdown fences. Schema:
+        [
+          {"index": <the item's number below>, "body": "<the notification body>"}
+        ]
+        Return exactly one object per item, covering every index from 0 to \(requests.count - 1).
+
+        ITEMS:
+        \(items)
+        """
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 2000,
+            "system": "You write concise, honest notification copy. Return only valid JSON matching the requested schema. No prose, no commentary.",
+            "messages": [["role": "user", "content": prompt]]
+        ]
+
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        guard let text = anthropicResponse.content.first?.text else {
+            throw ClaudeError.emptyResponse
+        }
+        return try Self.decodeGeneratedCopy(from: text, expectedCount: requests.count)
+    }
+
+    /// Strips fences, decodes, and enforces exact index coverage — the
+    /// same discipline as `decodeStakesClassifications`, for the same
+    /// reason: a truncated or renumbered response is well-formed JSON.
+    private static func decodeGeneratedCopy(
+        from raw: String,
+        expectedCount: Int
+    ) throws -> [Int: String] {
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```json") { cleaned = String(cleaned.dropFirst(7)) }
+        if cleaned.hasPrefix("```")     { cleaned = String(cleaned.dropFirst(3)) }
+        if cleaned.hasSuffix("```")     { cleaned = String(cleaned.dropLast(3)) }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let start = cleaned.firstIndex(of: "["),
+              let end = cleaned.lastIndex(of: "]"),
+              let arrayData = String(cleaned[start...end]).data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([GeneratedCopyJSON].self, from: arrayData)
+        else {
+            #if DEBUG
+            print("[ClaudeService] generateNudgeCopy — unparseable response:\n\(raw)")
+            #endif
+            throw ClaudeError.parseError
+        }
+
+        let returnedIndices = Set(decoded.map(\.index))
+        guard decoded.count == expectedCount,
+              returnedIndices == Set(0..<expectedCount) else {
+            #if DEBUG
+            print("[ClaudeService] generateNudgeCopy — response does not cover the request: sent \(expectedCount), got \(decoded.count) over \(returnedIndices.count) distinct index/indices. Abandoning pass.")
+            #endif
+            throw ClaudeError.parseError
+        }
+
+        var result: [Int: String] = [:]
+        for row in decoded {
+            let body = row.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            // An empty body holds its index (coverage) but contributes no
+            // entry — the template covers that slot.
+            guard !body.isEmpty else { continue }
+            result[row.index] = body
+        }
+        return result
+    }
+
     // MARK: - Network Layer
 
     private func makeRequest(body: [String: Any]) async throws -> ClaudeResponse {
@@ -1306,6 +1439,15 @@ private struct ScreenshotEventJSON: Codable {
 private struct StakesClassificationJSON: Codable {
     let index: Int
     let stakes: String?
+}
+
+// MARK: - Nudge-copy generation DTO
+
+/// One row of the copy-generation response — index-matched to the request
+/// batch under the same coverage contract as the stakes classifier.
+private struct GeneratedCopyJSON: Codable {
+    let index: Int
+    let body: String
 }
 
 private extension DateFormatter {

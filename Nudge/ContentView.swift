@@ -197,10 +197,12 @@ struct ContentView: View {
             // automatically, but being explicit removes any ambiguity
             // across Swift compiler versions / concurrency modes.
             Task { @MainActor in
+                var importedEvents = 0
                 if profile.calendarSource == "Apple Calendar" {
-                    _ = await CalendarService.shared.refreshRollingWindow(
+                    let result = await CalendarService.shared.refreshRollingWindow(
                         modelContext: modelContext
                     )
+                    importedEvents = result?.importedCount ?? 0
                 }
                 // First foreground of a new day → plan it (once; never
                 // touches manual placements; skips if a plan exists).
@@ -210,6 +212,28 @@ struct ContentView: View {
                 ), case .placed = outcome {
                     // Placements changed the store after the reevaluate
                     // above — run the arbiter against the planned day.
+                    NudgeArbiter.shared.reevaluate(
+                        reason: .taskCreatedOrEdited,
+                        profile: profile,
+                        modelContext: modelContext
+                    )
+                }
+                // Refresh the AI nudge-copy cache — the same first-open-of-
+                // a-new-day hook the rollover and calendar refresh share,
+                // deliberately AFTER both so generation sees fresh events
+                // and today's placements. A real calendar import counts as
+                // a shift in what the day is about even when the day
+                // marker says the baseline already ran. NOT on every
+                // reevaluate — `generateIfNeeded` owns the day-marker,
+                // min-interval, and daily-cap throttles.
+                let copyTrigger: NudgeCopyGenerator.Trigger =
+                    importedEvents > 0 ? .calendarImport : .newDay
+                if await NudgeCopyGenerator.shared.generateIfNeeded(
+                    trigger: copyTrigger,
+                    modelContext: modelContext
+                ) {
+                    // New copy landed after the reevaluate above — run the
+                    // arbiter again so scheduled notifications carry it.
                     NudgeArbiter.shared.reevaluate(
                         reason: .taskCreatedOrEdited,
                         profile: profile,

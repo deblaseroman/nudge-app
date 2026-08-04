@@ -461,6 +461,13 @@ final class ExamPrepSweep {
 
         if created > 0 {
             try? modelContext.save()
+            // The day's shape just changed — study days materialized or a
+            // commitment expanded into dailies. That's a real shift in
+            // what the next days are about, so the AI nudge-copy cache
+            // regenerates (throttled inside; cycle 2026-08-03-03). Both
+            // trigger paths land here: an exam entering its lead window
+            // and a captured commitment whose numbers just completed.
+            NudgeCopyGenerator.shared.noteShift(.generatedWork, modelContext: modelContext)
         }
         return created
     }

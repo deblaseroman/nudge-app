@@ -3026,7 +3026,7 @@ final class NudgeArbiter: NudgeArbitering {
         // let us change banner color, but the title prefix is the closest
         // legitimate substitute.
         content.title = candidate.tier.styledTitle(candidate.title)
-        content.body = candidate.body
+        content.body = resolvedBody(for: candidate, modelContext: modelContext)
         content.sound = .default
         content.categoryIdentifier = candidate.categoryID.rawValue
         // The tier overrides the candidate's `interruption` so warning/
@@ -3100,6 +3100,42 @@ final class NudgeArbiter: NudgeArbitering {
         )
         modelContext.insert(outcome)
         try? modelContext.save()
+    }
+
+    /// The body this candidate ships with: cached AI copy when a valid
+    /// entry exists, the candidate's own deterministic template otherwise
+    /// (cycle 2026-08-03-03).
+    ///
+    /// This is a synchronous cache READ — no API call anywhere near the
+    /// arbiter's path (DESIGN.md). `NudgeCopyStore.validBody` does the
+    /// staleness work: entry age, the named task still open and unfinished,
+    /// its deadline unchanged and still ahead of the fire date. Any miss →
+    /// template, which is why the app with no key, no network, or an empty
+    /// cache behaves exactly as it did before generated copy existed.
+    ///
+    /// Looked up by `namedTaskID ?? taskID`: the morning prompt carries the
+    /// task its copy names in `namedTaskID` (its `taskID` stays nil for the
+    /// fatigue system — see `NudgeCandidate.namedTaskID`).
+    private func resolvedBody(
+        for candidate: NudgeCandidate,
+        modelContext: ModelContext
+    ) -> String {
+        guard let generated = NudgeCopyStore.validBody(
+            kind: candidate.kind,
+            taskID: candidate.namedTaskID ?? candidate.taskID,
+            fireDate: candidate.fireDate,
+            modelContext: modelContext
+        ) else {
+            return candidate.body
+        }
+        #if DEBUG
+        // Before/after per work-order item 5: the template beside the
+        // generated copy that replaces it.
+        print("[NudgeArbiter] copy swap for \(candidate.kind.rawValue) @ \(candidate.fireDate):")
+        print("  TEMPLATE : \"\(candidate.body)\"")
+        print("  GENERATED: \"\(generated)\"")
+        #endif
+        return generated
     }
 
     private func stamp(_ date: Date) -> String {
