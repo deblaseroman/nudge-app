@@ -1970,11 +1970,17 @@ struct TaskRowView: View {
         StakesRowStyle.titleFontName(isHighStakes: rowTreatment == .highStakes)
     }
 
-    /// Subtitle under the title. Returns today's remaining-time line for
-    /// normal rows (unchanged), recolors it coral when approaching, and
-    /// substitutes the amber "Sitting N days" line for the sitting state
-    /// (which has no deadline, hence no remaining-time line of its own).
+    /// Subtitle under the title. Generated-series rows get the day they
+    /// belong to instead of a countdown (cycle 2026-08-03-02 item 2 —
+    /// five "4 hours left / 28 hours left / 2 days" rows under one title
+    /// read as five competing deadlines, not one commitment spread across
+    /// a week); ordinary rows keep today's remaining-time line, recolored
+    /// coral when approaching; the sitting state substitutes its amber
+    /// line (undated, so it can never be a series row).
     private var subtitle: (text: String, color: Color)? {
+        if !task.isComplete, isGeneratedSeriesTask, let due = task.dueDate {
+            return seriesDayLabel(due: due, now: CountdownClock.shared.now)
+        }
         if case .sitting(let days) = rowTreatment {
             return ("Sitting \(days) day\(days == 1 ? "" : "s")", NudgeTheme.amber)
         }
@@ -1987,6 +1993,49 @@ struct TaskRowView: View {
             return (remaining, color)
         }
         return nil
+    }
+
+    /// Whether this task belongs to a generated series — exam prep and
+    /// commitment dailies share the generator, so one rule covers both.
+    private var isGeneratedSeriesTask: Bool {
+        task.source == "prep" || task.source == "commitment"
+    }
+
+    /// The series subtitle: which day this session belongs to. "Today's
+    /// session"; a weekday name within a week ("Wednesday's session"); a
+    /// date beyond that. A MISSED session keeps its day label in the
+    /// overdue color rather than a countdown — "Monday's session" in red
+    /// states which day slipped, where a growing "26 hours ago" counter
+    /// is a shame ticker (`DESIGN.md`); the row's existing overdue
+    /// treatment already carries the flag once.
+    private func seriesDayLabel(due: Date, now: Date) -> (text: String, color: Color) {
+        let cal = Calendar.current
+        let days = cal.dateComponents(
+            [.day],
+            from: cal.startOfDay(for: now),
+            to: cal.startOfDay(for: due)
+        ).day ?? 0
+
+        func dateLabel() -> String {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MMM d"
+            return "Session on \(fmt.string(from: due))"
+        }
+        func weekdayLabel() -> String {
+            "\(due.formatted(.dateTime.weekday(.wide)))'s session"
+        }
+
+        if days < 0 {
+            // Beyond a week back a weekday name is ambiguous; use the date.
+            return (days > -7 ? weekdayLabel() : dateLabel(), NudgeTheme.overdue)
+        }
+        if days == 0 {
+            return ("Today's session", NudgeTheme.textSecondary)
+        }
+        if days < 7 {
+            return (weekdayLabel(), NudgeTheme.textSecondary)
+        }
+        return (dateLabel(), NudgeTheme.textSecondary)
     }
 
     /// VoiceOver label for the title element. Adds stakes + state words on
