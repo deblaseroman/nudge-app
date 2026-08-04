@@ -31,6 +31,12 @@ struct TasksTabView: View {
     @State private var activeSheet: TaskSheetDestination?
     @State private var showCancelSessionAlert = false
     @State private var showSessionTaskPicker = false
+    /// True when the picker was opened by the idle sheet's "pick something
+    /// else" — the user just declined a single proposed task, so opening on
+    /// another single suggestion (possibly the same task) would ignore what
+    /// they said. Straight to the full list instead. Reset by the Start
+    /// Session button on its way in.
+    @State private var sessionPickerShowsFullList = false
     /// Which list tab shows below Start Session. Deliberately not persisted:
     /// every launch lands on Today, so the entry point never moves around —
     /// the Overdue badge carries the "look here" signal instead.
@@ -252,6 +258,33 @@ struct TasksTabView: View {
         return actionableTasks
             .filter { !$0.isComplete }
             .sorted { comparator.compare($0, $1) }
+    }
+
+    /// The task Start Session proposes before showing any list (cycle
+    /// 2026-08-04-01 item 2) — the thing Today says to do now, so starting
+    /// costs one tap instead of a decision. The rule: the earliest
+    /// placement on today's timeline whose slot hasn't fully passed (a
+    /// block in progress IS "now", so it counts), else the first open task
+    /// in Today's ordered plan. Nil = Today is empty → the picker opens
+    /// with the full list, exactly the old behaviour.
+    private var suggestedSessionTask: NudgeTask? {
+        let now = Date()
+        let cal = Calendar.current
+        let placedAhead = actionableTasks.filter { task in
+            guard !task.isComplete, let p = task.plannedStartDate,
+                  cal.isDateInToday(p) else { return false }
+            // Same duration resolution as the timeline's blocks (30 is
+            // TodayTimelineView's defaultTaskMinutes), so "still ahead"
+            // agrees with what the strip draws.
+            let minutes = task.plannedDurationMinutes ?? task.estimatedMinutes ?? 30
+            return p.addingTimeInterval(Double(minutes) * 60) > now
+        }
+        if let next = placedAhead.min(by: {
+            ($0.plannedStartDate ?? .distantFuture) < ($1.plannedStartDate ?? .distantFuture)
+        }) {
+            return next
+        }
+        return planTasks.first { !$0.isComplete }
     }
 
     /// Open tasks not on today's timeline: unplaced, OR placed on some other
@@ -521,6 +554,7 @@ struct TasksTabView: View {
         .sheet(isPresented: $showSessionTaskPicker) {
             SessionTaskPickerSheet(
                 tasks: orderedActionableTasks,
+                suggested: sessionPickerShowsFullList ? nil : suggestedSessionTask,
                 onPick: { task in
                     showSessionTaskPicker = false
                     coordinator.startSession(task: task, userName: profile.name)
@@ -538,6 +572,7 @@ struct TasksTabView: View {
                     },
                     onPickSomethingElse: {
                         idleProposedTaskID = nil
+                        sessionPickerShowsFullList = true
                         showSessionTaskPicker = true
                     }
                 )
@@ -1692,6 +1727,7 @@ struct TasksTabView: View {
         let incompleteTasks = actionableTasks.filter { !$0.isComplete }
         guard !incompleteTasks.isEmpty else { return }
 
+        sessionPickerShowsFullList = false
         showSessionTaskPicker = true
     }
 
@@ -2673,23 +2709,28 @@ struct SessionTaskPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let tasks: [NudgeTask]
+    /// The Today-derived default (cycle 2026-08-04-01 item 2): the sheet
+    /// opens on this one task with a Change button instead of the full
+    /// list — fewer decisions at the moment of starting. Nil (Today empty,
+    /// or the idle sheet's "pick something else") = full list straight
+    /// away, the previous behaviour.
+    let suggested: NudgeTask?
     let onPick: (NudgeTask) -> Void
+
+    /// Flipped by the Change button — reveals the rest of the open tasks
+    /// beneath the suggestion. Not persisted; every presentation starts
+    /// collapsed.
+    @State private var showAllTasks = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("What are you working on?")
-                        .font(.custom(NudgeTheme.fontSemiBold, size: 20))
-                        .foregroundColor(NudgeTheme.textPrimary)
-                        .padding(.bottom, 4)
-
-                    Text("Pick a task to focus on. The session ends when you complete it or stop the timer.")
-                        .font(.custom(NudgeTheme.fontBody, size: 14))
-                        .foregroundColor(NudgeTheme.textMuted)
-                        .padding(.bottom, 8)
-
                     if tasks.isEmpty {
+                        Text("What are you working on?")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 20))
+                            .foregroundColor(NudgeTheme.textPrimary)
+                            .padding(.bottom, 4)
                         VStack(spacing: 8) {
                             Text("No tasks to focus on")
                                 .font(.custom(NudgeTheme.fontSemiBold, size: 16))
@@ -2700,43 +2741,57 @@ struct SessionTaskPickerSheet: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 40)
-                    } else {
-                        ForEach(tasks, id: \.id) { task in
+                    } else if let suggested {
+                        Text("Up next on Today")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 20))
+                            .foregroundColor(NudgeTheme.textPrimary)
+                            .padding(.bottom, 4)
+
+                        Text("The session ends when you complete the task or stop the timer.")
+                            .font(.custom(NudgeTheme.fontBody, size: 14))
+                            .foregroundColor(NudgeTheme.textMuted)
+                            .padding(.bottom, 8)
+
+                        suggestionCard(suggested)
+
+                        if showAllTasks {
+                            Text("Or pick something else")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                                .foregroundColor(NudgeTheme.textMuted)
+                                .padding(.top, 8)
+                            ForEach(tasks.filter { $0.id != suggested.id }, id: \.id) { task in
+                                taskRow(task)
+                            }
+                        } else {
                             Button {
-                                NudgeHaptics.medium()
-                                onPick(task)
-                            } label: {
-                                HStack(alignment: .center, spacing: 12) {
-                                    Circle()
-                                        .fill(priorityColor(task))
-                                        .frame(width: 10, height: 10)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(task.title)
-                                            .font(.custom(NudgeTheme.fontSemiBold, size: 15))
-                                            .foregroundColor(NudgeTheme.textPrimary)
-                                            .multilineTextAlignment(.leading)
-
-                                        Text(durationLabel(task))
-                                            .font(.custom(NudgeTheme.fontBody, size: 13))
-                                            .foregroundColor(NudgeTheme.textMuted)
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: "play.fill")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(NudgeTheme.primary)
+                                NudgeHaptics.light()
+                                withAnimation(NudgeAnimation.standard) {
+                                    showAllTasks = true
                                 }
-                                .padding(16)
-                                .background(NudgeTheme.surface)
-                                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
-                                        .stroke(NudgeTheme.border, lineWidth: 1)
-                                )
+                            } label: {
+                                Text("Change")
+                                    .font(.custom(NudgeTheme.fontMedium, size: 14))
+                                    .foregroundColor(NudgeTheme.primary)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 44)
+                                    .background(NudgeTheme.surfaceAlt)
+                                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
                             }
                             .buttonStyle(.plain)
+                        }
+                    } else {
+                        Text("What are you working on?")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 20))
+                            .foregroundColor(NudgeTheme.textPrimary)
+                            .padding(.bottom, 4)
+
+                        Text("Pick a task to focus on. The session ends when you complete it or stop the timer.")
+                            .font(.custom(NudgeTheme.fontBody, size: 14))
+                            .foregroundColor(NudgeTheme.textMuted)
+                            .padding(.bottom, 8)
+
+                        ForEach(tasks, id: \.id) { task in
+                            taskRow(task)
                         }
                     }
                 }
@@ -2751,6 +2806,96 @@ struct SessionTaskPickerSheet: View {
                 }
             }
         }
+    }
+
+    /// The single proposed task — same tap-to-start contract as the list
+    /// rows, dressed in the timeline block's primary tint so "this is the
+    /// plan" reads at a glance. The context line says WHY it's the one
+    /// proposed (its timeline slot, or its place in the ordered plan).
+    private func suggestionCard(_ task: NudgeTask) -> some View {
+        Button {
+            NudgeHaptics.medium()
+            onPick(task)
+        } label: {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(task.title)
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 17))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .multilineTextAlignment(.leading)
+                    Text(suggestionContext(task))
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textMuted)
+                    Text(durationLabel(task))
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textMuted)
+                }
+
+                Spacer()
+
+                Image(systemName: "play.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(NudgeTheme.primary)
+            }
+            .padding(18)
+            .background(NudgeTheme.primary.opacity(0.10))
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            .overlay(
+                RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
+                    .stroke(NudgeTheme.primary.opacity(0.5), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Why this task is the one proposed — the suggestion rule, stated to
+    /// the user in its own terms.
+    private func suggestionContext(_ task: NudgeTask) -> String {
+        if let planned = task.plannedStartDate, Calendar.current.isDateInToday(planned) {
+            return "On today's timeline at \(planned.formatted(date: .omitted, time: .shortened))"
+        }
+        if task.sequenceIndex != nil {
+            return "Next in today's plan"
+        }
+        return "Next on your Today list"
+    }
+
+    private func taskRow(_ task: NudgeTask) -> some View {
+        Button {
+            NudgeHaptics.medium()
+            onPick(task)
+        } label: {
+            HStack(alignment: .center, spacing: 12) {
+                Circle()
+                    .fill(priorityColor(task))
+                    .frame(width: 10, height: 10)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .multilineTextAlignment(.leading)
+
+                    Text(durationLabel(task))
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textMuted)
+                }
+
+                Spacer()
+
+                Image(systemName: "play.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(NudgeTheme.primary)
+            }
+            .padding(16)
+            .background(NudgeTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            .overlay(
+                RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
+                    .stroke(NudgeTheme.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     /// Leading importance dot — reads STAKES (not priority), matching
