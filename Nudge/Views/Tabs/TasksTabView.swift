@@ -371,14 +371,21 @@ struct TasksTabView: View {
                     onTapEmpty: { placement = PlacementContext(time: $0) },
                     onCompleteTask: { toggleCompletion(for: $0) }
                 )
-                // Control order (cycle 2026-08-03-08): box (which carries
-                // the chat chip in its bottom-right) → timeline → Plan my
-                // day → Start Session. Plan my day and Start Session share
-                // the full-width primary treatment and sit adjacent — the
-                // visual distinction is a decision Roman is making
-                // separately; do not restyle either here.
-                planMyDayButton
-                startSessionButton
+                // Control order: box (chat circle on its corner) →
+                // timeline → Plan my day + Start Session side by side
+                // (design feedback after cycle 2026-08-03-08: the stacked
+                // full-height pair pushed the task lists below the fold —
+                // one 44pt row keeps them visible). The active-session
+                // banner keeps its own full-width row; it carries live
+                // content the half-width form can't hold.
+                if coordinator.isSessionActive {
+                    startSessionButton
+                } else {
+                    HStack(spacing: 10) {
+                        planMyDayButton
+                        startSessionButton
+                    }
+                }
                 listTabStrip
                     .padding(.top, 8)
                 selectedTabContent
@@ -756,6 +763,22 @@ struct TasksTabView: View {
                     listTabChip(tab)
                 }
             }
+            // Room for the content-indicator stroke, which straddles the
+            // chip edge — without this the scroll view clips its top and
+            // bottom hairlines.
+            .padding(.vertical, 1)
+        }
+    }
+
+    /// Whether a tab has anything behind it — drives the unselected chip's
+    /// content-indicator border. Same membership rules as each tab's own
+    /// body, so the border can't promise content the tab won't show.
+    private func tabHasContent(_ tab: TaskListTab) -> Bool {
+        switch tab {
+        case .unscheduled: return !unscheduledTasks.isEmpty
+        case .today:       return hasActivePlan || !scheduledTasks.isEmpty
+        case .events:      return !thisWeekEvents.isEmpty || !importantEvents.isEmpty
+        case .overdue:     return !overdueTasks.isEmpty
         }
     }
 
@@ -763,10 +786,17 @@ struct TasksTabView: View {
     /// with a count badge — only while something is actually overdue; at
     /// zero it drops to the standard chip colors, because red with nothing
     /// behind it is alarm without cause.
+    ///
+    /// Unselected chips carry a content-indicator border (design feedback
+    /// after cycle 2026-08-03-08): a `primary` stroke when the tab has
+    /// tasks/events behind it, in the overdue red for the Overdue chip so
+    /// its existing color language stays consistent. Selected chips are
+    /// filled and show none — you're already looking at that tab.
     private func listTabChip(_ tab: TaskListTab) -> some View {
         let isSelected = selectedListTab == tab
         let overdueCount = overdueTasks.count
         let isRed = tab == .overdue && overdueCount > 0
+        let showIndicator = !isSelected && tabHasContent(tab)
         let textColor: Color = isSelected ? .white : (isRed ? NudgeTheme.overdue : NudgeTheme.textPrimary)
         let background: Color = isSelected
             ? (isRed ? NudgeTheme.overdue : NudgeTheme.primary)
@@ -793,6 +823,14 @@ struct TasksTabView: View {
             .frame(height: 36)
             .background(background)
             .clipShape(Capsule())
+            .overlay {
+                if showIndicator {
+                    Capsule().stroke(
+                        isRed ? NudgeTheme.overdue : NudgeTheme.primary,
+                        lineWidth: 1.5
+                    )
+                }
+            }
         }
         .buttonStyle(.plain)
     }
@@ -1066,24 +1104,22 @@ struct TasksTabView: View {
         }
     }
 
-    /// Plan my day, in Start Session's full-width treatment (cycle
-    /// 2026-08-03-07 — it moved out of the Today header row to sit above
-    /// Start Session; same height/color/shape is deliberate for now, the
-    /// pair's visual distinction is a separate upcoming decision).
+    /// Plan my day, half of the compact 44pt action row beside Start
+    /// Session (same treatment on purpose — the pair's visual distinction
+    /// is a separate upcoming decision; the compact row is about the task
+    /// lists staying above the fold, not about telling the two apart).
     private var planMyDayButton: some View {
         Button(action: planMyDay) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
 
                 Text("Plan my day")
-                    .font(.custom(NudgeTheme.fontSemiBold, size: 15))
-
-                Spacer()
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 14))
             }
             .foregroundColor(.white)
-            .padding(.horizontal, 16)
-            .frame(height: 52)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
             .background(NudgeTheme.primary)
             .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
         }
@@ -1155,19 +1191,19 @@ struct TasksTabView: View {
                     Text("This will end your current session and stop all timers.")
                 }
             } else {
+                // Compact 44pt form, sized for the side-by-side row next
+                // to Plan my day (design feedback after 2026-08-03-08).
                 Button(action: startSession) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
 
                         Text("Start Session")
-                            .font(.custom(NudgeTheme.fontSemiBold, size: 15))
-
-                        Spacer()
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 14))
                     }
                     .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 52)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
                     .background(NudgeTheme.primary)
                     .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
                 }

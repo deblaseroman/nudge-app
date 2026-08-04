@@ -698,68 +698,36 @@ struct TasksMessageBox: View {
         )
         let expandable = message.detail != nil
 
-        VStack(alignment: .trailing, spacing: 10) {
-            // The original row, untouched — the chip below grows the box
-            // downward instead of shifting or narrowing any of this.
-            HStack(alignment: .center, spacing: 14) {
-                MessageBoxCharacterSlot()
+        HStack(alignment: .center, spacing: 14) {
+            MessageBoxCharacterSlot()
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(message.headline)
-                        .font(.custom(NudgeTheme.fontMedium, size: 15))
-                        .foregroundColor(NudgeTheme.textPrimary)
-                        .lineLimit(isExpanded ? nil : 2)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(message.headline)
+                    .font(.custom(NudgeTheme.fontMedium, size: 15))
+                    .foregroundColor(NudgeTheme.textPrimary)
+                    .lineLimit(isExpanded ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+
+                if isExpanded, let detail = message.detail {
+                    Text(detail)
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
-
-                    if isExpanded, let detail = message.detail {
-                        Text(detail)
-                            .font(.custom(NudgeTheme.fontBody, size: 13))
-                            .foregroundColor(NudgeTheme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .multilineTextAlignment(.leading)
-                    }
-                }
-
-                Spacer(minLength: 0)
-
-                // Visibility rule unchanged from today (collapsed state must
-                // show what it shows today) — the chevron appears only when
-                // there's detail; what changed is where it LEADS.
-                if expandable {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(NudgeTheme.textMuted)
-                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
             }
 
-            // The chat affordance, bottom-right IN the box (cycle
-            // 2026-08-03-08 — it sits with the thing it opens). Styled as
-            // the shell's own option chips (primary-stroked capsule), so
-            // the doorway previews the interaction idiom inside. Only
-            // rendered when a shell is wired; redundant with the row tap
-            // by design — this is the VISIBLE affordance, the row tap is
-            // the convenience.
-            if onOpenShell != nil {
-                Button {
-                    NudgeHaptics.light()
-                    onOpenShell?(message)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Chat")
-                            .font(.custom(NudgeTheme.fontMedium, size: 13))
-                    }
-                    .foregroundColor(NudgeTheme.primary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .overlay(
-                        Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
+            Spacer(minLength: 0)
+
+            // Visibility rule unchanged from today (collapsed state must
+            // show what it shows today) — the chevron appears only when
+            // there's detail; what changed is where it LEADS.
+            if expandable {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(NudgeTheme.textMuted)
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
             }
         }
         .padding(16)
@@ -768,6 +736,29 @@ struct TasksMessageBox: View {
             RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
                 .stroke(NudgeTheme.border, lineWidth: 1)
         )
+        // The chat affordance: a filled circle OVERTOP of the box's
+        // bottom-right corner (design feedback after cycle 2026-08-03-08's
+        // in-box chip) — it straddles the border like a badge, so it costs
+        // the box no height and the content row stays untouched. Only
+        // rendered when a shell is wired; opens the same shell as every
+        // other tap target.
+        .overlay(alignment: .bottomTrailing) {
+            if onOpenShell != nil {
+                Button {
+                    NudgeHaptics.light()
+                    onOpenShell?(message)
+                } label: {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 36, height: 36)
+                        .background(NudgeTheme.primary)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: 10, y: 10)
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
         .onTapGesture {
             // One surface, two ways in (cycle 2026-08-03-05): with a shell
