@@ -797,20 +797,15 @@ private struct MessageBoxChatLine: Identifiable {
     let isUser: Bool
 }
 
-/// The expanded surface — a FRAMED DIALOGUE BOX (cycle 2026-08-03-05),
-/// retro-game shaped: a defined double frame, the character portrait
-/// beside the text, and lines sitting IN the frame rather than floating
-/// as chat bubbles. Restraint carries the feel — no pixel fonts, no
-/// sprites, no reveal animation (text appears immediately: a delay before
-/// you can read is the wrong trade for this audience).
+/// The expanded surface behind the box's tap targets — roughly iOS's
+/// swipe-down-reply shape: a dimmed backdrop (tap to collapse) with a card
+/// holding the conversation, tappable options, and a free-text field.
+/// (The -05 framed-dialogue styling was reverted in cycle 2026-08-03-06
+/// after a device look — this is the -04 plain card again. What survived
+/// -05: the expression enum driving the header portrait, and the seeding
+/// below.)
 ///
-/// Frame recipe, since the theme has no border weights: a 2pt
-/// `textPrimary` outer stroke with the existing 1pt `border` hairline
-/// inset 5pt inside it — the double line is what reads "dialogue frame"
-/// without any custom asset. Radius is the theme's `radiusCard`; colors
-/// are all `NudgeTheme`.
-///
-/// ── EVERYTHING BEHIND IT IS STILL A STUB ────────────────────────────────
+/// ── EVERYTHING BEHIND IT IS A STUB ──────────────────────────────────────
 /// The dialogue seeds from the box's real composed message (so the detail
 /// the old in-place expansion showed stays reachable — the shell replaced
 /// it as where the row's tap leads), then a fake question with two
@@ -846,80 +841,77 @@ struct MessageBoxChatShell: View {
                     onDismiss()
                 }
 
-            // The dialogue frame. Anchored near the top (where the
-            // collapsed box lives) so the keyboard never covers it.
-            HStack(alignment: .top, spacing: 14) {
-                // Portrait beside the text, dialogue-box style.
-                MessageBoxCharacterSlot(expression: expression)
-
-                VStack(alignment: .leading, spacing: 12) {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(lines) { line in
-                                dialogueLine(line)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 260)
-
-                    if let options {
-                        HStack(spacing: 8) {
-                            ForEach(options, id: \.self) { option in
-                                Button {
-                                    answer(option)
-                                } label: {
-                                    Text(option)
-                                        .font(.custom(NudgeTheme.fontMedium, size: 14))
-                                        .foregroundColor(NudgeTheme.primary)
-                                        .padding(.horizontal, 14)
-                                        .frame(height: 34)
-                                        .overlay(
-                                            Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-
-                    HStack(spacing: 10) {
-                        TextField("Or say it your way…", text: $draft, axis: .vertical)
-                            .font(.custom(NudgeTheme.fontBody, size: 15))
-                            .foregroundColor(NudgeTheme.textPrimary)
-                            .lineLimit(1...3)
-                            .focused($inputFocused)
-                            .onSubmit(sendDraft)
-                        Button(action: sendDraft) {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 26))
-                                .foregroundColor(
-                                    draft.trimmingCharacters(in: .whitespaces).isEmpty
-                                        ? NudgeTheme.textPlaceholder
-                                        : NudgeTheme.primary
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(NudgeTheme.surfaceAlt)
-                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+            // The surface. Anchored near the top (where the collapsed box
+            // lives) so the keyboard never covers it. The portrait keeps
+            // its expression (kept from -05) — asking while the question
+            // is open, pleased after an answer.
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    MessageBoxCharacterSlot(expression: expression)
+                    Text("Nudge")
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 16))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                    Spacer()
                 }
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(lines) { line in
+                            chatBubble(line)
+                        }
+                    }
+                }
+                .frame(maxHeight: 300)
+
+                if let options {
+                    HStack(spacing: 8) {
+                        ForEach(options, id: \.self) { option in
+                            Button {
+                                answer(option)
+                            } label: {
+                                Text(option)
+                                    .font(.custom(NudgeTheme.fontMedium, size: 14))
+                                    .foregroundColor(NudgeTheme.primary)
+                                    .padding(.horizontal, 14)
+                                    .frame(height: 34)
+                                    .overlay(
+                                        Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    TextField("Or say it your way…", text: $draft, axis: .vertical)
+                        .font(.custom(NudgeTheme.fontBody, size: 15))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .lineLimit(1...3)
+                        .focused($inputFocused)
+                        .onSubmit(sendDraft)
+                    Button(action: sendDraft) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundColor(
+                                draft.trimmingCharacters(in: .whitespaces).isEmpty
+                                    ? NudgeTheme.textPlaceholder
+                                    : NudgeTheme.primary
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
             }
-            .padding(18)
+            .padding(16)
             .background(NudgeTheme.background)
-            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
-            // The double frame: 2pt ink outline + the theme's hairline
-            // inset inside it. Weights are stated in the report; every
-            // color is the theme's.
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet))
             .overlay(
-                RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
-                    .stroke(NudgeTheme.textPrimary, lineWidth: 2)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: NudgeTheme.radiusCard - 5)
+                RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet)
                     .stroke(NudgeTheme.border, lineWidth: 1)
-                    .padding(5)
             )
             .padding(.horizontal, 20)
             .padding(.top, 8)
@@ -927,15 +919,19 @@ struct MessageBoxChatShell: View {
         .onAppear { seedLines() }
     }
 
-    /// Dialogue lines sit flat in the frame — no bubbles. The app speaks
-    /// in primary text; the user's replies are right-aligned in the
-    /// accent color, which is enough to keep the two voices apart.
-    private func dialogueLine(_ line: MessageBoxChatLine) -> some View {
-        Text(line.text)
-            .font(.custom(NudgeTheme.fontBody, size: 15))
-            .foregroundColor(line.isUser ? NudgeTheme.primary : NudgeTheme.textPrimary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: line.isUser ? .trailing : .leading)
+    private func chatBubble(_ line: MessageBoxChatLine) -> some View {
+        HStack {
+            if line.isUser { Spacer(minLength: 40) }
+            Text(line.text)
+                .font(.custom(NudgeTheme.fontBody, size: 15))
+                .foregroundColor(line.isUser ? .white : NudgeTheme.textPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(line.isUser ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            if !line.isUser { Spacer(minLength: 40) }
+        }
+        .frame(maxWidth: .infinity, alignment: line.isUser ? .trailing : .leading)
     }
 
     /// Text appears immediately — deliberately NO typewriter reveal.
