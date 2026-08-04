@@ -334,6 +334,9 @@ struct TasksTabView: View {
                         ExamPrepSweep.markCommitmentAnnouncementShown()
                     }
                 )
+                // Plan my day left this row for the button stack below the
+                // timeline (cycle 2026-08-03-07); the label and the
+                // conditional Clear plan stay.
                 HStack(alignment: .center) {
                     sectionLabel("Today")
                     Spacer()
@@ -351,22 +354,6 @@ struct TasksTabView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    Button {
-                        planMyDay()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Plan my day")
-                                .font(.custom(NudgeTheme.fontSemiBold, size: 13))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .frame(height: 34)
-                        .background(NudgeTheme.primary)
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
                 }
                 // The AI Refine rationale renders through the message box
                 // above (its fifth composer state) — one voice in one place.
@@ -384,7 +371,14 @@ struct TasksTabView: View {
                     onTapEmpty: { placement = PlacementContext(time: $0) },
                     onCompleteTask: { toggleCompletion(for: $0) }
                 )
+                // Control order (cycle 2026-08-03-07): box → timeline →
+                // Plan my day → Start Session → Chat. Plan my day and
+                // Start Session share the full-width primary treatment and
+                // now sit adjacent — the visual distinction is a decision
+                // Roman is making separately; do not restyle either here.
+                planMyDayButton
                 startSessionButton
+                chatButton
                 listTabStrip
                     .padding(.top, 8)
                 selectedTabContent
@@ -1070,6 +1064,76 @@ struct TasksTabView: View {
                 ForEach(overdueTasks, id: \.id) { taskRow($0) }
             }
         }
+    }
+
+    /// Plan my day, in Start Session's full-width treatment (cycle
+    /// 2026-08-03-07 — it moved out of the Today header row to sit above
+    /// Start Session; same height/color/shape is deliberate for now, the
+    /// pair's visual distinction is a separate upcoming decision).
+    private var planMyDayButton: some View {
+        Button(action: planMyDay) {
+            HStack(spacing: 8) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 14, weight: .bold))
+
+                Text("Plan my day")
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+
+                Spacer()
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .background(NudgeTheme.primary)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The visible affordance that the message box is interactive (cycle
+    /// 2026-08-03-07): opens the same shell as every box tap target — one
+    /// surface, four ways in. Quiet treatment (`surfaceAlt`) on purpose:
+    /// it's a doorway, not the day's call to action, and a third primary
+    /// button in this stack would bury the two that are.
+    private var chatButton: some View {
+        Button {
+            NudgeHaptics.light()
+            withAnimation(NudgeAnimation.standard) {
+                messageShellSeed = composedMessage
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 14, weight: .bold))
+
+                Text("Chat")
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+
+                Spacer()
+            }
+            .foregroundColor(NudgeTheme.textPrimary)
+            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .background(NudgeTheme.surfaceAlt)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The same composition the message box runs — so the shell opened
+    /// from the Chat button seeds with exactly what the box is showing.
+    /// Pure and cheap; called once per tap.
+    private var composedMessage: TasksMessage {
+        TasksMessageComposer.compose(
+            tasks: tasks,
+            tappedNudge: tappedNudgeContext,
+            rationale: refineRationale,
+            prepNote: pendingPrepNote,
+            prepAnnouncement: ExamPrepSweep.currentAnnouncement(),
+            commitmentAnnouncement: ExamPrepSweep.currentCommitmentAnnouncement(),
+            planOutcome: planOutcome,
+            now: Date()
+        )
     }
 
     private var startSessionButton: some View {
