@@ -420,6 +420,55 @@ enum NudgeConfig {
     /// yet (see the rollover note on `buildFloaterCheckInCandidates`).
     static let floaterCheckInHoursAfterWake: Double = 6
 
+    // MARK: - Placement lifecycle (cycle 2026-08-04-02)
+    //
+    // Drives `NudgeArbiter.buildPlacementLeadCandidates` and
+    // `buildPlacementMissedCandidates` — the two nudges around a timeline
+    // placement (`plannedStartDate`). Before these, no builder fired on a
+    // placement passing unstarted: the only notification-path read of
+    // `plannedStartDate` was the floater check-in EXCLUDING placed tasks,
+    // so putting a task on the timeline reduced its notification coverage
+    // to zero.
+
+    /// Minutes before the first slot of a placement cluster the heads-up
+    /// fires. Short on purpose — this is "stand up, it's about to be
+    /// laundry time", not the hour-out planning lead events get.
+    static let placementLeadMinutes: Int = 5
+
+    /// Placements whose slots are within this many hours of each other
+    /// share ONE heads-up (chained clustering, same mechanism as event
+    /// blocks). Its own constant rather than `eventBlockGapHours` — the
+    /// value is the same today, but planner slots pack tighter than
+    /// calendar events, so retuning one must not silently retune the other.
+    static let placementClusterGapHours: Double = 2
+
+    /// Minutes past a slot's start before the first missed-placement
+    /// follow-up. Long enough that "running ten minutes late" isn't
+    /// pestered; short enough that the slot is still mostly salvageable.
+    static let placementMissedGraceMinutes: Int = 30
+
+    /// Minutes between missed-placement attempts after the first. 120, not
+    /// 60: `minNudgeSpacingMinutes` (90) silently evicts any series denser
+    /// than itself, so an "hourly" schedule would really deliver every
+    /// other attempt at random. 2h is the honest version of "hourly-ish"
+    /// that survives the spacing gate intact.
+    static let placementMissedRepeatMinutes: Int = 120
+
+    /// Attempts per missed placement (first at slot + grace, then every
+    /// `placementMissedRepeatMinutes`). 4 spans ~6.5 hours past the slot —
+    /// the most persistent kind in the app, per the user's own request to
+    /// be nudged rather than left alone — and the series always dies at
+    /// midnight anyway when `PlacementRollover` clears the placement.
+    static let placementMissedMaxAttempts: Int = 4
+
+    /// Urgency floor for both placement kinds. Same reasoning as the prep
+    /// floor at `urgentThreshold`, but stronger: the user themselves put
+    /// this task at this time, so the plan slipping IS the urgency signal,
+    /// whatever the deadline math says. 0.75 lets a placement nudge beat a
+    /// same-window floater (0.6) or an un-floored prep without steamrolling
+    /// a genuinely imminent deadline.
+    static let placementUrgencyFloor: Double = 0.75
+
     // MARK: - Exam prep sweep
     //
     // Drives `ExamPrepSweep` — the launch/day-change pass that turns

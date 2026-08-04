@@ -265,6 +265,29 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    /// App Group key for the missed-placement delivered markers — the same
+    /// pattern as `dueSoonHistory`, needed for the same reason: the
+    /// catch-up path in `buildPlacementMissedCandidates` fires ASAP for a
+    /// slot that passed with no attempt delivered, and without a marker
+    /// every reevaluate after a delivery would re-add the same ID and
+    /// refire through it.
+    private let placementMissedHistoryKey = "nudge.arb.placementMissedHistory"
+
+    /// Attempt ID → epoch fire time last handed to the OS. Written in
+    /// `schedule()`, read in `buildPlacementMissedCandidates`, pruned in
+    /// `cancelAll` alongside the other marker maps.
+    private var placementMissedHistory: [String: TimeInterval] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: placementMissedHistoryKey)?
+                .compactMapValues { $0 as? TimeInterval } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: placementMissedHistoryKey)
+        }
+    }
+
     // MARK: - Entry point
 
     func reevaluate(
@@ -310,8 +333,10 @@ final class NudgeArbiter: NudgeArbitering {
         candidates.append(contentsOf: buildDueSoonCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildFloaterCheckInCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildComeBackCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildPlacementLeadCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildPlacementMissedCandidates(profile: profile, modelContext: modelContext))
         #if DEBUG
-        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater + comeBack).")
+        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater + comeBack + placementLead + placementMissed).")
         #endif
 
         // 2. Run gates
@@ -353,6 +378,12 @@ final class NudgeArbiter: NudgeArbitering {
             eligible: eligible,
             scheduled: scheduled,
             profile: profile,
+            context: gateContext
+        )
+        debugPlacementImpact(
+            all: candidates,
+            eligible: eligible,
+            scheduled: scheduled,
             context: gateContext
         )
         #endif
@@ -433,6 +464,14 @@ final class NudgeArbiter: NudgeArbitering {
         let prunedDueSoon = dueSoonHistory.filter { $0.value > cutoff }
         if prunedDueSoon.count != dueSoonHistory.count {
             dueSoonHistory = prunedDueSoon
+        }
+
+        // And for the missed-placement attempt markers. Placements
+        // themselves die at midnight (`PlacementRollover`), so 2 days
+        // comfortably outlives every marker's usefulness.
+        let prunedPlacement = placementMissedHistory.filter { $0.value > cutoff }
+        if prunedPlacement.count != placementMissedHistory.count {
+            placementMissedHistory = prunedPlacement
         }
 
         // Same treatment for the morning prompt's named-task history. Kept
@@ -2077,6 +2116,334 @@ final class NudgeArbiter: NudgeArbitering {
         return "\(openCount) open tasks are on your list, nothing pressing. Ready when you are."
     }
 
+    /// Placement heads-up — the transition warning `placementLeadMinutes`
+    /// before a timeline slot (cycle 2026-08-04-02). Placements close
+    /// together share ONE notification via the same chained clustering
+    /// event blocks use, under placement's own gap constant
+    /// (`placementClusterGapHours` — same value as events today, but
+    /// planner slots pack tighter than calendar events, so the two must be
+    /// tunable apart). Without clustering, a four-task timeline would fire
+    /// four warnings and exhaust the budget before anything else ran.
+    ///
+    /// Discretionary in every dimension (budget, quiet hours, busy
+    /// windows, spacing) — the plan is the app's own proposal, not a fact
+    /// the world enforces, so it doesn't get the event-block exemption.
+    ///
+    /// NO ASAP fallback, deliberately unlike event blocks: a heads-up
+    /// delivered after the slot has started is the wrong message, and
+    /// everything past the slot belongs to `buildPlacementMissedCandidates`.
+    /// That also makes the once-only rule structural — once the fire time
+    /// is in the past the candidate simply isn't rebuilt — so no
+    /// delivered-marker map is needed.
+    private func buildPlacementLeadCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.placementLeadNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] placementLead: SKIP — placementLeadNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> {
+                !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate != nil
+            }
+        )
+        descriptor.fetchLimit = 50
+        let placed = (try? modelContext.fetch(descriptor)) ?? []
+        guard !placed.isEmpty else { return [] }
+
+        let now = Date()
+        let calendar = Calendar.current
+        // Placements are today-or-later by invariant (`PlacementRollover`),
+        // and today-only in practice; grouping by day keeps the builder
+        // correct if a future-day placement path ever appears.
+        let byDay = Dictionary(grouping: placed) { task in
+            calendar.startOfDay(for: task.plannedStartDate ?? .distantFuture)
+        }
+
+        var candidates: [NudgeCandidate] = []
+        for (day, tasks) in byDay {
+            let slots = tasks
+                .compactMap { task -> (NudgeTask, Date)? in
+                    guard let slot = task.plannedStartDate else { return nil }
+                    return (task, slot)
+                }
+                .sorted { $0.1 < $1.1 }
+            let blocks = NudgeArbiter.clusterEvents(
+                slots,
+                gapSeconds: NudgeConfig.placementClusterGapHours * 60 * 60
+            )
+
+            for block in blocks {
+                guard let first = block.first else { continue }
+                let fireDate = first.1.addingTimeInterval(
+                    -Double(NudgeConfig.placementLeadMinutes) * 60
+                )
+                guard fireDate > now else { continue }
+
+                let task = first.0
+                let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
+                let urgency = max(
+                    NudgeConfig.placementUrgencyFloor,
+                    placementDeadlineUrgency(for: task, at: fireDate, estimatedMinutes: estimatedMinutes)
+                )
+                let importance = placementImportance(
+                    for: task,
+                    estimatedMinutes: estimatedMinutes,
+                    modelContext: modelContext
+                )
+                #if DEBUG
+                print("[NudgeArbiter] placementLead: \(block.count) slot(s) from \(first.1) → fire=\(fireDate).")
+                #endif
+                let leadTier = tier(for: task, fireDate: fireDate)
+                candidates.append(NudgeCandidate(
+                    id: "\(prefix)placementLead.\(stamp(day)).\(task.id.uuidString)",
+                    kind: .placementLead,
+                    fireDate: fireDate,
+                    title: "Coming up",
+                    body: NudgeArbiter.placementLeadBody(block: block),
+                    categoryID: .placementLead,
+                    interruption: leadTier.interruption,
+                    taskID: task.id,
+                    tier: leadTier,
+                    urgency: urgency,
+                    importance: importance,
+                    receptivity: 1.0,
+                    countsAgainstBudget: true,
+                    estimatedMinutes: estimatedMinutes
+                ))
+            }
+        }
+        return candidates
+    }
+
+    /// Body copy for a placement heads-up. Facts only: the slots and their
+    /// times, exactly as the user (or the planner they accepted) set them.
+    static func placementLeadBody(block: [(NudgeTask, Date)]) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "h:mm a"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        guard let first = block.first else { return "" }
+        let head = "“\(first.0.title)” is set for \(fmt.string(from: first.1))"
+
+        switch block.count {
+        case 1:
+            return head + "."
+        case 2:
+            let second = block[1]
+            return head + ", then “\(second.0.title)” at \(fmt.string(from: second.1))."
+        default:
+            let second = block[1]
+            let more = block.count - 2
+            return head + ", then “\(second.0.title)” at \(fmt.string(from: second.1)) "
+                + "and \(more) more after that."
+        }
+    }
+
+    /// Missed-placement follow-up — a planned slot passed and the task is
+    /// still open (cycle 2026-08-04-02). This is the kind that fixes the
+    /// cycle's originating symptom: two tasks placed on the timeline,
+    /// untouched all day, and the app said nothing — no builder fired on a
+    /// placement passing unstarted (the only notification-path read of
+    /// `plannedStartDate` was the floater EXCLUDING placed tasks).
+    ///
+    /// ── THE SERIES ────────────────────────────────────────────────────
+    /// Attempts are anchored to the SLOT, not to `now`: slot +
+    /// `placementMissedGraceMinutes`, then every
+    /// `placementMissedRepeatMinutes`, capped at
+    /// `placementMissedMaxAttempts` and clipped to the slot's own day.
+    /// The whole series is handed to the OS up front, so it keeps
+    /// delivering when the app never runs again that day — the exact user
+    /// this kind exists for. Every data-driven reevaluate rebuilds it:
+    /// completing or unscheduling the task removes it from the predicate
+    /// and `cancelAll` wipes the pending remainder. `PlacementRollover`
+    /// ends any survivor at midnight by clearing the placement itself.
+    ///
+    /// ── CATCH-UP ──────────────────────────────────────────────────────
+    /// A slot can pass with no attempt ever delivered — placing a task
+    /// onto an already-past slot is the obvious case. If no attempt for
+    /// this task+day has been delivered (the `placementMissedHistory`
+    /// marker map, same delivered-marker pattern as event blocks and
+    /// due-soon), the most recent PAST anchor fires ASAP instead of being
+    /// skipped — unless a future attempt is already inside the spacing
+    /// window, in which case that one carries the message and the catch-up
+    /// would only evict it.
+    ///
+    /// Discretionary everywhere (budget, quiet hours, busy windows,
+    /// spacing) — the most *persistent* kind, not an exempt one. Its
+    /// urgency floor (`placementUrgencyFloor`) is how it competes for the
+    /// budget it's willing to spend.
+    private func buildPlacementMissedCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.placementMissedNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] placementMissed: SKIP — placementMissedNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> {
+                !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate != nil
+            }
+        )
+        descriptor.fetchLimit = 50
+        let placed = (try? modelContext.fetch(descriptor)) ?? []
+        guard !placed.isEmpty else { return [] }
+
+        let now = Date()
+        let calendar = Calendar.current
+        let grace = Double(NudgeConfig.placementMissedGraceMinutes) * 60
+        let repeatGap = Double(NudgeConfig.placementMissedRepeatMinutes) * 60
+        let history = placementMissedHistory
+
+        var candidates: [NudgeCandidate] = []
+        for task in placed {
+            guard let slot = task.plannedStartDate else { continue }
+            let day = calendar.startOfDay(for: slot)
+            guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: day) else { continue }
+            let dayStamp = stamp(day)
+
+            func attemptID(_ n: Int) -> String {
+                "\(prefix)placementMissed.\(dayStamp).\(task.id.uuidString).\(n)"
+            }
+
+            // Anchors within the slot's day, split into past and future.
+            var futureAttempts: [(n: Int, anchor: Date)] = []
+            var lastPastAttempt: (n: Int, anchor: Date)?
+            var deliveredAny = false
+            for n in 0..<NudgeConfig.placementMissedMaxAttempts {
+                let anchor = slot.addingTimeInterval(grace + Double(n) * repeatGap)
+                guard anchor < dayEnd else { break }
+                if let marked = history[attemptID(n)],
+                   Date(timeIntervalSinceReferenceDate: marked) <= now {
+                    deliveredAny = true
+                }
+                if anchor > now {
+                    futureAttempts.append((n, anchor))
+                } else {
+                    lastPastAttempt = (n, anchor)
+                }
+            }
+
+            let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
+            let importance = placementImportance(
+                for: task,
+                estimatedMinutes: estimatedMinutes,
+                modelContext: modelContext
+            )
+            let body = NudgeArbiter.placementMissedBody(
+                task: task,
+                slot: slot,
+                minutes: task.plannedDurationMinutes ?? estimatedMinutes
+            )
+
+            func makeCandidate(n: Int, fireDate: Date) -> NudgeCandidate {
+                let missedTier = tier(for: task, fireDate: fireDate)
+                return NudgeCandidate(
+                    id: attemptID(n),
+                    kind: .placementMissed,
+                    fireDate: fireDate,
+                    title: "Still open",
+                    body: body,
+                    categoryID: .placementMissed,
+                    interruption: missedTier.interruption,
+                    taskID: task.id,
+                    tier: missedTier,
+                    urgency: max(
+                        NudgeConfig.placementUrgencyFloor,
+                        placementDeadlineUrgency(for: task, at: fireDate, estimatedMinutes: estimatedMinutes)
+                    ),
+                    importance: importance,
+                    receptivity: 1.0,
+                    countsAgainstBudget: true,
+                    estimatedMinutes: estimatedMinutes
+                )
+            }
+
+            for attempt in futureAttempts {
+                candidates.append(makeCandidate(n: attempt.n, fireDate: attempt.anchor))
+            }
+
+            // Catch-up for a slot that passed with nothing delivered. Skipped
+            // when the next scheduled attempt is close enough to carry the
+            // message itself — an ASAP candidate inside the spacing window
+            // would only evict it in `pickWinners`.
+            if !deliveredAny, let past = lastPastAttempt {
+                let nextSoon = futureAttempts.first.map {
+                    $0.anchor.timeIntervalSince(now) < Double(NudgeConfig.minNudgeSpacingMinutes) * 60
+                } ?? false
+                let fireDate = now.addingTimeInterval(60)
+                if !nextSoon, fireDate < dayEnd {
+                    #if DEBUG
+                    print("[NudgeArbiter] placementMissed: CATCH-UP for '\(task.title)' — slot \(slot) passed with no attempt delivered; firing ASAP.")
+                    #endif
+                    candidates.append(makeCandidate(n: past.n, fireDate: fireDate))
+                }
+            }
+            #if DEBUG
+            if !futureAttempts.isEmpty {
+                let times = futureAttempts.map { "\($0.anchor)" }.joined(separator: ", ")
+                print("[NudgeArbiter] placementMissed: '\(task.title)' slot=\(slot) → \(futureAttempts.count) attempt(s) at \(times).")
+            }
+            #endif
+        }
+        return candidates
+    }
+
+    /// Body copy for the missed-placement follow-up. The plan itself is the
+    /// fact stated — "was set for 10:00 AM" — never a verdict on the user
+    /// (`DESIGN.md` never-shame: the reproach reading, "you still haven't
+    /// done laundry", is exactly what this phrasing exists to avoid). The
+    /// minutes figure is the plan's own duration when the slot has one,
+    /// capped the way prep and floater cap theirs to keep the ask small.
+    static func placementMissedBody(task: NudgeTask, slot: Date, minutes: Int) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "h:mm a"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        return "“\(task.title)” was set for \(fmt.string(from: slot)) and is still open. "
+            + "Just \(min(minutes, 25)) min — start there?"
+    }
+
+    /// Deadline-proximity urgency for a placement candidate, evaluated at
+    /// the fire date like every other builder. 0 for an undated task — the
+    /// caller floors the result at `placementUrgencyFloor`, so the floor IS
+    /// the undated value and a real deadline can only raise it.
+    private func placementDeadlineUrgency(
+        for task: NudgeTask,
+        at fireDate: Date,
+        estimatedMinutes: Int
+    ) -> Double {
+        guard let deadline = task.specificTime ?? task.dueDate else { return 0 }
+        return EisenhowerScorer.urgency(
+            hoursUntilDue: deadline.timeIntervalSince(fireDate) / 3600,
+            effortHoursRemaining: Double(estimatedMinutes) / 60.0
+        )
+    }
+
+    /// Shared importance derivation for both placement builders — the same
+    /// scorer inputs idle, prep, and floater use.
+    private func placementImportance(
+        for task: NudgeTask,
+        estimatedMinutes: Int,
+        modelContext: ModelContext
+    ) -> Double {
+        let isDeepWork = StartByPlanner.isDeepWork(
+            category: task.taskCategory,
+            effortMinutes: estimatedMinutes
+        )
+        let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
+        return EisenhowerScorer.importance(
+            category: task.taskCategory,
+            isDeepWork: isDeepWork,
+            statedUrgency: signals.statedUrgency,
+            hasDependencies: task.dependsOnTaskId != nil
+        )
+    }
+
     // MARK: - Gates
 
     private struct GateContext {
@@ -3123,6 +3490,70 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    // MARK: - DEBUG: placement lifecycle impact
+
+    /// Before/after for the placement lifecycle kinds (cycle 2026-08-04-02),
+    /// per work-order item 5. BEFORE is the arbiter with no placement
+    /// builders — literally what shipped until this cycle — recomputed as
+    /// the winner set over the same eligible candidates minus the two new
+    /// kinds. AFTER is what this run actually scheduled. Read-only.
+    ///
+    /// The interesting rows are the DISPLACED ones: a placement candidate
+    /// that wins budget or spacing evicts something that used to fire, and
+    /// that eviction is this change altering the arbiter beyond its own
+    /// additions.
+    private func debugPlacementImpact(
+        all: [NudgeCandidate],
+        eligible: [NudgeCandidate],
+        scheduled: [NudgeCandidate],
+        context: GateContext
+    ) {
+        let placementKinds: Set<NudgeOutcomeKind> = [.placementLead, .placementMissed]
+        let built = all.filter { placementKinds.contains($0.kind) }
+        guard !built.isEmpty else {
+            print("[PlacementImpact] no placement candidates this run — nothing on the "
+                + "timeline ahead of now, or both toggles off. BEFORE and AFTER identical.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        print("[PlacementImpact] \(built.count) placement candidate(s) built:")
+        for cand in built.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let gated = eligible.contains { $0.id == cand.id }
+            let won = scheduled.contains { $0.id == cand.id }
+            let verdict = won ? "SCHEDULED" : (gated ? "lost pickWinners" : "gate-BLOCKED")
+            print("      " + padc(cand.kind.rawValue, 17)
+                + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(verdict, 17)
+                + cand.body.prefix(60))
+        }
+
+        // The winner set the pre-placement arbiter would have produced from
+        // this run's data — same gates, same budget, same spacing.
+        let beforeWinners = pickWinners(
+            from: eligible.filter { !placementKinds.contains($0.kind) },
+            context: context
+        )
+        let beforeIDs = Set(beforeWinners.map(\.id))
+        let afterIDs = Set(scheduled.map(\.id))
+        let displaced = beforeWinners.filter { !afterIDs.contains($0.id) }
+        let added = scheduled.filter { !beforeIDs.contains($0.id) }
+        if displaced.isEmpty {
+            print("  → nothing displaced: every pre-placement winner still fires; "
+                + "placement nudges are purely additive on this data.")
+        } else {
+            for lost in displaced {
+                print("  → DISPLACED: \(lost.kind.rawValue) '\(lost.title)' @ "
+                    + "\(fmt.string(from: lost.fireDate)) no longer fires (budget or spacing).")
+            }
+        }
+        for gained in added where placementKinds.contains(gained.kind) {
+            print("  → ADDED: \(gained.kind.rawValue) @ \(fmt.string(from: gained.fireDate)).")
+        }
+    }
+
     /// Names the FIRST gate in `passesGates` that rejects `candidate`. The
     /// order here mirrors that function; it re-derives rather than shares
     /// code because `passesGates` returns a bare Bool and making it report
@@ -3305,6 +3736,15 @@ final class NudgeArbiter: NudgeArbitering {
             var history = dueSoonHistory
             history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
             dueSoonHistory = history
+        }
+
+        // And for missed-placement attempts — what stops the catch-up path
+        // from re-firing a delivered attempt on the next reevaluate (see
+        // `buildPlacementMissedCandidates`).
+        if candidate.kind == .placementMissed {
+            var history = placementMissedHistory
+            history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
+            placementMissedHistory = history
         }
 
         // Record which task the morning prompt named for its fire day, so

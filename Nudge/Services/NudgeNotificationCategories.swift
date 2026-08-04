@@ -54,6 +54,14 @@ enum NudgeNotificationCategoryID: String {
     /// button set would invite a decision it doesn't need. Tap-to-open and
     /// swipe-to-dismiss are the entire interaction surface.
     case comeBack = "category.comeBack"
+    /// Placement heads-up (cycle 2026-08-04-02) — NO action buttons, the
+    /// due-soon precedent: it states a fact about the next few slots,
+    /// possibly several batched tasks, and Start is ambiguous on a batch.
+    case placementLead = "category.placementLead"
+    /// Missed-placement follow-up (cycle 2026-08-04-02) — Start / Snooze /
+    /// 👎, the prep/floater action set: it names ONE task and asks the
+    /// user to start it.
+    case placementMissed = "category.placementMissed"
 }
 
 enum NudgeNotificationActionID: String {
@@ -231,10 +239,25 @@ enum NudgeNotificationCategories {
             intentIdentifiers: [],
             options: dismissible
         )
+        // Placement heads-up: actionless (see the ID's comment). The
+        // follow-up names one task and asks for a start, so it carries the
+        // prep/floater set.
+        let placementLead = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.placementLead.rawValue,
+            actions: [],
+            intentIdentifiers: [],
+            options: dismissible
+        )
+        let placementMissed = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.placementMissed.rawValue,
+            actions: [startSession, snooze30, markUnhelpful],
+            intentIdentifiers: [],
+            options: dismissible
+        )
 
         UNUserNotificationCenter.current().setNotificationCategories([
             eventBlock, idle, getAhead, prep, dueSoon, morningPrompt, floater,
-            comeBack
+            comeBack, placementLead, placementMissed
         ])
     }
 }

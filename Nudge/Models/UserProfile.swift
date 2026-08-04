@@ -91,6 +91,24 @@ final class UserProfile {
     /// this block.
     var comeBackNotificationsEnabled: Bool = true
 
+    /// Gates the placement heads-up (`buildPlacementLeadCandidates`, cycle
+    /// 2026-08-04-02) — the short warning minutes before a planned slot.
+    /// Own field per the one-toggle-per-feature rule above.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var placementLeadNotificationsEnabled: Bool = true
+
+    /// Gates the missed-placement follow-up (`buildPlacementMissedCandidates`,
+    /// cycle 2026-08-04-02) — the persistent series after a planned slot
+    /// passes with the task still open. Separate from the heads-up toggle
+    /// above on purpose: the follow-up is the kind most likely to earn an
+    /// opt-out, and silencing it must not cost the 5-minute warnings too.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var placementMissedNotificationsEnabled: Bool = true
+
     // MARK: - Quiet hours
     //
     // "When do I not want to be interrupted?" — deliberately SEPARATE from

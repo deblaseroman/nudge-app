@@ -598,6 +598,31 @@ enum TasksMessageComposer {
                 headline: "That was a look at what's coming up.",
                 detail: "It points out the next thing on your calendar or list. Everything here is where you left it."
             )
+        case .placementLead:
+            if let task {
+                return TasksMessage(
+                    headline: "That was a heads-up about “\(task.title)” — its planned slot is starting.",
+                    detail: "Timeline heads-ups go out a few minutes before a planned slot. Slots close together share one."
+                )
+            }
+            return TasksMessage(
+                headline: "That was a heads-up that a planned slot is starting.",
+                detail: "Timeline heads-ups go out a few minutes before a planned slot. Slots close together share one."
+            )
+        case .placementMissed:
+            // Factual about the plan, never a verdict on the user
+            // (DESIGN.md never-shame) — the slot time is the fact, and
+            // "still open" is app state, not judgment.
+            if let task, let slot = task.plannedStartDate {
+                return TasksMessage(
+                    headline: "That was about “\(task.title),” which was set for \(slot.formatted(date: .omitted, time: .shortened)).",
+                    detail: "When a planned slot passes and the task is still open, a reminder repeats a few times through the day until it's started or moved."
+                )
+            }
+            return TasksMessage(
+                headline: "That was about a task whose planned slot has passed.",
+                detail: "When a planned slot passes and the task is still open, a reminder repeats a few times through the day until it's started or moved."
+            )
         }
     }
 

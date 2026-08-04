@@ -63,6 +63,29 @@ enum NudgeOutcomeKind: String, Codable, CaseIterable {
     /// forward-looking about what's coming; never about the absence
     /// (`DESIGN.md` never-shame).
     case comeBack
+    /// Transition warning before a timeline placement (cycle 2026-08-04-02):
+    /// fires `placementLeadMinutes` before a task's planned slot. Placements
+    /// close together share ONE notification (the event-block clustering,
+    /// with its own gap constant), so a four-task plan warns once per run of
+    /// slots, not four times.
+    ///
+    /// TWO KINDS, not one, for the placement lifecycle — this and
+    /// `.placementMissed` share a target and differ in timing, but that is
+    /// exactly the situation the `.floater`/`.getAhead` and
+    /// `.prep`/`.dueSoon` splits existed to fix: two moments summed under
+    /// one kind produce rows that measure neither. "Does a heads-up help
+    /// the user start on time" and "does a follow-up recover a missed slot"
+    /// are separate questions and get separate baselines from day one.
+    case placementLead
+    /// Follow-up after a planned slot passes with the task still open
+    /// (cycle 2026-08-04-02) — the kind that fixes "two tasks placed this
+    /// morning, untouched all day, and the app said nothing". The most
+    /// persistent kind in the app: a bounded series of attempts anchored to
+    /// the SLOT (grace, then a fixed repeat interval, capped), all
+    /// pre-scheduled so they deliver even if the app never runs again that
+    /// day. Ends by construction at midnight — `PlacementRollover` clears
+    /// the placement, and the builder requires one.
+    case placementMissed
 }
 
 extension NudgeOutcomeKind {
@@ -120,6 +143,13 @@ extension NudgeOutcomeKind {
         // the classifier can always see. Its rows carry no taskID, so the
         // per-task fatigue gate never counts them regardless.
         case .comeBack:
+            return true
+        // Both placement kinds ask the user to start a specific task the
+        // app placed on the timeline — a session start or a completion,
+        // both visible in-app. Same position as `.prep`/`.floater`: a user
+        // who does the thing offline logs `.ignored`, which is noise, not
+        // the structural impossibility that exempts `.eventBlock`.
+        case .placementLead, .placementMissed:
             return true
         }
     }

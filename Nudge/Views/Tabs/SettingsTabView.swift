@@ -153,6 +153,20 @@ struct SettingsTabView: View {
                         subtitle: "After a few days away, one note about what's coming up — never about the days themselves.",
                         isOn: $profile.comeBackNotificationsEnabled
                     )
+                    // Cycle 2026-08-04-02: the placement lifecycle pair.
+                    // Two toggles, not one — the follow-up is the kind most
+                    // likely to earn an opt-out, and turning it off must
+                    // not cost the pre-slot warnings too.
+                    toggleSettingsRow(
+                        title: "Timeline heads-up",
+                        subtitle: "A few minutes before a task's planned slot. Slots close together share one heads-up.",
+                        isOn: $profile.placementLeadNotificationsEnabled
+                    )
+                    toggleSettingsRow(
+                        title: "Timeline follow-up",
+                        subtitle: "If a planned slot passes and the task is still open, a reminder — repeated a few times through the day until it's done.",
+                        isOn: $profile.placementMissedNotificationsEnabled
+                    )
                 }
 
                 settingsCard(title: "Calendar source", value: profile.calendarSource.isEmpty ? "Not connected yet" : profile.calendarSource)
