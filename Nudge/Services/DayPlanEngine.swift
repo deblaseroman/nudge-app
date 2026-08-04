@@ -28,7 +28,7 @@ enum DayPlanEngine {
         /// common case. A displaced task is back in Unscheduled and the
         /// announcement must say so; silently un-placing is the
         /// vanishing-task shape.
-        case placed(count: Int, titles: [String], displaced: [String])
+        case placed(count: Int, titles: [String], displaced: [String], outOfBand: [BandRefusal])
         /// Nothing open and unplaced — a correct refusal.
         case noCandidates
         /// Candidates exist but no free gap fits any of them.
@@ -36,11 +36,23 @@ enum DayPlanEngine {
         /// WOULD have fit, except every helpful eviction was equal-or-
         /// higher stakes — the app proposes, the user decides, so the
         /// message box names the contention instead of evicting.
-        case noRoom(contention: String?)
+        case noRoom(contention: String?, outOfBand: [BandRefusal])
         /// No planning window (late night, or a sleep window shorter than
         /// its quiet buffers). Backstop — `DayWindow`'s wake anchor makes
         /// the all-day version impossible on sane profiles.
         case windowCollapsed
+    }
+
+    /// A candidate the pass refused because its appropriateness band had
+    /// no usable free time today — either the band's hours are over (or
+    /// it's a weekend for `businessHours`), or free gaps exist but only
+    /// outside the band. The refusal itself is correct behaviour (cycle
+    /// 2026-08-02-03: no "any gap will do"); what was wrong is that it was
+    /// silent (cycle 2026-08-04-01 item 1) — the message box now names the
+    /// task and the rule instead of letting it read as a dead button.
+    struct BandRefusal {
+        let title: String
+        let band: TaskTimeWindow
     }
 
     /// Displacement ordering (higher = more consequential). Same
@@ -239,6 +251,7 @@ enum DayPlanEngine {
         var prepPlacedCount = 0
         var placedTitles: [String] = []
         var displacedTitles: [String] = []
+        var bandRefusals: [BandRefusal] = []
         var contentionTitle: String?
         // At most ONE displacement per run — a planner that reshuffles the
         // whole day to wedge everything in stops reading as a proposal.
@@ -353,6 +366,10 @@ enum DayPlanEngine {
             // 10:30 PM.
             let band = task.effectiveTimeWindow
             guard let bounds = bandBounds(for: band) else {
+                // Only restricted bands can land here — `.anytime`'s
+                // bounds are never nil — so every entry is a real rule
+                // refusal worth narrating.
+                bandRefusals.append(BandRefusal(title: task.title, band: band))
                 #if DEBUG
                 print("   ✗ \(task.title) [\(band.rawValue)] — band has no time left today; left unplaced")
                 #endif
@@ -374,16 +391,22 @@ enum DayPlanEngine {
                 displacedFor = result.evicted
             }
             guard let start else {
-                #if DEBUG
-                // Distinguish "the day is full" from "only out-of-band
-                // room remains" — the plan's trace requirement.
+                // "The day is full" vs "only out-of-band room remains" —
+                // formerly a DEBUG-only distinction; the second kind now
+                // feeds the message box, because to the user it looks
+                // identical to a bug ("there's free space right there and
+                // it won't use it") until the rule is named.
                 if band != .anytime,
                    earliestGapStart(fitting: duration, busy: busy, from: scanStart, to: dayEnd) != nil {
+                    bandRefusals.append(BandRefusal(title: task.title, band: band))
+                    #if DEBUG
                     print("   ✗ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] — gaps exist but only OUT-OF-BAND; left unplaced")
+                    #endif
                 } else {
+                    #if DEBUG
                     print("   ✗ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] — no gap fits")
+                    #endif
                 }
-                #endif
                 continue
             }
 
@@ -420,13 +443,19 @@ enum DayPlanEngine {
             print("   result: placed 0 of \(candidates.count) candidate(s) → \(kind)"
                 + (contentionTitle.map { " (equal-stakes contention over \"\($0)\")" } ?? ""))
             #endif
-            return candidates.isEmpty ? .noCandidates : .noRoom(contention: contentionTitle)
+            return candidates.isEmpty
+                ? .noCandidates
+                : .noRoom(contention: contentionTitle, outOfBand: bandRefusals)
         }
         #if DEBUG
         print("   result: placed \(placedCount) of \(candidates.count) candidate(s)"
-            + (displacedTitles.isEmpty ? "" : ", displaced \(displacedTitles.count)"))
+            + (displacedTitles.isEmpty ? "" : ", displaced \(displacedTitles.count)")
+            + (bandRefusals.isEmpty ? "" : ", band-refused \(bandRefusals.count)"))
         #endif
-        return .placed(count: placedCount, titles: placedTitles, displaced: displacedTitles)
+        return .placed(
+            count: placedCount, titles: placedTitles,
+            displaced: displacedTitles, outOfBand: bandRefusals
+        )
     }
 
     // MARK: - Morning auto-run
@@ -480,12 +509,14 @@ enum DayPlanEngine {
         defaults.set(Calendar.current.startOfDay(for: now), forKey: autoPlanLastRunDayKey)
 
         let outcome = planToday(profile: profile, modelContext: modelContext, clearAutoFirst: false)
-        if case .placed(let count, let titles, let displaced) = outcome {
+        if case .placed(let count, let titles, let displaced, let outOfBand) = outcome {
             PlanOutcomeContext.write(
                 kind: .planned,
                 placedCount: count,
                 placedTitles: titles,
                 displacedTitles: displaced,
+                outOfBandTitles: outOfBand.map(\.title),
+                outOfBandBands: outOfBand.map(\.band.rawValue),
                 isAuto: true
             )
         }

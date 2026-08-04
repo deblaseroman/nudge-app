@@ -1427,20 +1427,37 @@ struct TasksTabView: View {
             clearAutoFirst: true
         )
         switch outcome {
-        case .placed:
+        case .placed(_, _, _, let outOfBand):
             // The placements on the timeline are the feedback; clear any
             // earlier refusal message ("clears on the next successful
             // plan"). A displacement during a manual REPLAN needs no
             // narration either: the replan released every auto placement
             // first, so "released and not re-placed" is the pass's normal
-            // shape, already visible in Unscheduled.
-            PlanOutcomeContext.clear()
-            planOutcome = nil
+            // shape, already visible in Unscheduled. A band refusal is the
+            // exception (cycle 2026-08-04-01 item 1): unlike everything
+            // above it leaves no visible trace, so it's written instead of
+            // cleared — the message box names the task and the hours rule.
+            if outOfBand.isEmpty {
+                PlanOutcomeContext.clear()
+                planOutcome = nil
+            } else {
+                PlanOutcomeContext.write(
+                    kind: .planned,
+                    outOfBandTitles: outOfBand.map(\.title),
+                    outOfBandBands: outOfBand.map(\.band.rawValue),
+                    isAuto: false
+                )
+                planOutcome = PlanOutcomeContext.read()
+            }
             NudgeHaptics.success()
         case .noCandidates:
             recordPlanOutcome(.noCandidates)
-        case .noRoom(let contention):
-            recordPlanOutcome(.noRoom, contentionTitle: contention)
+        case .noRoom(let contention, let outOfBand):
+            recordPlanOutcome(
+                .noRoom,
+                contentionTitle: contention,
+                outOfBand: outOfBand
+            )
         case .windowCollapsed:
             recordPlanOutcome(.windowCollapsed)
         }
@@ -1628,8 +1645,18 @@ struct TasksTabView: View {
     /// gives the shared refusal haptic. The message carries the
     /// distinction between refusal kinds; the haptic only says "nothing
     /// was placed."
-    private func recordPlanOutcome(_ kind: PlanOutcomeContext.Kind, contentionTitle: String? = nil) {
-        PlanOutcomeContext.write(kind: kind, contentionTitle: contentionTitle, isAuto: false)
+    private func recordPlanOutcome(
+        _ kind: PlanOutcomeContext.Kind,
+        contentionTitle: String? = nil,
+        outOfBand: [DayPlanEngine.BandRefusal] = []
+    ) {
+        PlanOutcomeContext.write(
+            kind: kind,
+            contentionTitle: contentionTitle,
+            outOfBandTitles: outOfBand.map(\.title),
+            outOfBandBands: outOfBand.map(\.band.rawValue),
+            isAuto: false
+        )
         planOutcome = PlanOutcomeContext.read()
         NudgeHaptics.error()
     }

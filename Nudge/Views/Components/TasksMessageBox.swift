@@ -93,6 +93,13 @@ struct PlanOutcomeContext {
     /// helpful candidate was equal-or-higher stakes — reported instead of
     /// evicted (the app proposes, the user decides). `noRoom` only.
     let contentionTitle: String?
+    /// Candidates the pass refused because their appropriateness band had
+    /// no usable free time today (cycle 2026-08-04-01 item 1) — a correct
+    /// refusal that must not be silent. Parallel arrays (title +
+    /// `TaskTimeWindow` raw value) because UserDefaults holds flat string
+    /// arrays; `outOfBandBands[i]` belongs to `outOfBandTitles[i]`.
+    let outOfBandTitles: [String]
+    let outOfBandBands: [String]
     let isAuto: Bool
     let date: Date
 
@@ -101,6 +108,8 @@ struct PlanOutcomeContext {
     static let titlesKey = "nudge.planOutcome.titles"
     static let displacedKey = "nudge.planOutcome.displaced"
     static let contentionKey = "nudge.planOutcome.contention"
+    static let outOfBandTitlesKey = "nudge.planOutcome.outOfBandTitles"
+    static let outOfBandBandsKey = "nudge.planOutcome.outOfBandBands"
     static let autoKey = "nudge.planOutcome.auto"
     static let dateKey = "nudge.planOutcome.date"
 
@@ -110,6 +119,8 @@ struct PlanOutcomeContext {
         placedTitles: [String] = [],
         displacedTitles: [String] = [],
         contentionTitle: String? = nil,
+        outOfBandTitles: [String] = [],
+        outOfBandBands: [String] = [],
         isAuto: Bool
     ) {
         let defaults = SharedModelContainer.appGroupDefaults
@@ -122,13 +133,16 @@ struct PlanOutcomeContext {
         } else {
             defaults.removeObject(forKey: contentionKey)
         }
+        defaults.set(outOfBandTitles, forKey: outOfBandTitlesKey)
+        defaults.set(outOfBandBands, forKey: outOfBandBandsKey)
         defaults.set(isAuto, forKey: autoKey)
         defaults.set(Date(), forKey: dateKey)
     }
 
     static func clear() {
         let defaults = SharedModelContainer.appGroupDefaults
-        for key in [kindKey, countKey, titlesKey, displacedKey, contentionKey, autoKey, dateKey] {
+        for key in [kindKey, countKey, titlesKey, displacedKey, contentionKey,
+                    outOfBandTitlesKey, outOfBandBandsKey, autoKey, dateKey] {
             defaults.removeObject(forKey: key)
         }
     }
@@ -151,6 +165,8 @@ struct PlanOutcomeContext {
             placedTitles: (defaults.array(forKey: titlesKey) as? [String]) ?? [],
             displacedTitles: (defaults.array(forKey: displacedKey) as? [String]) ?? [],
             contentionTitle: defaults.string(forKey: contentionKey),
+            outOfBandTitles: (defaults.array(forKey: outOfBandTitlesKey) as? [String]) ?? [],
+            outOfBandBands: (defaults.array(forKey: outOfBandBandsKey) as? [String]) ?? [],
             isAuto: defaults.bool(forKey: autoKey),
             date: date
         )
@@ -399,23 +415,36 @@ enum TasksMessageComposer {
     private static func planOutcomeMessage(_ outcome: PlanOutcomeContext) -> TasksMessage? {
         switch outcome.kind {
         case .planned:
-            // Only an automatic run announces itself — the user didn't ask,
-            // so the plan explains where it came from. (Manual successes
-            // clear the context before this can render; the guard is a
-            // backstop.)
-            guard outcome.isAuto, outcome.placedCount > 0 else { return nil }
-            let titles = outcome.placedTitles.prefix(4)
-                .map { "“\($0)”" }.joined(separator: ", ")
-            let displaced = outcome.displacedTitles.isEmpty
-                ? ""
-                : " To make room, "
-                    + outcome.displacedTitles.map { "“\($0)”" }.joined(separator: " and ")
-                    + " went back to Unscheduled — re-place it wherever suits you."
-            return TasksMessage(
-                headline: "I set up today — \(outcome.placedCount) task\(outcome.placedCount == 1 ? "" : "s") placed into free time.",
-                detail: "Placed: \(titles). Tap any timeline block to move or remove it — "
-                    + "placements you made yourself weren't touched." + displaced
-            )
+            let bandNote = bandRefusalSentence(outcome)
+            // An automatic run announces itself — the user didn't ask, so
+            // the plan explains where it came from.
+            if outcome.isAuto, outcome.placedCount > 0 {
+                let titles = outcome.placedTitles.prefix(4)
+                    .map { "“\($0)”" }.joined(separator: ", ")
+                let displaced = outcome.displacedTitles.isEmpty
+                    ? ""
+                    : " To make room, "
+                        + outcome.displacedTitles.map { "“\($0)”" }.joined(separator: " and ")
+                        + " went back to Unscheduled — re-place it wherever suits you."
+                return TasksMessage(
+                    headline: "I set up today — \(outcome.placedCount) task\(outcome.placedCount == 1 ? "" : "s") placed into free time.",
+                    detail: "Placed: \(titles). Tap any timeline block to move or remove it — "
+                        + "placements you made yourself weren't touched." + displaced
+                        + (bandNote.map { " " + $0 } ?? "")
+                )
+            }
+            // A manual run's placements are their own feedback and the
+            // context is normally cleared before this renders — EXCEPT
+            // when a task was refused for its hours (cycle 2026-08-04-01
+            // item 1): that refusal is invisible on the timeline, so it's
+            // the one part of a manual success that must be narrated.
+            if let bandNote {
+                let headline = outcome.outOfBandTitles.count == 1
+                    ? "“\(outcome.outOfBandTitles[0])” didn't fit today's hours."
+                    : "\(outcome.outOfBandTitles.count) tasks didn't fit today's hours."
+                return TasksMessage(headline: headline, detail: bandNote)
+            }
+            return nil
         case .noCandidates:
             return TasksMessage(
                 headline: "Nothing to plan right now.",
@@ -433,6 +462,16 @@ enum TasksMessageComposer {
                         + "If you want it today, move or remove a timeline block and it can take that spot."
                 )
             }
+            // Zero placed AND at least one band refusal: the leading fact
+            // is the rule, not the calendar — "your calendar is full" would
+            // be wrong when the free time simply sits outside the hours the
+            // task fits.
+            if let bandNote = bandRefusalSentence(outcome) {
+                let headline = outcome.outOfBandTitles.count == 1
+                    ? "“\(outcome.outOfBandTitles[0])” didn't fit today's hours."
+                    : "Nothing placed — the free time is outside the hours these tasks fit."
+                return TasksMessage(headline: headline, detail: bandNote)
+            }
             return TasksMessage(
                 headline: "No room left today — your calendar is full.",
                 detail: "Events, the buffers around them, and existing placements take the rest of today. "
@@ -445,6 +484,40 @@ enum TasksMessageComposer {
                     + "If this shows during the day, check your wake time and bedtime in Settings."
             )
         }
+    }
+
+    /// One sentence naming the band-refused task(s), the rule, and the way
+    /// out. Nil when the outcome carries no refusals. Facts only: the rule
+    /// and its escape hatch (manual placement has no band gate), no verdict.
+    private static func bandRefusalSentence(_ outcome: PlanOutcomeContext) -> String? {
+        guard !outcome.outOfBandTitles.isEmpty else { return nil }
+        let shown = outcome.outOfBandTitles.prefix(2).map { "“\($0)”" }.joined(separator: " and ")
+        let overflow = outcome.outOfBandTitles.count - 2
+        let names = overflow > 0 ? "\(shown) and \(overflow) more" : shown
+        let single = outcome.outOfBandTitles.count == 1
+        let band = bandPhrase(outcome.outOfBandBands.first ?? "")
+        return "\(names) only \(single ? "fits" : "fit") \(band), and today has no free time left there. "
+            + "\(single ? "It stays" : "They stay") in Unscheduled — "
+            + "you can still place \(single ? "it" : "them") on the timeline yourself if now works anyway."
+    }
+
+    /// Human phrase for a `TaskTimeWindow` raw value, hours pulled from
+    /// `NudgeConfig` so the copy can't drift from the rule it describes.
+    private static func bandPhrase(_ raw: String) -> String {
+        switch TaskTimeWindow.parse(raw) {
+        case .businessHours:
+            return "business hours (weekdays \(hourLabel(NudgeConfig.businessHoursStartHour))–\(hourLabel(NudgeConfig.businessHoursEndHour)))"
+        case .daytime:
+            return "daytime hours (\(hourLabel(NudgeConfig.daytimeStartHour))–\(hourLabel(NudgeConfig.daytimeEndHour)))"
+        case .anytime, nil:
+            return "its hours"
+        }
+    }
+
+    /// 9 → "9 AM", 17 → "5 PM".
+    private static func hourLabel(_ hour: Int) -> String {
+        let twelve = hour % 12 == 0 ? 12 : hour % 12
+        return "\(twelve) \(hour < 12 ? "AM" : "PM")"
     }
 
     // MARK: Tapped-nudge explanations
