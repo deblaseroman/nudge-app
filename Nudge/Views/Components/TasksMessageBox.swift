@@ -622,6 +622,12 @@ struct MessageBoxCharacterSlot: View {
 struct TasksMessageBox: View {
     let tasks: [NudgeTask]
     let tappedNudge: TappedNudgeContext?
+    /// Tapping the CHARACTER (not the row) opens the interactive shell
+    /// (cycle 2026-08-03-04 — visual prototype, see `MessageBoxChatShell`).
+    /// The row's own tap keeps toggling the detail expansion, unchanged.
+    /// Nil (the default) leaves the slot inert — every existing call site
+    /// behaves exactly as before.
+    var onCharacterTap: (() -> Void)? = nil
     var rationale: String? = nil
     /// One-time "still want study time for X?" note (tombstone-backed).
     var prepNote: PrepNoteContext? = nil
@@ -664,7 +670,17 @@ struct TasksMessageBox: View {
         let expandable = message.detail != nil
 
         HStack(alignment: .center, spacing: 14) {
+            // The slot's own tap wins over the row's expand/collapse tap
+            // (child gestures take precedence), so the character is the
+            // doorway to the shell while the rest of the row keeps its
+            // existing behavior.
             MessageBoxCharacterSlot()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard let onCharacterTap else { return }
+                    NudgeHaptics.light()
+                    onCharacterTap()
+                }
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(message.headline)
@@ -737,6 +753,174 @@ struct TasksMessageBox: View {
         if let commitmentAnnouncement,
            message == TasksMessageComposer.commitmentAnnouncementMessage(commitmentAnnouncement) {
             onCommitmentAnnouncementShown?()
+        }
+    }
+}
+
+// MARK: - Interactive shell (cycle 2026-08-03-04 — VISUAL PROTOTYPE)
+
+/// One line of the shell's stub conversation.
+private struct MessageBoxChatLine: Identifiable {
+    let id = UUID()
+    let text: String
+    let isUser: Bool
+}
+
+/// The expanded surface behind the character tap — roughly iOS's
+/// swipe-down-reply shape: a dimmed backdrop (tap to collapse) with a card
+/// holding the conversation, tappable options, and a free-text field.
+///
+/// ── EVERYTHING BEHIND IT IS A STUB ──────────────────────────────────────
+/// Hard-coded conversation, a fake question with two options, canned
+/// replies, no persistence, no `ClaudeService`, nothing written anywhere.
+/// This exists so the INTERACTION can be judged before anything real is
+/// wired to it; the capture pipeline is a separate, bigger cycle. Home
+/// chat is untouched — this is a parallel surface for comparison.
+struct MessageBoxChatShell: View {
+    let onDismiss: () -> Void
+
+    @State private var lines: [MessageBoxChatLine] = [
+        MessageBoxChatLine(
+            text: "“Problem set 4” is due Friday — it's the biggest thing on your list.",
+            isUser: false
+        ),
+        MessageBoxChatLine(
+            text: "Should the first session go today or tomorrow?",
+            isUser: false
+        ),
+    ]
+    /// The fake question's options; nil once answered (or after free text).
+    @State private var options: [String]? = ["Start today", "Start tomorrow"]
+    @State private var draft = ""
+    @FocusState private var inputFocused: Bool
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            // Backdrop — tapping outside collapses.
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    inputFocused = false
+                    onDismiss()
+                }
+
+            // The surface. Anchored near the top (where the collapsed box
+            // lives) so the keyboard never covers it.
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    MessageBoxCharacterSlot()
+                    Text("Nudge")
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 16))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                    Spacer()
+                }
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(lines) { line in
+                            chatBubble(line)
+                        }
+                    }
+                }
+                .frame(maxHeight: 300)
+
+                if let options {
+                    HStack(spacing: 8) {
+                        ForEach(options, id: \.self) { option in
+                            Button {
+                                answer(option)
+                            } label: {
+                                Text(option)
+                                    .font(.custom(NudgeTheme.fontMedium, size: 14))
+                                    .foregroundColor(NudgeTheme.primary)
+                                    .padding(.horizontal, 14)
+                                    .frame(height: 34)
+                                    .overlay(
+                                        Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    TextField("Or say it your way…", text: $draft, axis: .vertical)
+                        .font(.custom(NudgeTheme.fontBody, size: 15))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .lineLimit(1...3)
+                        .focused($inputFocused)
+                        .onSubmit(sendDraft)
+                    Button(action: sendDraft) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundColor(
+                                draft.trimmingCharacters(in: .whitespaces).isEmpty
+                                    ? NudgeTheme.textPlaceholder
+                                    : NudgeTheme.primary
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+            }
+            .padding(16)
+            .background(NudgeTheme.background)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet))
+            .overlay(
+                RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet)
+                    .stroke(NudgeTheme.border, lineWidth: 1)
+            )
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+        }
+    }
+
+    private func chatBubble(_ line: MessageBoxChatLine) -> some View {
+        HStack {
+            if line.isUser { Spacer(minLength: 40) }
+            Text(line.text)
+                .font(.custom(NudgeTheme.fontBody, size: 15))
+                .foregroundColor(line.isUser ? .white : NudgeTheme.textPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(line.isUser ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            if !line.isUser { Spacer(minLength: 40) }
+        }
+        .frame(maxWidth: .infinity, alignment: line.isUser ? .trailing : .leading)
+    }
+
+    /// Option tap: the answer becomes a user line, the options retire, and
+    /// a canned acknowledgment lands. Stub — nothing is saved.
+    private func answer(_ option: String) {
+        NudgeHaptics.light()
+        withAnimation(NudgeAnimation.standard) {
+            lines.append(MessageBoxChatLine(text: option, isUser: true))
+            options = nil
+            lines.append(MessageBoxChatLine(
+                text: "Noted. (Prototype — nothing is saved yet.)",
+                isUser: false
+            ))
+        }
+    }
+
+    /// Free text: same shape as an option answer. Stub — nothing is saved.
+    private func sendDraft() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        NudgeHaptics.light()
+        withAnimation(NudgeAnimation.standard) {
+            lines.append(MessageBoxChatLine(text: text, isUser: true))
+            options = nil
+            lines.append(MessageBoxChatLine(
+                text: "Noted. (Prototype — nothing is saved yet.)",
+                isUser: false
+            ))
+            draft = ""
         }
     }
 }

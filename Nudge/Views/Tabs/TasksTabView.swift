@@ -35,6 +35,9 @@ struct TasksTabView: View {
     /// every launch lands on Today, so the entry point never moves around —
     /// the Overdue badge carries the "look here" signal instead.
     @State private var selectedListTab: TaskListTab = .today
+    /// The message box's interactive shell (cycle 2026-08-03-04 — visual
+    /// prototype; every message behind it is a stub).
+    @State private var isMessageShellOpen = false
     /// Events tab lens. Two lenses on the same data, not two buckets — a
     /// high-stakes event tomorrow appears under both.
     @State private var eventLens: EventLens = .thisWeek
@@ -305,6 +308,13 @@ struct TasksTabView: View {
                 TasksMessageBox(
                     tasks: tasks,
                     tappedNudge: tappedNudgeContext,
+                    onCharacterTap: {
+                        // Cycle 2026-08-03-04: the character opens the
+                        // interactive shell (visual prototype, all stubs).
+                        withAnimation(NudgeAnimation.standard) {
+                            isMessageShellOpen = true
+                        }
+                    },
                     rationale: refineRationale,
                     prepNote: pendingPrepNote,
                     prepAnnouncement: ExamPrepSweep.currentAnnouncement(),
@@ -380,6 +390,21 @@ struct TasksTabView: View {
             .padding(.bottom, 24)
         }
         .background(NudgeTheme.background)
+        // The interactive shell floats over the whole tab so its backdrop
+        // can catch taps anywhere ("tap outside collapses") — an in-row
+        // overlay would be clipped by the scroll container. Prototype: the
+        // floating app tab bar still renders above the dim layer; accepted
+        // under the plan's timebox, noted in the report.
+        .overlay {
+            if isMessageShellOpen {
+                MessageBoxChatShell(onDismiss: {
+                    withAnimation(NudgeAnimation.standard) {
+                        isMessageShellOpen = false
+                    }
+                })
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+            }
+        }
         .onAppear {
             purgeOldCompletedRecords()
             // Pick up a rationale produced elsewhere today (e.g. via the
