@@ -371,14 +371,14 @@ struct TasksTabView: View {
                     onTapEmpty: { placement = PlacementContext(time: $0) },
                     onCompleteTask: { toggleCompletion(for: $0) }
                 )
-                // Control order (cycle 2026-08-03-07): box → timeline →
-                // Plan my day → Start Session → Chat. Plan my day and
-                // Start Session share the full-width primary treatment and
-                // now sit adjacent — the visual distinction is a decision
-                // Roman is making separately; do not restyle either here.
+                // Control order (cycle 2026-08-03-08): box (which carries
+                // the chat chip in its bottom-right) → timeline → Plan my
+                // day → Start Session. Plan my day and Start Session share
+                // the full-width primary treatment and sit adjacent — the
+                // visual distinction is a decision Roman is making
+                // separately; do not restyle either here.
                 planMyDayButton
                 startSessionButton
-                chatButton
                 listTabStrip
                     .padding(.top, 8)
                 selectedTabContent
@@ -1088,52 +1088,6 @@ struct TasksTabView: View {
             .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
         }
         .buttonStyle(.plain)
-    }
-
-    /// The visible affordance that the message box is interactive (cycle
-    /// 2026-08-03-07): opens the same shell as every box tap target — one
-    /// surface, four ways in. Quiet treatment (`surfaceAlt`) on purpose:
-    /// it's a doorway, not the day's call to action, and a third primary
-    /// button in this stack would bury the two that are.
-    private var chatButton: some View {
-        Button {
-            NudgeHaptics.light()
-            withAnimation(NudgeAnimation.standard) {
-                messageShellSeed = composedMessage
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 14, weight: .bold))
-
-                Text("Chat")
-                    .font(.custom(NudgeTheme.fontSemiBold, size: 15))
-
-                Spacer()
-            }
-            .foregroundColor(NudgeTheme.textPrimary)
-            .padding(.horizontal, 16)
-            .frame(height: 52)
-            .background(NudgeTheme.surfaceAlt)
-            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// The same composition the message box runs — so the shell opened
-    /// from the Chat button seeds with exactly what the box is showing.
-    /// Pure and cheap; called once per tap.
-    private var composedMessage: TasksMessage {
-        TasksMessageComposer.compose(
-            tasks: tasks,
-            tappedNudge: tappedNudgeContext,
-            rationale: refineRationale,
-            prepNote: pendingPrepNote,
-            prepAnnouncement: ExamPrepSweep.currentAnnouncement(),
-            commitmentAnnouncement: ExamPrepSweep.currentCommitmentAnnouncement(),
-            planOutcome: planOutcome,
-            now: Date()
-        )
     }
 
     private var startSessionButton: some View {

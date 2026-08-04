@@ -698,36 +698,68 @@ struct TasksMessageBox: View {
         )
         let expandable = message.detail != nil
 
-        HStack(alignment: .center, spacing: 14) {
-            MessageBoxCharacterSlot()
+        VStack(alignment: .trailing, spacing: 10) {
+            // The original row, untouched — the chip below grows the box
+            // downward instead of shifting or narrowing any of this.
+            HStack(alignment: .center, spacing: 14) {
+                MessageBoxCharacterSlot()
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text(message.headline)
-                    .font(.custom(NudgeTheme.fontMedium, size: 15))
-                    .foregroundColor(NudgeTheme.textPrimary)
-                    .lineLimit(isExpanded ? nil : 2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-
-                if isExpanded, let detail = message.detail {
-                    Text(detail)
-                        .font(.custom(NudgeTheme.fontBody, size: 13))
-                        .foregroundColor(NudgeTheme.textSecondary)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(message.headline)
+                        .font(.custom(NudgeTheme.fontMedium, size: 15))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .lineLimit(isExpanded ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
+
+                    if isExpanded, let detail = message.detail {
+                        Text(detail)
+                            .font(.custom(NudgeTheme.fontBody, size: 13))
+                            .foregroundColor(NudgeTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                // Visibility rule unchanged from today (collapsed state must
+                // show what it shows today) — the chevron appears only when
+                // there's detail; what changed is where it LEADS.
+                if expandable {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(NudgeTheme.textMuted)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
             }
 
-            Spacer(minLength: 0)
-
-            // Visibility rule unchanged from today (collapsed state must
-            // show what it shows today) — the chevron appears only when
-            // there's detail; what changed is where it LEADS.
-            if expandable {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(NudgeTheme.textMuted)
-                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            // The chat affordance, bottom-right IN the box (cycle
+            // 2026-08-03-08 — it sits with the thing it opens). Styled as
+            // the shell's own option chips (primary-stroked capsule), so
+            // the doorway previews the interaction idiom inside. Only
+            // rendered when a shell is wired; redundant with the row tap
+            // by design — this is the VISIBLE affordance, the row tap is
+            // the convenience.
+            if onOpenShell != nil {
+                Button {
+                    NudgeHaptics.light()
+                    onOpenShell?(message)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Chat")
+                            .font(.custom(NudgeTheme.fontMedium, size: 13))
+                    }
+                    .foregroundColor(NudgeTheme.primary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .overlay(
+                        Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(16)
