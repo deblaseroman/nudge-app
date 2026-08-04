@@ -572,9 +572,12 @@ enum TasksMessageComposer {
 // MARK: - Character slot
 
 /// The square on the box's left where a character lands — a messenger
-/// pigeon, eventually one per surface. Sized like a task row's leading
-/// checkbox (28×28) so the two align down the tab. Until an asset exists it
-/// renders a plain grey placeholder from the theme.
+/// pigeon, eventually one per surface. 56×56: exactly twice the task row's
+/// 28pt leading checkbox, big enough for an illustration to read as a
+/// character rather than an icon. The box's minimum height follows from
+/// this (slot + vertical padding) — the deliberate break from task-row
+/// height; the box is the app's voice, not a list item. Until an asset
+/// exists it renders a plain grey placeholder from the theme.
 ///
 /// One parameter on purpose: dropping the mascot in is ONE line at the call
 /// site — `MessageBoxCharacterSlot(image: Image("pigeon-tasks"))` — and
@@ -589,11 +592,11 @@ struct MessageBoxCharacterSlot: View {
                     .resizable()
                     .scaledToFit()
             } else {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(NudgeTheme.textPlaceholder)
             }
         }
-        .frame(width: 28, height: 28)
+        .frame(width: 56, height: 56)
     }
 }
 
@@ -604,10 +607,11 @@ struct MessageBoxCharacterSlot: View {
 /// insets), with one difference carrying the distinction: a task row is a
 /// FILLED card, this is an OUTLINED one (`NudgeTheme.border`, no fill).
 ///
-/// Height: collapsed, the headline truncates at two lines — the footprint a
-/// task row with a subtitle has. Expanding GROWS the row in place (same
-/// width, same corners) to the full headline plus detail; tap again to
-/// collapse back.
+/// Height: the 56pt character slot sets the floor (~88pt with padding —
+/// about 1.3× a task row; the box stopped matching row height when the
+/// character moved in). Collapsed, the headline still truncates at two
+/// lines. Expanding GROWS the row in place (same width, same corners) to
+/// the full headline plus detail; tap again to collapse back.
 struct TasksMessageBox: View {
     let tasks: [NudgeTask]
     let tappedNudge: TappedNudgeContext?
