@@ -200,8 +200,8 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null}
-    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events. "commitmentShape" / "commitmentDailyCount" / "commitmentSessionTitle" are set per the COMMITMENTS section; null on everything that isn't a commitment.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
+    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events. "commitmentShape" / "commitmentDailyCount" / "commitmentSessionTitle" are set per the COMMITMENTS section; null on everything that isn't a commitment. "goalRef" is set per the PERSONAL GOALS section when one is present; null otherwise.
 
     ORDERED PLANS (sequenceIndex):
     - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
@@ -337,7 +337,8 @@ class ClaudeService {
         conversationHistory: [ChatMessage],
         userMessage: String,
         existingTasks: [ExistingTaskContext] = [],
-        knownCommitmentSizes: [String] = []
+        knownCommitmentSizes: [String] = [],
+        activeGoals: [ActiveGoalContext] = []
     ) async throws -> ClaudeResponse {
         let todayFormatter = DateFormatter()
         todayFormatter.dateFormat = "EEEE, MMMM d, yyyy"
@@ -497,6 +498,22 @@ class ClaudeService {
             The user has previously sized these. If a NEW splitWork commitment is clearly the same kind of work, set estimatedMinutes from the matching size and DO NOT ask.
             \(knownCommitmentSizes.map { "- \($0)" }.joined(separator: "\n"))
             ==================================
+            """
+        }
+
+        // Goal matching rides this same call — no second round trip. Short
+        // refs (G1, G2 …) instead of raw UUIDs because the model echoes a
+        // two-character token far more reliably than 36 hex characters; the
+        // write site maps the ref back to the goal's UUID.
+        if !activeGoals.isEmpty {
+            fullSystemPrompt += """
+
+
+            ===== THE USER'S PERSONAL GOALS =====
+            Long-term goals the user has set in the app:
+            \(activeGoals.map { "- \($0.ref): \($0.title)" }.joined(separator: "\n"))
+            On each NEW TASK, set "goalRef" to the matching ref (e.g. "G1") ONLY when the task plainly serves that goal — "Practice Spanish", "Duolingo", "Spanish class homework" plainly serve a learn-Spanish goal. BE CONSERVATIVE: a wrong link corrupts the goal's activity history; a missed link costs almost nothing. Any doubt → null. Most tasks serve no goal, so null is the normal answer. Never set goalRef on events or task_updates.
+            =====================================
             """
         }
 
@@ -1287,6 +1304,16 @@ struct ExistingTaskContext {
     let dueDate: String?
 }
 
+/// An active personal goal passed as capture context for goal matching.
+/// `ref` is a short stable token for this one call ("G1", "G2" …) — the
+/// model echoes it back in `goalRef` and the write site resolves it to
+/// the goal's UUID; raw UUIDs in the prompt got mangled too easily.
+struct ActiveGoalContext {
+    let ref: String
+    let id: UUID
+    let title: String
+}
+
 struct ClaudeResponse: Codable {
     let message: String
     let taskUpdates: [TaskUpdate]?
@@ -1363,6 +1390,7 @@ struct TaskData: Codable {
     let commitmentShape: String?    // "splitWork" | "rate" | "quantity" on commitment tasks; unknown/missing → nil via CommitmentShape.parse
     let commitmentDailyCount: Int?  // quantity commitments only: units per day
     let commitmentSessionTitle: String? // commitment tasks only: short session name for the generated dailies ("Python course"); title stays the goal name
+    let goalRef: String?            // ref of the matching ActiveGoalContext ("G1") when the task plainly serves a personal goal; conservative, usually nil
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -1381,6 +1409,7 @@ struct TaskData: Codable {
         case commitmentShape = "commitmentShape"
         case commitmentDailyCount = "commitmentDailyCount"
         case commitmentSessionTitle = "commitmentSessionTitle"
+        case goalRef = "goalRef"
     }
 }
 

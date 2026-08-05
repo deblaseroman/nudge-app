@@ -47,6 +47,13 @@ struct CompleteTaskIntent: AppIntent {
             task.isComplete = true
             task.completedAt = completionDate
 
+            // Completing a goal-linked task counts as working on the goal —
+            // same rule as the in-app checkbox; NudgeGoal is in the widget
+            // schema so the shared helper works against this context too.
+            NudgeGoal.recordActivity(
+                goalID: task.goalID, at: completionDate, in: context
+            )
+
             // Create a persistent record so stats survive task deletion
             let sourceID = task.id
             let existingRecordDescriptor = FetchDescriptor<CompletedTaskRecord>(

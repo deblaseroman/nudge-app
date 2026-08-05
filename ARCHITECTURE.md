@@ -205,7 +205,7 @@ reading.)
 - `Nudge/Views/Tabs/CalendarTabView.swift` — Calendar connect + screenshot import; calls `CalendarService` / `ScreenshotCalendarImporter`.
 - `Nudge/Views/Tabs/StatsTabView.swift` — Reads `DailyStats` / `CompletedTaskRecord` / `EngagementState` for progress display.
 - `Nudge/Views/Tabs/SettingsTabView.swift` — Edits `UserProfile` (wake/bedtime, toggles); changes reach the arbiter via `ContentView`'s notificationToken task. Carries the DEBUG-only sections: entitlement overrides and the `NudgeOutcomeClassifierHarness` runner.
-- `Nudge/Views/Tabs/GoalsTabView.swift` — Personal goals list (active `NudgeGoal`s, newest last) with add/edit/remove via `GoalEditorSheet` (title + emoji chips; remove is a real `modelContext.delete` behind a confirmation). Row subtitle states elapsed time from `createdAt` ("Set 3 weeks ago") — deliberately not "since you worked on it" until activity tracking exists. Fifth side slot in `AppTabBar`; onboarding lands here via `MainTabView`'s one-shot flag.
+- `Nudge/Views/Tabs/GoalsTabView.swift` — Personal goals list (active `NudgeGoal`s, newest last) with add/edit/remove via `GoalEditorSheet` (title + emoji chips; remove is a real `modelContext.delete` behind a confirmation). Row subtitle: "Worked on N ago" from `lastActivityAt`, or the deliberate zero case "Set N ago" from `createdAt` — never a false lapse. Fifth side slot in `AppTabBar`; onboarding lands here via `MainTabView`'s one-shot flag.
 - `Nudge/Views/Tabs/AccountTabView.swift` — Account / plan (Pro, trial) status from `UserProfile`.
 
 ## Onboarding
@@ -291,7 +291,7 @@ reading.)
 - `Nudge/Models/CategoryDurationStats.swift` — Learned per-category effort mean; written on completion, read by `DurationModel`.
 - `Nudge/Models/EventDurationStats.swift` — Learned per-title event duration; read by the timeline / busy-window logic.
 - `Nudge/Models/TimeBlock.swift` — Scheduled time-block record (retained for the schedule rebuild).
-- `Nudge/Models/NudgeGoal.swift` — User goal captured in onboarding/chat.
+- `Nudge/Models/NudgeGoal.swift` — User goal captured in onboarding/chat. `lastActivityAt` (nil = never worked on — the load-bearing zero case) is written only through `NudgeGoal.recordActivity(goalID:at:in:)`, the shared forward-only helper both targets call: task completion (Tasks checkbox, widget `CompleteTaskIntent`, chat-driven `task_updates`) and `SessionCoordinator.startSession` on a goal-linked task. Tasks link via `NudgeTask.goalID` — a soft UUID reference set conservatively by the AI at capture (`ActiveGoalContext` refs G1/G2… in the prompt, `goalRef` echoed back, resolved to UUID at the write site in `HomeTabView`); a removed goal leaves links dangling and readers treat that as unlinked.
 - `Nudge/Models/NudgeHabit.swift` — Recurring routine/habit with reminder time.
 - `Nudge/Models/CheckIn.swift` — Morning/evening check-in record.
 - `Nudge/Models/DailySession.swift` — Per-day brain-dump chat transcript (source for AI history).

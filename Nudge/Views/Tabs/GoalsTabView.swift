@@ -101,16 +101,16 @@ struct GoalsTabView: View {
         .accessibilityHint("Opens this goal for editing.")
     }
 
-    /// The row's second line. No activity tracking exists yet, so this
-    /// reads from `createdAt` — "Set 3 weeks ago" states a fact without
-    /// implying a lapse the user never started. When last-activity lands
-    /// on the model, this becomes "Worked on N ago" for goals that have
-    /// any.
+    /// The row's second line. The zero case is deliberate: a goal that was
+    /// never worked on reads "Set 3 weeks ago" — a fact — never "3 weeks
+    /// since you worked on it", which implies a lapse that never started.
     private func elapsedLine(for goal: NudgeGoal) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
-        let relative = formatter.localizedString(for: goal.createdAt, relativeTo: Date())
-        return "Set \(relative)"
+        if let last = goal.lastActivityAt {
+            return "Worked on \(formatter.localizedString(for: last, relativeTo: Date()))"
+        }
+        return "Set \(formatter.localizedString(for: goal.createdAt, relativeTo: Date()))"
     }
 
     // MARK: - Empty state

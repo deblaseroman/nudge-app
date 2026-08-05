@@ -23,6 +23,9 @@ struct HomeTabView: View {
     /// same course should not ask again". Unbounded @Query is fine: one
     /// row per expanded commitment, a handful ever.
     @Query private var commitments: [NudgeCommitment]
+    /// Active goals feed the capture prompt as matching context (item 2,
+    /// cycle 2026-08-04-03). Unbounded is fine — a handful of rows.
+    @Query(sort: \NudgeGoal.createdAt) private var allGoals: [NudgeGoal]
 
     @State private var composerText = ""
     @State private var messages: [HomeChatMessage] = []
@@ -312,11 +315,21 @@ struct HomeTabView: View {
                     )
                 }
 
+                // Stable refs for this one call — the model echoes "G1"
+                // back in goalRef and we resolve it to the UUID below.
+                let goalContexts = allGoals
+                    .filter { $0.isActive }
+                    .enumerated()
+                    .map { index, goal in
+                        ActiveGoalContext(ref: "G\(index + 1)", id: goal.id, title: goal.title)
+                    }
+
                 let response = try await ClaudeService.shared.sendChat(
                     conversationHistory: Array(history),
                     userMessage: messageText,
                     existingTasks: existingContext,
-                    knownCommitmentSizes: knownCommitmentSizes
+                    knownCommitmentSizes: knownCommitmentSizes,
+                    activeGoals: goalContexts
                 )
 
                 // The assistant bubble is appended AFTER updates/creates
@@ -346,6 +359,13 @@ struct HomeTabView: View {
                         if let isComplete = update.isComplete {
                             existingTask.isComplete = isComplete
                             existingTask.completedAt = isComplete ? Date() : nil
+                            // Chat-driven completion counts as goal
+                            // activity, same as the checkbox.
+                            if isComplete {
+                                NudgeGoal.recordActivity(
+                                    goalID: existingTask.goalID, in: modelContext
+                                )
+                            }
                         }
                         // The user's answer to a per-day count question —
                         // same clamp as the capture write path.
@@ -500,6 +520,18 @@ struct HomeTabView: View {
                                .trimmingCharacters(in: .whitespacesAndNewlines),
                            !session.isEmpty {
                             task.commitmentSessionTitle = session
+                        }
+                        // Goal link (item 2, cycle 2026-08-04-03): resolve
+                        // the model's ref back to the goal's UUID. Tasks
+                        // only — an unknown ref (hallucinated, or a goal
+                        // deactivated mid-conversation) resolves to nil,
+                        // the safe default.
+                        if let ref = taskData.goalRef,
+                           let matched = goalContexts.first(where: { $0.ref == ref }) {
+                            task.goalID = matched.id
+                            #if DEBUG
+                            print("[GoalLink] \"\(task.title)\" → goal \"\(matched.title)\" (\(ref))")
+                            #endif
                         }
                     }
                     modelContext.insert(task)

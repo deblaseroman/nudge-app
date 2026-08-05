@@ -92,6 +92,15 @@ final class SessionCoordinator {
         // nudges that would land inside this session are cancelled now that
         // the user is engaged.
         let context = ModelContext(SharedModelContainer.container)
+
+        // Starting a session on a goal-linked task counts as working on
+        // the goal ("running a session on one" — cycle 2026-08-04-03).
+        // Recorded at start, not completion: showing up is the activity.
+        NudgeGoal.recordActivity(
+            goalID: task.goalID, at: sessionStartedAt ?? Date(), in: context
+        )
+        try? context.save()
+
         if let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
             NudgeArbiter.shared.reevaluate(
                 reason: .sessionStarted,

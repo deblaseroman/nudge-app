@@ -235,6 +235,14 @@ final class NudgeTask {
     /// captures, AI omission) means dailies fall back to the goal name.
     /// Inert on every non-commitment task.
     var commitmentSessionTitle: String? = nil
+    /// The personal goal this task serves (`NudgeGoal.id`), linked
+    /// conservatively at capture — the AI matches against the user's
+    /// active goals riding the one capture call, and when in doubt leaves
+    /// it nil (a wrong link corrupts the goal's activity record; a missed
+    /// one just means an elapsed-time nudge fires slightly early). Soft
+    /// reference: a removed goal leaves this dangling and every reader
+    /// treats that as unlinked. Additive, property-level default.
+    var goalID: UUID? = nil
     /// The chosen/derived first day of the commitment (start-of-day).
     /// Set by the user's "today or tomorrow" answer, or by the app when
     /// only one answer is possible (captured at 10pm → tomorrow). Nil =

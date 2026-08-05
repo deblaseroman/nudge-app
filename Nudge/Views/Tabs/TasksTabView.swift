@@ -1272,6 +1272,11 @@ struct TasksTabView: View {
             let completionDate = Date()
             task.completedAt = completionDate
 
+            // Completing a goal-linked task counts as working on the goal.
+            NudgeGoal.recordActivity(
+                goalID: task.goalID, at: completionDate, in: modelContext
+            )
+
             // Completing a count task wholesale (timeline long-press, or
             // the final unit tap that funnels here) means the whole day's
             // count — the two numbers must agree.
