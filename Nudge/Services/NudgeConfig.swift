@@ -617,6 +617,11 @@ enum NudgeConfig {
     /// `goalLapseMinDaysBetweenPerGoal` or the cap erases itself.
     static let goalLapseHistoryRetentionDays: Int = 90
 
+    /// Size of the task the one-tap goal offer creates ("Add a small
+    /// step"). Small on purpose — the ask is re-contact with the goal,
+    /// not a work session; 20 minutes is startable on a bad day.
+    static let goalStepMinutes: Int = 20
+
     // MARK: - Stakes backfill
     //
     // Drives `StakesBackfill`, the one-shot pass that classifies stakes on

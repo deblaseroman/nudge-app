@@ -895,6 +895,11 @@ struct TasksMessageBox: View {
     var onPrepAnnouncementShown: (() -> Void)? = nil
     /// Same, for the commitment announcement.
     var onCommitmentAnnouncementShown: (() -> Void)? = nil
+    /// One-tap accept for a goal offer (cycle 2026-08-04-03 item 4): when
+    /// the box is showing the lapse hook or the gentle invite, an inline
+    /// button creates a small task linked to the goal — no form. The owner
+    /// does the creating; the box only knows a goal is on offer.
+    var onAcceptGoalOffer: ((NudgeGoal) -> Void)? = nil
 
     @State private var isExpanded = false
 
@@ -919,6 +924,21 @@ struct TasksMessageBox: View {
             now: clock.now
         )
         let expandable = message.detail != nil
+        // The goal on offer, when the rendered message is one of the two
+        // goal states: the lapse hook (identified by the tap context, so
+        // both the deterministic and AI forms qualify) or the invite
+        // (identified by equality, the prep-states pattern).
+        let offeredGoal: NudgeGoal? = {
+            guard onAcceptGoalOffer != nil else { return nil }
+            if tappedNudge?.kind == .goalLapse, let id = tappedNudge?.goalID {
+                return goals.first { $0.id == id }
+            }
+            if let goalInvite,
+               message == TasksMessageComposer.goalInviteMessage(goal: goalInvite) {
+                return goalInvite
+            }
+            return nil
+        }()
 
         HStack(alignment: .center, spacing: 14) {
             MessageBoxCharacterSlot()
@@ -937,6 +957,28 @@ struct TasksMessageBox: View {
                         .foregroundColor(NudgeTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
+                }
+
+                // The one-tap accept (item 4). Always visible while the
+                // offer is showing — the offer must not hide behind the
+                // expansion, and `.buttonStyle` + the explicit gesture
+                // keep it from also triggering the row's shell tap.
+                if let goal = offeredGoal {
+                    Button {
+                        NudgeHaptics.medium()
+                        onAcceptGoalOffer?(goal)
+                    } label: {
+                        Text("Add a small step for today")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background(NudgeTheme.primary)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                    .accessibilityHint("Adds a \(NudgeConfig.goalStepMinutes)-minute task toward this goal. No form.")
                 }
             }
 

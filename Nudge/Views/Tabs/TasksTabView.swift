@@ -107,6 +107,48 @@ struct TasksTabView: View {
             .min { ($0.lastActivityAt ?? $0.createdAt) < ($1.lastActivityAt ?? $1.createdAt) }
     }
 
+    /// The one-tap goal offer (item 4): accepting either goal message
+    /// creates a small task linked to the goal — no form. Sizing choices,
+    /// all deliberate: `goalStepMinutes` (20) long, titled with the size
+    /// so the ask is visibly small; priority medium; stakes left UNSET
+    /// (nil — a self-set step has no external consequence, and nil ranks
+    /// above `.low` in the morning ranking as absence-of-evidence);
+    /// undated and unscheduled, landing in Unscheduled where the floater
+    /// check-in and plan-my-day both cover it. Creating the task is not
+    /// working the goal, so `lastActivityAt` is untouched — completing it
+    /// writes that, through the normal path.
+    private func acceptGoalOffer(_ goal: NudgeGoal) {
+        let task = NudgeTask(
+            title: "\(NudgeConfig.goalStepMinutes) minutes on \(goal.title)",
+            priority: "medium",
+            source: "goalOffer",
+            estimatedMinutes: NudgeConfig.goalStepMinutes
+        )
+        task.goalID = goal.id
+        modelContext.insert(task)
+        try? modelContext.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+        NudgeIntelligence.shared.refreshSoon(for: task)
+        refreshNotifications()
+
+        // The offer is answered: the lapse hook stands down (context keys
+        // + AI message), and the invite recomputes to nil on its own now
+        // that the goal has an open linked task. Show the list the task
+        // landed in so the tap has visible effect.
+        if tappedNudgeContext?.kind == .goalLapse {
+            let defaults = SharedModelContainer.appGroupDefaults
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeKindKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeTaskIDKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeGoalIDKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeDateKey)
+            tappedNudgeContext = nil
+            goalLapseHookMessage = nil
+        }
+        withAnimation(NudgeAnimation.standard) {
+            selectedListTab = .unscheduled
+        }
+    }
+
     /// Fetches the AI-written goal-lapse hook when the user arrived from a
     /// bait tap. The deterministic fallback is already showing; this swaps
     /// in the full message when (and only if) it lands. Per-(goal, day)
@@ -453,6 +495,9 @@ struct TasksTabView: View {
                     },
                     onCommitmentAnnouncementShown: {
                         ExamPrepSweep.markCommitmentAnnouncementShown()
+                    },
+                    onAcceptGoalOffer: { goal in
+                        acceptGoalOffer(goal)
                     }
                 )
                 // Plan my day left this row for the button stack below the
