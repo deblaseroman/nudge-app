@@ -15,6 +15,8 @@ iOS deployment target is 26.4 — a build failure about the deployment target me
 
 `docs/plan/README.md` is the planning bus: a separate planning agent writes the current work item to `docs/plan/NEXT.md`, Claude Code archives the approved plan and writes a report to `docs/plan/reports/`. Read it at session start — if `NEXT.md` holds an approved item, that's the work. The planner's filesystem access is scoped to `docs/plan/`, so Claude Code stays the only writer to source.
 
+**`docs/plan/CONTEXT.md` is census-derived and maintained in the same commit as the change that dates it.** Any cycle that adds, removes, re-anchors, or disables a candidate builder, a gate, or an AI call site updates `CONTEXT.md`'s ⚙ census sections and its verification stamp **in the same commit** — the file is the sole input to every new planning conversation, and a stale copy there converts directly into planner error (cycle 2026-08-05-01 exists because it did, twice). Same discipline as the three hand-synced schema lists and the ARCHITECTURE.md update rule below: keyed on the change, not on anyone remembering.
+
 `DESIGN.md` is the product intent — positioning, what the arbiter is for, where AI is allowed, tone rules. Read it before any change that touches product behavior (copy, what the user is told, when they're interrupted, what the app decides for them); a change can compile, fit `ARCHITECTURE.md`, and still be wrong there.
 
 ## Current work order
