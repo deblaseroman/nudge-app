@@ -1,8 +1,8 @@
 # Report — 2026-08-05-01 — Make the planner's state files checkable
 
 **Plan:** `archive/2026-08-05-01-plan.md`
-**Status:** in progress (Part 1 committed; Parts 2–4 and final verification follow)
-**Commits:** `9035ffa` (archive), this file (Part 1 census), then one per part.
+**Status:** complete
+**Commits:** `9035ffa` (archive), `c00cf51` (part 1, this file's census), `2a1baaa` (part 2), `8dc16a5` (part 3), `4de6bb4` (part 4), plus this report update.
 
 ---
 
@@ -165,4 +165,97 @@ AI sites. (It is also 4× the length a planner can be relayed, which is why
 
 ---
 
-*Parts 2–4 and final verification are appended below as they complete.*
+## What changed (Parts 2–4)
+
+- `docs/plan/CONTEXT.md` (part 2, `2a1baaa`) — rewritten from the census.
+  Builder table (ten rows, kinds named), ordered gate list with the disabled
+  fatigue gate and its flag, the AI section restated around the true
+  invariant ("no API call in the arbiter's path") with all seven live sites
+  and the two cached channels that DO reach arbiter decisions, and the
+  not-armed inventory. Header stamp: `Verified against 9035ffa at cycle
+  2026-08-05-01`. Census sections marked ⚙ derived/regenerated-by-cycle;
+  prose sections unmarked and hand-written. The drift self-warning is
+  **dropped** — replaced by the stamp plus the pointer to part 3's standing
+  rule, which together make staleness checkable rather than merely
+  confessed. The ask-for-relay rule is preserved verbatim, as is the root-doc
+  directory.
+- `CLAUDE.md` (part 3, `8dc16a5`) — one rule, placed directly after the
+  planning-bus paragraph in the Project section: any cycle that adds,
+  removes, re-anchors, or disables a builder, a gate, or an AI call site
+  updates `CONTEXT.md`'s census sections and stamp **in the same commit**.
+  Why there: it's where `CONTEXT.md`'s role is introduced, and it sits in
+  the same family as the other keyed-on-the-change disciplines (three
+  schema lists, the ARCHITECTURE.md update rule) that CLAUDE.md already
+  carries. The work order was the wrong home — it holds sequencing
+  constraints that expire; this is a permanent maintenance invariant.
+- `docs/plan/README.md` + `CONTEXT.md` pointer line (part 4, `4de6bb4`) —
+  the reader-side completion rule, verbatim from the plan, at README step 6
+  (with the failure it closes named: archive-by-copy leaves a finished plan
+  looking live) and in the Decisions paragraph that defines `NEXT.md` as a
+  mutable pointer. `CONTEXT.md`'s protocol pointer now carries the check
+  inline.
+
+## Verification
+
+- **Inert by construction for the app** — no file under `Nudge/`,
+  `NudgeWidget/`, or the project was touched this cycle (git diff confirms:
+  only `docs/plan/*` and `CLAUDE.md`), so no arbiter behavior can differ and
+  work-order item 5 does not apply. Said here rather than silently skipped,
+  per the plan.
+- Both schemes build (`BUILD SUCCEEDED` × 2) after the final commit — the
+  floor. Intermediate commits touched no buildable file, so per-commit
+  builds would have re-verified an identical tree; the closing pair covers
+  them.
+- **The real test:** the census (this file) and the rewritten `CONTEXT.md`
+  agree — ten builders, five gates in the same order with fatigue disabled,
+  seven live AI sites — and every `CONTEXT.md` claim traces to a named
+  symbol in the census tables.
+- The contradictions list is non-empty (nine items), as the plan predicted
+  it must be.
+
+## Deviations from the plan
+
+- **Part 4's "the `NEXT.md` row of the role table" doesn't exist** — the
+  role table's rows are Planner/Implementer/Approver. The rule went to the
+  two places that actually define `NEXT.md`'s semantics: cycle step 6 and
+  the Decisions paragraph that names it a mutable pointer. Same effect,
+  honest placement.
+- **Part 1's commit is the report file itself** — the plan forbids doc edits
+  in part 1, so there was nothing else to commit; the census was written
+  into the report first and committed before any derived doc changed, which
+  also timestamps ground truth ahead of its consumers.
+- Otherwise none; all four parts shipped at described scope, including
+  dropping the drift warning (part 2's conditional), since part 3 shipped in
+  full.
+
+## Noticed but not done
+
+- **`CLAUDE.md`'s core-loop sentence is itself stale** — "(event-block
+  reminders, morning prompt, idle, get-ahead, floater check-in)" names five
+  of ten builders, one retired. The cycle's constraint was "CLAUDE.md gains
+  one rule and nothing else," so it stands; it's contradiction #8 in the
+  census and a one-line fix for a future cycle.
+- **Four undocumented dead profile toggles** (evening check-in, wind-down,
+  habit reminder, monthly check-in) — write-only fields with no tombstone
+  comment, unlike `deadlinePrepNotificationsEnabled` which is documented.
+  Out of scope (Swift); reported in the census.
+- **`ClaudeService.generatePrepPlan` is dead code** (comment-only caller).
+  Out of scope (Swift); left alone.
+- **`DESIGN.md`'s "exactly two AI touchpoints"** — Roman's uncommitted
+  working copy already revises it to four; the census counts seven live
+  sites. Not touched (his file, this cycle explicitly); the census is the
+  reference whenever that edit lands.
+
+## Open questions
+
+- **Who regenerates the ⚙ sections when the stamp ages without any
+  builder/gate/AI change?** The part-3 rule fires on drift-causing changes;
+  slow rot (renamed constants, retuned values) has no trigger. A cheap
+  option: a periodic "re-census" item whenever the stamp is >N cycles old —
+  planner's call whether that's worth a standing rule.
+- **Cleaner mechanism considered and not built** (per the plan's invitation):
+  having Claude Code append a `**Status: complete**` line to `NEXT.md` at
+  report time would make completion visible in the file itself — but it
+  gives a second party write access to `NEXT.md`, exactly what the plan
+  rules out. The reader-side rule was implemented instead; noting the
+  alternative here for the record.
