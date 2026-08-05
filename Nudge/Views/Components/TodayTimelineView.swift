@@ -384,6 +384,7 @@ struct TodayTimelineView: View {
         case .comeBack:      return "looking ahead"
         case .placementLead:   return "plan heads-up"
         case .placementMissed: return "plan follow-up"
+        case .goalLapse:       return "goal check-in"
         }
     }
 }

@@ -26,6 +26,9 @@ struct TasksTabView: View {
     /// message-box note gets the right copy. One row per expanded
     /// commitment; unbounded @Query is fine.
     @Query private var commitments: [NudgeCommitment]
+    /// Personal goals — feed the goal-lapse hook's deterministic copy and
+    /// the gentle invite (cycle 2026-08-04-03). A handful of rows.
+    @Query(sort: \NudgeGoal.createdAt) private var allGoals: [NudgeGoal]
 
     @Binding var selectedTab: AppTab
     @State private var activeSheet: TaskSheetDestination?
@@ -81,8 +84,87 @@ struct TasksTabView: View {
     /// Today's planner outcome for the message box (refusals + the auto-run
     /// announcement). Same appear/active read pattern; expires daily.
     @State private var planOutcome: PlanOutcomeContext?
+    /// The AI-written goal-lapse hook, once its async fetch lands — rides
+    /// the composer's top-priority seam. Nil shows the deterministic
+    /// fallback (`nudgeExplanation`'s `.goalLapse` branch), so the box is
+    /// never blank or waiting.
+    @State private var goalLapseHookMessage: TasksMessage?
 
     private var coordinator: SessionCoordinator { SessionCoordinator.shared }
+
+    /// The gentle invite's goal (cycle 2026-08-04-03): an active goal with
+    /// no open task pointing at it. Longest-neglected first so the pick is
+    /// stable across renders; nil when every goal has something on the
+    /// list (or there are no goals). Ambient — the composer ranks it just
+    /// above resting, so any day-relevant state outranks it.
+    private var goalInvite: NudgeGoal? {
+        let linked = Set(
+            tasks.filter { !$0.isComplete && !$0.isInformationalEvent }
+                .compactMap(\.goalID)
+        )
+        return allGoals
+            .filter { $0.isActive && !linked.contains($0.id) }
+            .min { ($0.lastActivityAt ?? $0.createdAt) < ($1.lastActivityAt ?? $1.createdAt) }
+    }
+
+    /// Fetches the AI-written goal-lapse hook when the user arrived from a
+    /// bait tap. The deterministic fallback is already showing; this swaps
+    /// in the full message when (and only if) it lands. Per-(goal, day)
+    /// cached so re-appears inside the tap window don't re-call; every
+    /// failure path (no key, offline, parse) is silent — the fallback IS
+    /// the message then.
+    private func fetchGoalLapseHookIfNeeded() {
+        guard let context = tappedNudgeContext,
+              context.kind == .goalLapse,
+              let goalID = context.goalID,
+              let goal = allGoals.first(where: { $0.id == goalID })
+        else {
+            // The hook lives exactly as long as the tap context — once
+            // that expires, the composer's normal ladder takes back over.
+            goalLapseHookMessage = nil
+            return
+        }
+
+        if let cached = GoalLapseHookCache.read(goalID: goalID) {
+            goalLapseHookMessage = cached
+            return
+        }
+        guard goalLapseHookMessage == nil else { return }
+
+        let now = Date()
+        let lapseStart = goal.lastActivityAt ?? goal.createdAt
+        let openTitles = tasks
+            .filter { !$0.isComplete && !$0.isInformationalEvent }
+            .prefix(5)
+            .map(\.title)
+        // "What's been ignored" — read-only arbiter state for the writer.
+        let ignoredRaw = NudgeOutcomeResult.ignored.rawValue
+        let windowStart = Calendar.current.date(byAdding: .day, value: -14, to: now) ?? now
+        var ignoredDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> {
+                $0.resultRaw == ignoredRaw && $0.scheduledFor > windowStart
+            }
+        )
+        ignoredDescriptor.fetchLimit = 50
+        let ignoredCount = (try? modelContext.fetchCount(ignoredDescriptor)) ?? 0
+
+        let hookContext = ClaudeService.GoalLapseHookContext(
+            goalTitle: goal.title,
+            elapsedPhrase: TasksMessageComposer.goalElapsedPhrase(from: lapseStart, to: now),
+            neverWorked: goal.lastActivityAt == nil,
+            openTaskTitles: Array(openTitles),
+            ignoredNudgeCount: ignoredCount
+        )
+        Task {
+            guard let (headline, detail) = try? await ClaudeService.shared
+                .generateGoalLapseHook(context: hookContext) else { return }
+            let message = TasksMessage(headline: headline, detail: detail)
+            GoalLapseHookCache.write(goalID: goalID, message: message)
+            withAnimation(NudgeAnimation.standard) {
+                goalLapseHookMessage = message
+            }
+        }
+    }
 
     /// The tombstone note the message box should offer: the most recent
     /// exam with an un-shown note (`noteShownAt == nil`), or one shown
@@ -343,6 +425,12 @@ struct TasksTabView: View {
                 TasksMessageBox(
                     tasks: tasks,
                     tappedNudge: tappedNudgeContext,
+                    goals: allGoals.filter { $0.isActive },
+                    goalInvite: goalInvite,
+                    aiMessage: goalLapseHookMessage,
+                    // The hook is the point of the bait's tap — it opens
+                    // read-in-full, not as a teaser behind a second tap.
+                    startsExpanded: tappedNudgeContext?.kind == .goalLapse,
                     onOpenShell: { message in
                         // Cycles 2026-08-03-04/-05: character, chevron, and
                         // row all open the interactive shell (visual
@@ -455,6 +543,7 @@ struct TasksTabView: View {
             // launch-path independence, but read-while-fresh, not one-shot.
             tappedNudgeContext = TappedNudgeContext.read()
             planOutcome = PlanOutcomeContext.read()
+            fetchGoalLapseHookIfNeeded()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Also consume when returning to the foreground while the Tasks
@@ -463,6 +552,7 @@ struct TasksTabView: View {
                 consumePendingIdleTask()
                 tappedNudgeContext = TappedNudgeContext.read()
                 planOutcome = PlanOutcomeContext.read()
+                fetchGoalLapseHookIfNeeded()
             }
         }
         .sheet(item: $placement) { ctx in

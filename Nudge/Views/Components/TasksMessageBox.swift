@@ -35,6 +35,8 @@ struct TasksMessage: Equatable {
 struct TappedNudgeContext {
     let kind: NudgeOutcomeKind
     let taskID: UUID?
+    /// Goal-lapse taps only: which goal the bait was about.
+    let goalID: UUID?
     let tappedAt: Date
 
     /// Reads the context from the app group; returns nil (and tidies the
@@ -51,12 +53,48 @@ struct TappedNudgeContext {
         guard ageMinutes >= 0, ageMinutes <= Double(NudgeConfig.messageBoxTapContextMinutes) else {
             defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeKindKey)
             defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeTaskIDKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeGoalIDKey)
             defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeDateKey)
             return nil
         }
         let taskID = defaults.string(forKey: NudgeNotificationService.tappedNudgeTaskIDKey)
             .flatMap(UUID.init(uuidString:))
-        return TappedNudgeContext(kind: kind, taskID: taskID, tappedAt: tappedAt)
+        let goalID = defaults.string(forKey: NudgeNotificationService.tappedNudgeGoalIDKey)
+            .flatMap(UUID.init(uuidString:))
+        return TappedNudgeContext(kind: kind, taskID: taskID, goalID: goalID, tappedAt: tappedAt)
+    }
+}
+
+/// Per-(goal, day) cache for the AI-written goal-lapse hook, so the box
+/// re-appearing (tab switch, scene change) inside the tap-context window
+/// doesn't re-spend an API call on a message that was already written.
+/// App-group defaults like every other message-box context; one slot is
+/// enough because at most one goal-lapse fires per day by construction.
+enum GoalLapseHookCache {
+    static let goalKey = "nudge.goalLapseHook.goalID"
+    static let dayKey = "nudge.goalLapseHook.day"
+    static let headlineKey = "nudge.goalLapseHook.headline"
+    static let detailKey = "nudge.goalLapseHook.detail"
+
+    static func read(goalID: UUID, now: Date = Date()) -> TasksMessage? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: goalKey) == goalID.uuidString,
+              defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now),
+              let headline = defaults.string(forKey: headlineKey)
+        else { return nil }
+        return TasksMessage(headline: headline, detail: defaults.string(forKey: detailKey))
+    }
+
+    static func write(goalID: UUID, message: TasksMessage, now: Date = Date()) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        defaults.set(goalID.uuidString, forKey: goalKey)
+        defaults.set(NudgeCopyStore.dayStamp(now), forKey: dayKey)
+        defaults.set(message.headline, forKey: headlineKey)
+        if let detail = message.detail {
+            defaults.set(detail, forKey: detailKey)
+        } else {
+            defaults.removeObject(forKey: detailKey)
+        }
     }
 }
 
@@ -201,6 +239,8 @@ enum TasksMessageComposer {
     static func compose(
         tasks: [NudgeTask],
         tappedNudge: TappedNudgeContext?,
+        goals: [NudgeGoal] = [],
+        goalInvite: NudgeGoal? = nil,
         rationale: String? = nil,
         aiMessage: TasksMessage? = nil,
         prepNote: PrepNoteContext? = nil,
@@ -209,13 +249,14 @@ enum TasksMessageComposer {
         planOutcome: PlanOutcomeContext? = nil,
         now: Date
     ) -> TasksMessage {
-        // ── AI SEAM (unused as of Aug 2026) ─────────────────────────────
+        // ── AI SEAM (armed for goal-lapse, cycle 2026-08-04-03) ─────────
         // An AI-written message takes precedence over every deterministic
-        // state below. Nothing produces one yet — no call, no flag. The
-        // future cycle that plugs `ClaudeService` in only has to build a
-        // `TasksMessage` and pass it here; the states below then serve as
-        // the fallback whenever it's absent (offline, no key, error), which
-        // is what keeps this surface safe to make non-deterministic.
+        // state below. The goal-lapse HOOK is its first producer: when the
+        // user arrives from the bait, TasksTabView asks ClaudeService for
+        // the full message and passes it here once it lands; until then —
+        // and whenever it can't (offline, no key, error) — the `.goalLapse`
+        // branch of `nudgeExplanation` below is the deterministic fallback,
+        // which is what keeps this surface safe to make non-deterministic.
         if let aiMessage {
             return aiMessage
         }
@@ -224,7 +265,7 @@ enum TasksMessageComposer {
 
         // 1 — a nudge was just tapped.
         if let context = tappedNudge {
-            return nudgeExplanation(context: context, tasks: tasks)
+            return nudgeExplanation(context: context, tasks: tasks, goals: goals, now: now)
         }
 
         // 2 — something is overdue.
@@ -326,8 +367,46 @@ enum TasksMessageComposer {
             )
         }
 
+        // 6.5 — the gentle invite (cycle 2026-08-04-03): a goal with
+        // nothing on the list gets a short question, no notification, no
+        // weight. Bottom of the ladder on purpose — it's an ambient offer,
+        // and every day-relevant state above outranks it.
+        if let goalInvite {
+            return goalInviteMessage(goal: goalInvite)
+        }
+
         // 7 — resting. Never blank.
         return restingMessage(open: open, allTasks: tasks, now: now)
+    }
+
+    // MARK: Goal states (cycle 2026-08-04-03)
+
+    /// Elapsed phrasing for goal copy: days inside two weeks, weeks inside
+    /// two months, months beyond. "about" keeps the claim honest — the
+    /// point is the size of the gap, not false precision.
+    static func goalElapsedPhrase(from start: Date, to now: Date) -> String {
+        let days = Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: start),
+            to: Calendar.current.startOfDay(for: now)
+        ).day ?? 0
+        if days < 14 { return days == 1 ? "a day" : "\(days) days" }
+        if days < 61 {
+            let weeks = days / 7
+            return weeks == 1 ? "about a week" : "about \(weeks) weeks"
+        }
+        let months = days / 30
+        return months == 1 ? "about a month" : "about \(months) months"
+    }
+
+    /// The gentle invite. A question and an offer — never a verdict; built
+    /// as a standalone static (same reason as the prep states) so the view
+    /// can equality-check that it actually rendered.
+    static func goalInviteMessage(goal: NudgeGoal) -> TasksMessage {
+        TasksMessage(
+            headline: "Nothing on the list points at “\(goal.title)” right now.",
+            detail: "Want to add one small thing toward it today? Tap the bubble and tell me — a first step can be tiny."
+        )
     }
 
     // MARK: Exam-prep states
@@ -526,7 +605,9 @@ enum TasksMessageComposer {
     /// than a banner, still just facts about why it fired.
     private static func nudgeExplanation(
         context: TappedNudgeContext,
-        tasks: [NudgeTask]
+        tasks: [NudgeTask],
+        goals: [NudgeGoal] = [],
+        now: Date = Date()
     ) -> TasksMessage {
         let task = context.taskID.flatMap { id in tasks.first(where: { $0.id == id }) }
 
@@ -622,6 +703,33 @@ enum TasksMessageComposer {
             return TasksMessage(
                 headline: "That was about a task whose planned slot has passed.",
                 detail: "When a planned slot passes and the task is still open, a reminder repeats a few times through the day until it's started or moved."
+            )
+        case .goalLapse:
+            // The HOOK's deterministic form — what shows when the AI
+            // message hasn't landed (or can't). This is where the weight
+            // belongs, and the plan's tone note governs: the elapsed time
+            // is a fact and it's allowed to sting; no verdict; and it must
+            // end in something small and actionable. The zero case ("you
+            // set this N ago") never implies a lapse that never started.
+            if let goal = context.goalID.flatMap({ id in goals.first(where: { $0.id == id }) }) {
+                if let last = goal.lastActivityAt {
+                    let phrase = goalElapsedPhrase(from: last, to: now)
+                    return TasksMessage(
+                        headline: "It's been \(phrase) since “\(goal.title)” last got any time.",
+                        detail: "That's a goal you told me matters. One small step today counts — want me to put something toward it on the list? Tap the bubble and say the word."
+                    )
+                }
+                let phrase = goalElapsedPhrase(from: goal.createdAt, to: now)
+                return TasksMessage(
+                    headline: "You set “\(goal.title)” \(phrase) ago.",
+                    detail: "Nothing toward it has made it onto the list yet — which is exactly when a first small step helps most. Want one for today? Tap the bubble and say the word."
+                )
+            }
+            // Goal gone (removed since the bait was scheduled) — say
+            // something honest rather than nothing.
+            return TasksMessage(
+                headline: "That note was about one of your goals.",
+                detail: "It goes out when a goal has gone about a month without any time. The Goals tab shows where each one stands."
             )
         }
     }
@@ -746,6 +854,19 @@ struct MessageBoxCharacterSlot: View {
 struct TasksMessageBox: View {
     let tasks: [NudgeTask]
     let tappedNudge: TappedNudgeContext?
+    /// Active goals, for the goal-lapse hook's deterministic copy.
+    var goals: [NudgeGoal] = []
+    /// The gentle invite's goal (a goal with nothing on the list), when
+    /// the owner decided one should be offered today.
+    var goalInvite: NudgeGoal? = nil
+    /// The AI-written message riding the composer's top-priority seam —
+    /// today only the goal-lapse hook produces one (owner fetches it
+    /// async; deterministic states cover every moment it's absent).
+    var aiMessage: TasksMessage? = nil
+    /// Opens with the detail visible — the goal-lapse hook's requirement:
+    /// the full message is the point of the tap, not a teaser behind a
+    /// second tap.
+    var startsExpanded: Bool = false
     /// Opens the interactive shell (cycle 2026-08-03-04; one surface, TWO
     /// ways in since -05: the character AND the row/chevron both land
     /// here). The composed message rides along so the shell can seed its
@@ -787,7 +908,10 @@ struct TasksMessageBox: View {
         let message = TasksMessageComposer.compose(
             tasks: tasks,
             tappedNudge: tappedNudge,
+            goals: goals,
+            goalInvite: goalInvite,
             rationale: rationale,
+            aiMessage: aiMessage,
             prepNote: prepNote,
             prepAnnouncement: prepAnnouncement,
             commitmentAnnouncement: commitmentAnnouncement,
@@ -881,7 +1005,15 @@ struct TasksMessageBox: View {
         // an overdue task can preempt the note for days, and it must
         // still show later. Equality against the states' own builders is
         // what makes "did it render" checkable.
-        .onAppear { reportPrepDisplays(message) }
+        .onAppear {
+            if startsExpanded { isExpanded = true }
+            reportPrepDisplays(message)
+        }
+        .onChange(of: startsExpanded) { _, newValue in
+            if newValue {
+                withAnimation(NudgeAnimation.standard) { isExpanded = true }
+            }
+        }
         .onChange(of: message) { _, newMessage in
             reportPrepDisplays(newMessage)
         }

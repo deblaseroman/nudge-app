@@ -109,6 +109,15 @@ final class UserProfile {
     /// this block.
     var placementMissedNotificationsEnabled: Bool = true
 
+    /// Gates the goal-lapse bait (`buildGoalLapseCandidates`, cycle
+    /// 2026-08-04-03) — the rare, at-most-monthly-per-goal note that a
+    /// personal goal has gone a month untouched. Own field per the
+    /// one-toggle-per-feature rule above.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var goalLapseNotificationsEnabled: Bool = true
+
     // MARK: - Quiet hours
     //
     // "When do I not want to be interrupted?" — deliberately SEPARATE from

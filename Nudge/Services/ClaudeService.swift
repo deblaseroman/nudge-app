@@ -1118,6 +1118,115 @@ class ClaudeService {
         return result
     }
 
+    // MARK: - Goal-lapse hook (cycle 2026-08-04-03)
+
+    /// What the hook writer gets to see. READ-ONLY arbiter/list state —
+    /// assembled by the caller from data the app already has; nothing here
+    /// feeds back into any scheduling decision.
+    struct GoalLapseHookContext {
+        let goalTitle: String
+        /// "about 2 months" — precomputed so the model can't do date math.
+        let elapsedPhrase: String
+        /// The zero case: goal set, never worked on. The elapsed phrase
+        /// then measures from creation and the copy must say "you set
+        /// this…", never imply a lapse that never started.
+        let neverWorked: Bool
+        /// A few open task titles, so the offer can be concrete.
+        let openTaskTitles: [String]
+        /// Nudges ignored over the recent window — context about how
+        /// reachable the user has been, not ammunition.
+        let ignoredNudgeCount: Int
+    }
+
+    /// The message-box HOOK for a goal-lapse bait: the one AI-written
+    /// message with real weight. Called live on app open (the app is
+    /// running, unlike notification copy) by the Tasks tab, which shows
+    /// the deterministic fallback until/unless this returns.
+    func generateGoalLapseHook(
+        context: GoalLapseHookContext
+    ) async throws -> (headline: String, detail: String) {
+        guard !apiKey.isEmpty else {
+            throw ClaudeError.missingAPIKey
+        }
+
+        let openList = context.openTaskTitles.isEmpty
+            ? "(their list is empty)"
+            : context.openTaskTitles.prefix(5).map { "- \($0)" }.joined(separator: "\n")
+
+        let situation = context.neverWorked
+            ? "They set the goal \"\(context.goalTitle)\" \(context.elapsedPhrase) ago and NOTHING toward it has ever made it onto their list. Frame the elapsed time as \"you set this \(context.elapsedPhrase) ago\" — do NOT imply they lapsed on work they never started."
+            : "It has been \(context.elapsedPhrase) since \"\(context.goalTitle)\" last got any of their time."
+
+        let prompt = """
+        Write the in-app message a task app shows when the user opens it after a goal-lapse notification. This is the one message allowed to carry weight: showing someone how much time has passed on a goal they said matters is uncomfortable, and that discomfort is the point — it's the information they'd want.
+
+        SITUATION:
+        \(situation)
+        Nudges ignored over the last two weeks: \(context.ignoredNudgeCount).
+        Open tasks on their list right now:
+        \(openList)
+
+        HARD RULES:
+        - State the elapsed time plainly. It is a fact and it is allowed to sting.
+        - Facts, never verdicts. "It's been \(context.elapsedPhrase)" is a fact; "you keep putting this off" is a judgment — never that.
+        - No guilt framed as motivation, no streak language, no "again".
+        - END with one small, concrete offer to put a single small step toward the goal on today's list. Small: 15–30 minutes of it, not the whole goal.
+        - Warm and plain, not peppy. No exclamation marks, no emoji.
+        - "headline": one sentence stating the elapsed-time fact, under 90 characters.
+        - "detail": two or three short sentences — why it's worth a look now (you may reference what's on their list), then the offer. Under 280 characters.
+
+        Return ONLY a JSON object, no prose, no markdown fences:
+        {"headline": "...", "detail": "..."}
+        """
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 400,
+            "system": "You write honest, warm in-app messages for a task app. Return only valid JSON matching the requested schema. No prose, no commentary.",
+            "messages": [["role": "user", "content": prompt]]
+        ]
+
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        guard let text = anthropicResponse.content.first?.text else {
+            throw ClaudeError.emptyResponse
+        }
+
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```json") { cleaned = String(cleaned.dropFirst(7)) }
+        if cleaned.hasPrefix("```")     { cleaned = String(cleaned.dropFirst(3)) }
+        if cleaned.hasSuffix("```")     { cleaned = String(cleaned.dropLast(3)) }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        struct HookJSON: Codable {
+            let headline: String
+            let detail: String
+        }
+        guard let start = cleaned.firstIndex(of: "{"),
+              let end = cleaned.lastIndex(of: "}"),
+              let objectData = String(cleaned[start...end]).data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(HookJSON.self, from: objectData),
+              !decoded.headline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            #if DEBUG
+            print("[ClaudeService] generateGoalLapseHook — unparseable response:\n\(text)")
+            #endif
+            throw ClaudeError.parseError
+        }
+        return (
+            decoded.headline.trimmingCharacters(in: .whitespacesAndNewlines),
+            decoded.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
     // MARK: - Network Layer
 
     private func makeRequest(body: [String: Any]) async throws -> ClaudeResponse {

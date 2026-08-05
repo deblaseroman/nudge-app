@@ -589,6 +589,34 @@ enum NudgeConfig {
     /// unambiguous.
     static let comeBackLookaheadDays: Int = 6
 
+    // MARK: - Goal lapse (cycle 2026-08-04-03)
+    //
+    // Drives `NudgeArbiter.buildGoalLapseCandidates` — the bait notification
+    // for a personal goal that has gone a month untouched. Come-back
+    // mechanics: the fire date derives from the goal's own evidence
+    // (`lastActivityAt`, or `createdAt` for the never-started zero case), so
+    // any recorded activity pushes it out on the next rebuild. The per-goal
+    // history map is what stops re-fires while nothing changes.
+
+    /// Days without goal activity before the bait fires. "A month or more"
+    /// per the plan; 30 keeps the arithmetic obvious.
+    static let goalLapseAfterDays: Int = 30
+
+    /// Minimum days between two goal-lapse notifications about the SAME
+    /// goal — the can't-become-wallpaper cap. Read from the per-goal
+    /// delivered-history map in `schedule()`.
+    static let goalLapseMinDaysBetweenPerGoal: Int = 30
+
+    /// Hours after wake the bait lands. Mid-afternoon on purpose: the
+    /// wake+1.5h → wake+7.5h band is already occupied (morning +0.5, prep/
+    /// come-back +2, idle +3, floater +6), and a reflective "it's been a
+    /// month" note doesn't compete with the day's start-something pushes.
+    static let goalLapseAnchorHoursAfterWake: Double = 8
+
+    /// Prune horizon for the per-goal delivered-history map — must exceed
+    /// `goalLapseMinDaysBetweenPerGoal` or the cap erases itself.
+    static let goalLapseHistoryRetentionDays: Int = 90
+
     // MARK: - Stakes backfill
     //
     // Drives `StakesBackfill`, the one-shot pass that classifies stakes on

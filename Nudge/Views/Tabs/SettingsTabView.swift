@@ -167,6 +167,13 @@ struct SettingsTabView: View {
                         subtitle: "If a planned slot passes and the task is still open, a reminder — repeated a few times through the day until it's done.",
                         isOn: $profile.placementMissedNotificationsEnabled
                     )
+                    // Cycle 2026-08-04-03: the goal-lapse bait. Rare by
+                    // construction — monthly at most per goal.
+                    toggleSettingsRow(
+                        title: "Goal check-in",
+                        subtitle: "If a personal goal goes a month untouched, one short note — at most once a month per goal.",
+                        isOn: $profile.goalLapseNotificationsEnabled
+                    )
                 }
 
                 settingsCard(title: "Calendar source", value: profile.calendarSource.isEmpty ? "Not connected yet" : profile.calendarSource)

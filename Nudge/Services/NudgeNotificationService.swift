@@ -51,6 +51,9 @@ final class NudgeNotificationService: NSObject {
     static let tappedNudgeKindKey = "nudge.tappedNudgeKind"
     static let tappedNudgeTaskIDKey = "nudge.tappedNudgeTaskID"
     static let tappedNudgeDateKey = "nudge.tappedNudgeDate"
+    /// Goal-lapse taps only: the `NudgeGoal.id` the bait was about, so the
+    /// message box's hook can name the right goal.
+    static let tappedNudgeGoalIDKey = "nudge.tappedNudgeGoalID"
 
     enum AuthorizationState {
         case notDetermined
@@ -309,6 +312,11 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
                     defaults.set(taskID.uuidString, forKey: Self.tappedNudgeTaskIDKey)
                 } else {
                     defaults.removeObject(forKey: Self.tappedNudgeTaskIDKey)
+                }
+                if let goalIDString = requestContent.userInfo[NudgeNotificationUserInfoKey.goalID] as? String {
+                    defaults.set(goalIDString, forKey: Self.tappedNudgeGoalIDKey)
+                } else {
+                    defaults.removeObject(forKey: Self.tappedNudgeGoalIDKey)
                 }
                 defaults.set(Date(), forKey: Self.tappedNudgeDateKey)
             }

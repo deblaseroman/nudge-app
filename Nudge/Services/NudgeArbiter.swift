@@ -134,6 +134,12 @@ struct NudgeCandidate {
     /// keeps working at the five call sites that don't set it.
     var namedTaskID: UUID? = nil
 
+    /// Goal-lapse only: the `NudgeGoal.id` the bait is about. Stamped into
+    /// userInfo so the tap context can hand the message box the right goal,
+    /// and read by `schedule()` for the per-goal delivered-history write.
+    /// Same `var`-with-default convention as `namedTaskID`.
+    var goalID: UUID? = nil
+
     /// Within-slot ranking. `pow(urgency, 1.1) * pow(importance, 0.9)` —
     /// urgency exponent slightly higher to favor time-pressure breaking ties.
     var score: Double {
@@ -288,6 +294,29 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    /// App Group key for the goal-lapse per-goal delivered map — goal UUID
+    /// string → epoch fire time last handed to the OS. Unlike the maps
+    /// above it is keyed by GOAL, not candidate ID: its job is the
+    /// at-most-monthly-per-goal cap (`goalLapseMinDaysBetweenPerGoal`),
+    /// not just refire protection for one delivered request.
+    private let goalLapseHistoryKey = "nudge.arb.goalLapseHistory"
+
+    /// Goal UUID string → epoch fire time. Written in `schedule()`, read
+    /// in `buildGoalLapseCandidates`, pruned in `cancelAll` on its own
+    /// longer horizon (`goalLapseHistoryRetentionDays` — the shared 2-day
+    /// cutoff would erase the monthly cap).
+    private var goalLapseHistory: [String: TimeInterval] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: goalLapseHistoryKey)?
+                .compactMapValues { $0 as? TimeInterval } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: goalLapseHistoryKey)
+        }
+    }
+
     // MARK: - Entry point
 
     func reevaluate(
@@ -335,8 +364,9 @@ final class NudgeArbiter: NudgeArbitering {
         candidates.append(contentsOf: buildComeBackCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildPlacementLeadCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildPlacementMissedCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildGoalLapseCandidates(profile: profile, modelContext: modelContext))
         #if DEBUG
-        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater + comeBack + placementLead + placementMissed).")
+        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater + comeBack + placementLead + placementMissed + goalLapse).")
         #endif
 
         // 2. Run gates
@@ -390,6 +420,12 @@ final class NudgeArbiter: NudgeArbitering {
             eligible: eligible,
             scheduled: scheduled,
             profile: profile,
+            context: gateContext
+        )
+        debugGoalLapseImpact(
+            all: candidates,
+            eligible: eligible,
+            scheduled: scheduled,
             context: gateContext
         )
         #endif
@@ -478,6 +514,17 @@ final class NudgeArbiter: NudgeArbitering {
         let prunedPlacement = placementMissedHistory.filter { $0.value > cutoff }
         if prunedPlacement.count != placementMissedHistory.count {
             placementMissedHistory = prunedPlacement
+        }
+
+        // Goal-lapse per-goal markers live on their OWN horizon — they back
+        // the at-most-monthly cap, so the shared 2-day cutoff would erase
+        // the cap the day after it fired.
+        let goalLapseCutoff = Date()
+            .addingTimeInterval(-Double(NudgeConfig.goalLapseHistoryRetentionDays) * 24 * 60 * 60)
+            .timeIntervalSinceReferenceDate
+        let prunedGoalLapse = goalLapseHistory.filter { $0.value > goalLapseCutoff }
+        if prunedGoalLapse.count != goalLapseHistory.count {
+            goalLapseHistory = prunedGoalLapse
         }
 
         // Same treatment for the morning prompt's named-task history. Kept
@@ -2122,6 +2169,137 @@ final class NudgeArbiter: NudgeArbitering {
         return "\(openCount) open tasks are on your list, nothing pressing. Ready when you are."
     }
 
+    /// Goal-lapse bait (cycle 2026-08-04-03) — fires when a personal goal
+    /// has gone `NudgeConfig.goalLapseAfterDays` without activity. The
+    /// notification is deliberately near-contentless BAIT: short, template-
+    /// only, never AI copy, doesn't even name the goal — the weight belongs
+    /// to the message box the tap opens (the hook), which knows the goal
+    /// through the userInfo `goalID`.
+    ///
+    /// Come-back mechanics: the fire date derives from the goal's own
+    /// evidence — `lastActivityAt`, or `createdAt` for the never-started
+    /// zero case — so recorded activity pushes it out on every rebuild and
+    /// it only ever FIRES when a month truly passed. Two wallpaper guards
+    /// on top: the per-goal delivered map (`goalLapseHistory`) enforces
+    /// `goalLapseMinDaysBetweenPerGoal` even when nothing changes, and the
+    /// builder emits ONE candidate per run (the earliest-due goal), so two
+    /// lapsed goals can never land the same day.
+    ///
+    /// Discretionary in every dimension — a month-old lapse has no clock
+    /// urgency; it can wait out quiet hours, busy windows, and the budget.
+    private func buildGoalLapseCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.goalLapseNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] goalLapse: SKIP — goalLapseNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+
+        let now = Date()
+        let calendar = Calendar.current
+        var goalDescriptor = FetchDescriptor<NudgeGoal>(
+            predicate: #Predicate<NudgeGoal> { $0.isActive }
+        )
+        goalDescriptor.fetchLimit = 50
+        let goals = (try? modelContext.fetch(goalDescriptor)) ?? []
+        guard !goals.isEmpty else { return [] }
+
+        let history = goalLapseHistory
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        func anchor(on day: Date) -> Date? {
+            var comps = calendar.dateComponents([.year, .month, .day], from: day)
+            comps.hour = wakeComps.hour
+            comps.minute = wakeComps.minute
+            guard let dayWake = calendar.date(from: comps) else { return nil }
+            return dayWake.addingTimeInterval(NudgeConfig.goalLapseAnchorHoursAfterWake * 60 * 60)
+        }
+
+        // Each goal's earliest legitimate fire instant: a full lapse past
+        // its evidence date AND a full cap interval past its last delivery.
+        var best: (goal: NudgeGoal, fireDate: Date, lapseStart: Date)? = nil
+        for goal in goals {
+            let lapseStart = goal.lastActivityAt ?? goal.createdAt
+            guard var day = calendar.date(
+                byAdding: .day,
+                value: NudgeConfig.goalLapseAfterDays,
+                to: calendar.startOfDay(for: lapseStart)
+            ) else { continue }
+            // The cap binds only once the recorded instant has PASSED —
+            // i.e. the bait was actually delivered. A future marker just
+            // means the pending request `cancelAll` wiped moments ago;
+            // treating that as "sent" would push the fire date another
+            // month on every rebuild and the bait would never fire.
+            if let lastFire = history[goal.id.uuidString],
+               lastFire <= now.timeIntervalSinceReferenceDate {
+                let last = Date(timeIntervalSinceReferenceDate: lastFire)
+                if let capDay = calendar.date(
+                    byAdding: .day,
+                    value: NudgeConfig.goalLapseMinDaysBetweenPerGoal,
+                    to: calendar.startOfDay(for: last)
+                ), capDay > day {
+                    day = capDay
+                }
+            }
+            // Same bounded walk as the come-back: if the anchor already
+            // passed (long-lapsed goal, mid-evening reevaluate), roll to
+            // the next day's anchor rather than firing into the past.
+            var fireDate: Date? = nil
+            for _ in 0..<7 {
+                if let candidate = anchor(on: day), candidate > now {
+                    fireDate = candidate
+                    break
+                }
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
+            }
+            guard let fireDate else { continue }
+            if best == nil || fireDate < best!.fireDate {
+                best = (goal, fireDate, lapseStart)
+            }
+        }
+        guard let (goal, fireDate, lapseStart) = best else { return [] }
+
+        #if DEBUG
+        let neverWorked = goal.lastActivityAt == nil
+        print("[NudgeArbiter] goalLapse: \"\(goal.title)\" lapseStart=\(lapseStart)"
+            + (neverWorked ? " (never worked — runs from creation)" : "")
+            + " → fire=\(fireDate)"
+            + (history[goal.id.uuidString] != nil ? " (monthly cap applied)" : ""))
+        #endif
+
+        return [NudgeCandidate(
+            id: "\(prefix)goalLapse.\(stamp(calendar.startOfDay(for: fireDate))).\(goal.id.uuidString)",
+            kind: .goalLapse,
+            fireDate: fireDate,
+            // The bait says almost nothing on purpose — no elapsed time,
+            // no goal name, and an explicit nothing's-wrong so an anxious
+            // user doesn't brace for bad news. The message box delivers
+            // the real message.
+            title: "Got a minute?",
+            body: "Nothing's wrong — there's just something worth a look when you have a moment.",
+            categoryID: .goalLapse,
+            interruption: NudgeUrgencyTier.normal.interruption,
+            // No taskID: the nudge is about a goal, not a task, and the
+            // fatigue system must never attribute an ignored bait to
+            // whatever task happens to be linked (morning-prompt rule).
+            taskID: nil,
+            tier: .normal,
+            // No clock urgency; high importance — a stated personal goal
+            // is the definition of the importance axis. Constants, not
+            // scorer-derived (stakes stays unarmed, work order §1).
+            urgency: 0.3,
+            importance: 0.75,
+            receptivity: 1.0,
+            countsAgainstBudget: true,
+            estimatedMinutes: nil,
+            goalID: goal.id
+        )]
+    }
+
     /// Placement heads-up — the transition warning `placementLeadMinutes`
     /// before a timeline slot (cycle 2026-08-04-02). Placements close
     /// together share ONE notification via the same chained clustering
@@ -3560,6 +3738,61 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    // MARK: - DEBUG: goal-lapse impact
+
+    /// Before/after for the goal-lapse bait (cycle 2026-08-04-03), per
+    /// work-order item 5. BEFORE is the arbiter with no goal-lapse builder
+    /// — what shipped until this cycle — recomputed as the winner set over
+    /// the same eligible candidates minus the new kind. AFTER is what this
+    /// run actually scheduled. Read-only.
+    private func debugGoalLapseImpact(
+        all: [NudgeCandidate],
+        eligible: [NudgeCandidate],
+        scheduled: [NudgeCandidate],
+        context: GateContext
+    ) {
+        let built = all.filter { $0.kind == .goalLapse }
+        guard !built.isEmpty else {
+            print("[GoalLapseImpact] no goal-lapse candidate this run — no active "
+                + "goals, none lapsed a month yet, or the toggle is off. "
+                + "BEFORE and AFTER identical.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        print("[GoalLapseImpact] \(built.count) goal-lapse candidate(s) built:")
+        for cand in built {
+            let gated = eligible.contains { $0.id == cand.id }
+            let won = scheduled.contains { $0.id == cand.id }
+            let verdict = won ? "SCHEDULED" : (gated ? "lost pickWinners" : "gate-BLOCKED")
+            print("      " + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(verdict, 17)
+                + "goal=\(cand.goalID?.uuidString.prefix(8) ?? "—")")
+        }
+
+        let beforeWinners = pickWinners(
+            from: eligible.filter { $0.kind != .goalLapse },
+            context: context
+        )
+        let beforeIDs = Set(beforeWinners.map(\.id))
+        let afterIDs = Set(scheduled.map(\.id))
+        let displaced = beforeWinners.filter { !afterIDs.contains($0.id) }
+        if displaced.isEmpty {
+            print("  → nothing displaced: every pre-lapse winner still fires; "
+                + "the bait is purely additive on this data.")
+        } else {
+            for lost in displaced {
+                print("  → DISPLACED: \(lost.kind.rawValue) '\(lost.title)' @ "
+                    + "\(fmt.string(from: lost.fireDate)) no longer fires (budget or spacing).")
+            }
+        }
+        for gained in scheduled where gained.kind == .goalLapse && !beforeIDs.contains(gained.id) {
+            print("  → ADDED: goalLapse @ \(fmt.string(from: gained.fireDate)).")
+        }
+    }
+
     // MARK: - DEBUG: daily budget impact
 
     /// Before/after for raising `dailyNudgeBudget` 3 → 10 (cycle
@@ -3784,6 +4017,9 @@ final class NudgeArbiter: NudgeArbitering {
         if let taskID = candidate.taskID {
             userInfo[NudgeNotificationUserInfoKey.taskID] = taskID.uuidString
         }
+        if let goalID = candidate.goalID {
+            userInfo[NudgeNotificationUserInfoKey.goalID] = goalID.uuidString
+        }
         content.userInfo = userInfo
 
         let comps = Calendar.current.dateComponents(
@@ -3827,6 +4063,17 @@ final class NudgeArbiter: NudgeArbitering {
             var history = placementMissedHistory
             history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
             placementMissedHistory = history
+        }
+
+        // Per-GOAL delivered marker for the goal-lapse bait — backs the
+        // at-most-monthly-per-goal cap. Written at scheduling like the
+        // others, but the builder only lets it BIND once the recorded
+        // instant has passed, so re-scheduling a pending bait doesn't
+        // push it out another month.
+        if candidate.kind == .goalLapse, let goalID = candidate.goalID {
+            var history = goalLapseHistory
+            history[goalID.uuidString] = candidate.fireDate.timeIntervalSinceReferenceDate
+            goalLapseHistory = history
         }
 
         // Record which task the morning prompt named for its fire day, so

@@ -86,6 +86,17 @@ enum NudgeOutcomeKind: String, Codable, CaseIterable {
     /// day. Ends by construction at midnight — `PlacementRollover` clears
     /// the placement, and the builder requires one.
     case placementMissed
+    /// The goal-lapse bait (cycle 2026-08-04-03): a personal goal has gone
+    /// `NudgeConfig.goalLapseAfterDays` without activity (from
+    /// `lastActivityAt`, or `createdAt` for the never-started zero case).
+    /// The NOTIFICATION is deliberately near-contentless bait — short,
+    /// deterministic, template-only, never AI copy; the weight lives in
+    /// the message box the tap opens (the hook), which IS AI-written with
+    /// a deterministic fallback. Come-back anchor mechanics (any goal
+    /// activity pushes the fire date out on rebuild) plus a per-goal
+    /// monthly re-fire cap and one candidate per run, so it can't become
+    /// wallpaper.
+    case goalLapse
 }
 
 extension NudgeOutcomeKind {
@@ -143,6 +154,11 @@ extension NudgeOutcomeKind {
         // the classifier can always see. Its rows carry no taskID, so the
         // per-task fatigue gate never counts them regardless.
         case .comeBack:
+            return true
+        // Same position as the come-back: the bait's entire job is getting
+        // the app opened (the hook lives in the message box), so success is
+        // exactly what the classifier can see. Rows carry no taskID.
+        case .goalLapse:
             return true
         // Both placement kinds ask the user to start a specific task the
         // app placed on the timeline — a session start or a completion,

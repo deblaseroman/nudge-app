@@ -62,6 +62,11 @@ enum NudgeNotificationCategoryID: String {
     /// 👎, the prep/floater action set: it names ONE task and asks the
     /// user to start it.
     case placementMissed = "category.placementMissed"
+    /// Goal-lapse bait (cycle 2026-08-04-03) — NO action buttons, the
+    /// come-back reasoning taken further: the notification deliberately
+    /// says almost nothing (the real message waits in the message box), so
+    /// any button would be answering a question the bait hasn't asked yet.
+    case goalLapse = "category.goalLapse"
 }
 
 enum NudgeNotificationActionID: String {
@@ -92,6 +97,9 @@ enum NudgeNotificationUserInfoKey {
     // through MainActor — Swift 6 otherwise infers static lets as MainActor.
     nonisolated static let taskID = "taskID"
     nonisolated static let kind   = "kind"
+    /// Goal-lapse only: the `NudgeGoal.id` the bait is about, so the tap
+    /// context can hand the message box the right goal.
+    nonisolated static let goalID = "goalID"
 }
 
 @MainActor
@@ -254,10 +262,17 @@ enum NudgeNotificationCategories {
             intentIdentifiers: [],
             options: dismissible
         )
+        // Goal-lapse bait: actionless — the whole ask is tap-to-open.
+        let goalLapse = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.goalLapse.rawValue,
+            actions: [],
+            intentIdentifiers: [],
+            options: dismissible
+        )
 
         UNUserNotificationCenter.current().setNotificationCategories([
             eventBlock, idle, getAhead, prep, dueSoon, morningPrompt, floater,
-            comeBack, placementLead, placementMissed
+            comeBack, placementLead, placementMissed, goalLapse
         ])
     }
 }
