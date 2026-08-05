@@ -193,7 +193,7 @@ reading.)
 
 - `Nudge/NudgeApp.swift` — `@main` App: builds the SwiftData container, sets the notification delegate, registers background refresh, kicks off `StakesBackfill`. Hosts `ContentView`.
 - `Nudge/ContentView.swift` — Root router (onboarding vs `MainTabView`); handles deep links, scene-phase, the debounced `NudgeArbiter.reevaluate`, and `recordForegroundAndClassifyOutcomes()` (`AppOpenLog` stamp → `NudgeOutcomeClassifier` sweep → DEBUG dump) on both cold launch and foreground.
-- `Nudge/Views/Tabs/MainTabView.swift` — Tab shell owning `selectedTab`; reacts to `deepLinkTab` to switch tabs from notification taps.
+- `Nudge/Views/Tabs/MainTabView.swift` — Tab shell owning `selectedTab`; reacts to `deepLinkTab` to switch tabs from notification taps. Consumes the one-shot `landOnGoalsAfterOnboardingKey` app-group flag (set by `OnboardingViewModel.completeOnboarding`) so the first post-onboarding screen is the Goals tab.
 - `Nudge/NudgeTheme.swift` — Central colors + Lexend fonts; used by every view. **Compiled into the widget target too** (Jul 2026, via `membershipExceptions`): `WidgetColors` in `NudgeWidget.swift` is now a set of aliases over this palette — its hand-copied RGB triples had drifted (off-by-one channels, divergent alphas). Includes `goalAccent`, which was previously an inline literal in both targets.
 - `Nudge/NudgeFeedback.swift` — Haptics (`NudgeHaptics`), animation constants (`NudgeAnimation`), AND the completion-effect visual system: `TaskCompletionEffect`, `CheckboxBounceEffect`, `AnimatedStrikethrough`, `ParticleBurstView`, exposed as `.taskCompletionEffect(isComplete:)` / `.checkboxBounce(isComplete:)`. Used by task rows and timeline blocks.
 - `Nudge/Views/MainAppMockView.swift` — Dead shim: `typealias MainAppMockView = MainTabView`, kept for backward compatibility after the tab views moved to `Views/Tabs/`. No mock content.
@@ -205,6 +205,7 @@ reading.)
 - `Nudge/Views/Tabs/CalendarTabView.swift` — Calendar connect + screenshot import; calls `CalendarService` / `ScreenshotCalendarImporter`.
 - `Nudge/Views/Tabs/StatsTabView.swift` — Reads `DailyStats` / `CompletedTaskRecord` / `EngagementState` for progress display.
 - `Nudge/Views/Tabs/SettingsTabView.swift` — Edits `UserProfile` (wake/bedtime, toggles); changes reach the arbiter via `ContentView`'s notificationToken task. Carries the DEBUG-only sections: entitlement overrides and the `NudgeOutcomeClassifierHarness` runner.
+- `Nudge/Views/Tabs/GoalsTabView.swift` — Personal goals list (active `NudgeGoal`s, newest last) with add/edit/remove via `GoalEditorSheet` (title + emoji chips; remove is a real `modelContext.delete` behind a confirmation). Row subtitle states elapsed time from `createdAt` ("Set 3 weeks ago") — deliberately not "since you worked on it" until activity tracking exists. Fifth side slot in `AppTabBar`; onboarding lands here via `MainTabView`'s one-shot flag.
 - `Nudge/Views/Tabs/AccountTabView.swift` — Account / plan (Pro, trial) status from `UserProfile`.
 
 ## Onboarding

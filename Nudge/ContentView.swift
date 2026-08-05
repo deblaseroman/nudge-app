@@ -59,6 +59,7 @@ struct ContentView: View {
             case "home":     deepLinkTab = .home
             case "calendar": deepLinkTab = .calendar
             case "stats":    deepLinkTab = .stats
+            case "goals":    deepLinkTab = .goals
             case "settings": deepLinkTab = .settings
             case "account":  deepLinkTab = .account
             default: break

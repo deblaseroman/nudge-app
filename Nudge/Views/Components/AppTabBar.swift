@@ -23,6 +23,7 @@ struct AppTabBar: View {
                 sideTabButton(title: "Settings", systemImage: "gearshape.fill", tab: .settings)
                 sideTabButton(title: "Calendar", systemImage: "calendar", tab: .calendar)
                 sideTabButton(title: "Stats", systemImage: "chart.bar.fill", tab: .stats)
+                sideTabButton(title: "Goals", systemImage: "target", tab: .goals)
                 sideTabButton(title: "Tasks", systemImage: "checklist", tab: .tasks)
 
                 // Reserves room for the floating chat button on the right.
