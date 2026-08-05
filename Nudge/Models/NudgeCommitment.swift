@@ -66,11 +66,20 @@ enum CommitmentShape: String, CaseIterable, Codable, Sendable {
 @Model
 final class NudgeCommitment {
     var id: UUID
-    /// The user's own phrasing from the brain dump ("Python course module
-    /// 4") — generated daily tasks carry it verbatim, and the known-sizes
-    /// prompt context quotes it so a matching later commitment can reuse
-    /// the answer.
+    /// The GOAL name, keeping the dump's specific scope ("Complete module
+    /// 4 of Python course") — announcement copy uses it, and the
+    /// known-sizes prompt context quotes it so a matching later commitment
+    /// can reuse the answer (the module/chapter number is the match key).
+    /// Daily tasks use `sessionTitle` and fall back to this.
     var title: String
+    /// The SHORT session name the generated dailies carry ("Python
+    /// course") — the AI's second name at capture, copied from
+    /// `NudgeTask.commitmentSessionTitle` at expansion. The day-label
+    /// subtitle distinguishes the rows, so this only identifies the work.
+    /// Nil (pre-existing rows, AI omission) → dailies use `title`.
+    /// Additive, property-level default, so existing stores open
+    /// unchanged.
+    var sessionTitle: String? = nil
     /// Raw storage for `CommitmentShape`. Read through `shape`; unknown
     /// strings read as nil, never crash.
     var shapeRaw: String
@@ -128,6 +137,7 @@ final class NudgeCommitment {
     init(
         id: UUID = UUID(),
         title: String,
+        sessionTitle: String? = nil,
         shape: CommitmentShape,
         endDate: Date,
         startDate: Date? = nil,
@@ -142,6 +152,7 @@ final class NudgeCommitment {
     ) {
         self.id = id
         self.title = title
+        self.sessionTitle = sessionTitle
         self.shapeRaw = shape.rawValue
         self.endDate = endDate
         self.startDate = startDate

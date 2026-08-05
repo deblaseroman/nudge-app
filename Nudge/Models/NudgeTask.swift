@@ -226,6 +226,15 @@ final class NudgeTask {
     /// → 3), carried until expansion stamps it onto
     /// `NudgeCommitment.dailyCount`. Inert on every other task.
     var commitmentDailyCount: Int? = nil
+    /// The AI's second name from capture: a SHORT session name for the
+    /// generated dailies ("Python course"), while this task's own
+    /// `title` keeps the goal phrasing with the dump's specific scope
+    /// ("Complete module 4 of Python course" — the known-sizes memory
+    /// matches on that string). Carried onto
+    /// `NudgeCommitment.sessionTitle` at expansion; nil (legacy
+    /// captures, AI omission) means dailies fall back to the goal name.
+    /// Inert on every non-commitment task.
+    var commitmentSessionTitle: String? = nil
     /// The chosen/derived first day of the commitment (start-of-day).
     /// Set by the user's "today or tomorrow" answer, or by the app when
     /// only one answer is possible (captured at 10pm → tomorrow). Nil =

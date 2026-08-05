@@ -682,6 +682,7 @@ final class ExamPrepSweep {
 
             let commitment = NudgeCommitment(
                 title: parent.title,
+                sessionTitle: parent.commitmentSessionTitle,
                 shape: shape,
                 endDate: endDay,
                 startDate: startDay > today ? startDay : nil,
@@ -698,6 +699,7 @@ final class ExamPrepSweep {
             modelContext.delete(parent)
             #if DEBUG
             print("[ExamPrepSweep] expanded commitment \"\(commitment.title)\" (\(shape.rawValue)) "
+                + "sessions titled \"\(commitment.sessionTitle ?? commitment.title)\" "
                 + "start=\(Self.stamp(startDay)) end=\(Self.stamp(endDay)) "
                 + "total=\(commitment.totalMinutes.map(String.init) ?? "—")m "
                 + "daily=\(commitment.dailyMinutes.map(String.init) ?? "—")m")
@@ -804,7 +806,10 @@ final class ExamPrepSweep {
             for stampValue in stamps {
                 guard let day = fmt.date(from: stampValue) else { continue }
                 let task = NudgeTask(
-                    title: commitment.title,
+                    // Dailies carry the short session name; the day-label
+                    // subtitle distinguishes them. Fallback to the goal
+                    // name covers pre-sessionTitle rows and AI omission.
+                    title: commitment.sessionTitle ?? commitment.title,
                     // Due at the END of its own day — see `sessionDueDate`.
                     dueDate: Self.sessionDueDate(on: day, calendar: calendar),
                     priority: "medium",

@@ -200,8 +200,8 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null}
-    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events. "commitmentShape" / "commitmentDailyCount" are set per the COMMITMENTS section; null on everything that isn't a commitment.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null}
+    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events. "commitmentShape" / "commitmentDailyCount" / "commitmentSessionTitle" are set per the COMMITMENTS section; null on everything that isn't a commitment.
 
     ORDERED PLANS (sequenceIndex):
     - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
@@ -216,6 +216,11 @@ class ClaudeService {
     - "rate": a stated per-day cadence. "An hour a day", "30 minutes every day". Set estimatedMinutes to the PER-DAY duration (an hour a day → 60). Set dueDate to the end date if one is stated.
     - "quantity": a per-day COUNT. "Three job applications a day", "two chapters a day". Set commitmentDailyCount to the count (3, 2, …). This is ONE commitment, never N separate tasks. Set dueDate to the end date if stated.
     A plain task with a deadline ("finish my essay by Friday") is NOT a commitment — commitmentShape null. Only use a shape when the dump states ongoing/divisible/daily work.
+
+    TWO NAMES on every commitment task (the app turns a commitment into one small task per day, so it needs both):
+    - "title" states the GOAL and MUST keep the dump's specific scope — "finish module 4 of my python course" → "Complete module 4 of Python course". NEVER drop the module/chapter/unit number: the app remembers sizes by this name, and "module 4 ≈ 8 hours" is what lets module 5 skip the size question later.
+    - "commitmentSessionTitle" is the SHORT name each daily session will show — "Python course", "Job applications", "App testing". A few words naming the work, nothing else: no "Complete"/"Finish" verb (a session doesn't finish the goal), no dates, no per-day amounts. The app adds a day label under it itself.
+    Non-commitment items get commitmentSessionTitle null.
 
     FOLLOW-UP QUESTIONS — one judgment rule, not a list of cases:
     You MAY end "message" with a follow-up question only when ALL THREE are true:
@@ -1357,6 +1362,7 @@ struct TaskData: Codable {
     let timeWindow: String?         // tasks only: "anytime" | "daytime" | "businessHours" appropriateness band; unknown/missing → nil via TaskTimeWindow.parse
     let commitmentShape: String?    // "splitWork" | "rate" | "quantity" on commitment tasks; unknown/missing → nil via CommitmentShape.parse
     let commitmentDailyCount: Int?  // quantity commitments only: units per day
+    let commitmentSessionTitle: String? // commitment tasks only: short session name for the generated dailies ("Python course"); title stays the goal name
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -1374,6 +1380,7 @@ struct TaskData: Codable {
         case timeWindow = "timeWindow"
         case commitmentShape = "commitmentShape"
         case commitmentDailyCount = "commitmentDailyCount"
+        case commitmentSessionTitle = "commitmentSessionTitle"
     }
 }
 

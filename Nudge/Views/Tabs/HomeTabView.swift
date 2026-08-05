@@ -490,6 +490,17 @@ struct HomeTabView: View {
                         if let count = taskData.commitmentDailyCount, count > 0 {
                             task.commitmentDailyCount = min(count, 99)
                         }
+                        // Second name from capture: the short session name
+                        // the dailies will carry (the task's own title is
+                        // the goal name). Only meaningful alongside a
+                        // shape; blank or missing stays nil and expansion
+                        // falls back to the goal name.
+                        if task.commitmentShape != nil,
+                           let session = taskData.commitmentSessionTitle?
+                               .trimmingCharacters(in: .whitespacesAndNewlines),
+                           !session.isEmpty {
+                            task.commitmentSessionTitle = session
+                        }
                     }
                     modelContext.insert(task)
                     newlyCreatedTasks.append(task)
