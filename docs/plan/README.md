@@ -63,6 +63,14 @@ the audit trail is genuinely unprotected.
 6. **Planner reads the report** on its next turn and writes the next
    `NEXT.md`. Back to step 1.
 
+   **Completion check, for every reader of `NEXT.md`:** a plan is pending
+   only if no file in `reports/` shares its cycle ID. `NEXT.md` states its
+   cycle ID in its header; every report filename begins with one. Check the
+   ID before reading a plan as live work — step 3 archives by *copy*, so a
+   finished plan sits in `NEXT.md` looking live until the planner's next
+   turn replaces it, and two planning conversations have already re-planned
+   shipped work off that window (cycles 2026-08-04-02 and -03).
+
 A cycle that gets abandoned still leaves an archived plan with no matching
 report. That asymmetry is deliberate — it's a record of something approved and
 then dropped, which is exactly the kind of thing worth being able to count
@@ -125,7 +133,12 @@ when something went wrong stops being evidence.
 
 `NEXT.md` is a single mutable pointer at the current item — one stable path
 both agents can rely on. But every version of it survives in `archive/`,
-copied at approval time.
+copied at approval time. **The pointer carries no completion state of its
+own** — whether it is live is answered by the completion check in step 6: a
+plan is pending only if no file in `reports/` shares its cycle ID. This is
+deliberately a reader-side rule; nothing gains write access to `NEXT.md` by
+it, and the report's existence was already the signal — it just wasn't being
+read as one.
 
 The alternative (overwrite and let git history hold the record) fails the
 audit above: reconstructing plan/report pairs would mean walking commits and

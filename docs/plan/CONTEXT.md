@@ -13,7 +13,9 @@ about the system without the code — enough to write a plan that isn't guessing
 not enough to skip asking. **When a decision turns on a detail below, ask for
 the relevant root doc to be relayed rather than inferring.**
 
-Protocol: [`README.md`](README.md). Current item: [`NEXT.md`](NEXT.md).
+Protocol: [`README.md`](README.md). Current item: [`NEXT.md`](NEXT.md) —
+**pending only if no file in [`reports/`](reports/) shares its cycle ID**;
+check before treating it as live work.
 
 ---
 
