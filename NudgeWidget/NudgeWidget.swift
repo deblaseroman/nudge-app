@@ -36,6 +36,12 @@ struct TaskSnapshot: Identifiable, Hashable {
     /// "3 hours ago"). Hidden for far-future and at night to keep the
     /// row calm when there's no time pressure to surface.
     var remainingLine: String? = nil
+
+    /// Day-slot index from the shared `DaySlotPalette` — the row's tint, and
+    /// the same one this task's block carries on the mini chart and in the
+    /// app. Nil for a task that isn't part of today (no placement, no plan
+    /// position), which leaves that row untinted exactly as before.
+    var slot: Int? = nil
 }
 
 struct GoalSnapshot: Identifiable, Hashable {
@@ -67,6 +73,11 @@ struct WidgetTimeBlock: Identifiable, Hashable {
     let durationMinutes: Int
     let isEvent: Bool
     let isComplete: Bool
+    /// Day-slot index from the shared `DaySlotPalette`, so this block is the
+    /// same color here as in the app's timeline and Today list. Nil for
+    /// events (they sit outside the rotation) and for any task the assignment
+    /// didn't reach.
+    let slot: Int?
 }
 
 // MARK: - Timeline Entry
@@ -241,6 +252,26 @@ enum WidgetColors {
     static let divider = NudgeTheme.border
     static let pillBackground = accentSoft
     static let chipBackground = NudgeTheme.surfaceAlt
+
+    // Day-slot tints for the mini day chart — forwarded, not redefined, so
+    // the widget's blocks and the app's timeline blocks can only ever be the
+    // same color. `completed` is the greyed variant: mostly neutral, with
+    // enough of the original hue left to still say which block it was.
+    static func daySlotFill(_ slot: Int, completed: Bool) -> Color {
+        completed ? NudgeTheme.daySlotFillCompleted(slot) : NudgeTheme.daySlotFill(slot)
+    }
+
+    static func daySlotAccent(_ slot: Int, completed: Bool) -> Color {
+        completed ? NudgeTheme.daySlotAccentCompleted(slot) : NudgeTheme.daySlotAccent(slot)
+    }
+
+    static func eventSlotFill(completed: Bool) -> Color {
+        completed ? NudgeTheme.eventSlotFillCompleted : NudgeTheme.eventSlotFill
+    }
+
+    static func eventSlotAccent(completed: Bool) -> Color {
+        completed ? NudgeTheme.eventSlotAccentCompleted : NudgeTheme.eventSlotAccent
+    }
 }
 
 // MARK: - Shared Widget Schema & Container
@@ -476,6 +507,31 @@ struct NudgeTaskProvider: TimelineProvider {
                 GoalSnapshot(id: goal.id, title: goal.title, emoji: goal.emoji)
             }
 
+            // Day-slot assignment, from the SHARED `DaySlotPalette` the app
+            // uses — that's what makes a task the same color in both places,
+            // in the rows and on the mini chart alike.
+            //
+            // Its own fetch, deliberately, rather than reusing
+            // `openActionable + recentDone`: those are capped at 50 and 100
+            // and `openActionable` has no sort descriptor, so which tasks
+            // survive the cap depends on store order. A slot is an INDEX into
+            // an ordered day — one task missing from the input shifts every
+            // slot after it and the widget starts drawing a task in its
+            // neighbor's color. This predicate matches the population
+            // `DaySlotPalette` actually considers (placed or plan, never an
+            // event), which is a handful of rows, so the cap is nominal and
+            // the widget sees the same set the app's unbounded query does.
+            var slotDescriptor = FetchDescriptor<NudgeTask>(
+                predicate: #Predicate<NudgeTask> { task in
+                    !task.isInformationalEvent &&
+                    (task.plannedStartDate != nil || task.sequenceIndex != nil)
+                }
+            )
+            slotDescriptor.fetchLimit = 200
+            let daySlots = DaySlotPalette.assignments(
+                among: (try? context.fetch(slotDescriptor)) ?? []
+            )
+
             // Identify the single most-urgent task — gets a countdown label.
             // Everything else shows the day name only (Rule 9).
             let incompleteSorted = sortedVisible.filter { !$0.isComplete }
@@ -495,7 +551,8 @@ struct NudgeTaskProvider: TimelineProvider {
                         ? WidgetCountdownFormatter.countdown(for: task, now: now)
                         : nil,
                     dueDateLine: WidgetCountdownFormatter.dueDateLine(for: task),
-                    remainingLine: WidgetCountdownFormatter.remainingLine(for: task, now: now)
+                    remainingLine: WidgetCountdownFormatter.remainingLine(for: task, now: now),
+                    slot: daySlots[task.id]
                 )
             }
 
@@ -574,7 +631,8 @@ struct NudgeTaskProvider: TimelineProvider {
                     start: t,
                     durationMinutes: mins,
                     isEvent: true,
-                    isComplete: event.isComplete
+                    isComplete: event.isComplete,
+                    slot: nil
                 ))
             }
             // Placed tasks in-window (incomplete + recently completed).
@@ -588,7 +646,8 @@ struct NudgeTaskProvider: TimelineProvider {
                     start: p,
                     durationMinutes: mins,
                     isEvent: false,
-                    isComplete: task.isComplete
+                    isComplete: task.isComplete,
+                    slot: daySlots[task.id]
                 ))
             }
 
@@ -916,8 +975,13 @@ struct NudgeTaskWidgetView: View {
     // MARK: - Task Lists
 
     private var mediumTaskList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(entry.tasks.prefix(3).enumerated()), id: \.element.id) { index, task in
+        // Spacing 2 (was 0) so a tinted row reads as its own block. The
+        // divider is drawn only between two UNtinted rows — where a tint is
+        // present its edge already separates them, and a hairline running
+        // across two color blocks just adds noise.
+        let rows = Array(entry.tasks.prefix(3))
+        return VStack(spacing: 2) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, task in
                 WidgetTaskRow(
                     task: task,
                     family: .systemMedium,
@@ -927,7 +991,7 @@ struct NudgeTaskWidgetView: View {
                     sessionPausedRemaining: entry.sessionPausedRemaining
                 )
 
-                if index < min(entry.tasks.count, 3) - 1 {
+                if index < rows.count - 1, task.slot == nil, rows[index + 1].slot == nil {
                     Rectangle()
                         .fill(WidgetColors.divider)
                         .frame(height: 1)
@@ -938,8 +1002,10 @@ struct NudgeTaskWidgetView: View {
     }
 
     private var largeTaskList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(entry.tasks.prefix(3).enumerated()), id: \.element.id) { index, task in
+        // Same rule as `mediumTaskList` — see the note there.
+        let rows = Array(entry.tasks.prefix(3))
+        return VStack(spacing: 2) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, task in
                 WidgetTaskRow(
                     task: task,
                     family: .systemLarge,
@@ -949,7 +1015,7 @@ struct NudgeTaskWidgetView: View {
                     sessionPausedRemaining: entry.sessionPausedRemaining
                 )
 
-                if index < min(entry.tasks.count, 3) - 1 {
+                if index < rows.count - 1, task.slot == nil, rows[index + 1].slot == nil {
                     Rectangle()
                         .fill(WidgetColors.divider)
                         .frame(height: 1)
@@ -1363,7 +1429,9 @@ struct WidgetTaskRow: View {
         }
         .opacity(task.isComplete ? 0.85 : 1.0)
         .padding(.horizontal, isLarge ? 10 : 8)
-        .background(rowBackgroundColor)
+        // Rounded, so a slot tint reads as a block on the task the way the
+        // app's card does, rather than as a full-bleed band across the widget.
+        .background(rowBackgroundColor, in: RoundedRectangle(cornerRadius: 8))
         .contentTransition(.interpolate)
     }
 
@@ -1384,9 +1452,20 @@ struct WidgetTaskRow: View {
         task.isGoalFallback ? WidgetColors.goalAccent : WidgetColors.accent
     }
 
+    /// Row fill. The day-slot tint takes it whenever the task has a slot, so
+    /// this row is the same color as that task's row in the app and its block
+    /// on the mini chart — matching is the whole job of the tint, and the
+    /// states below can't answer "which block is this". Nothing is lost: the
+    /// completed state still shows its "Done" capsule and strikethrough, and
+    /// an active session still shows its bolt/timer chip. The goal-fallback
+    /// row keeps its green because it isn't a task and has no slot anyway.
     private var rowBackgroundColor: Color {
         if task.isGoalFallback {
             return WidgetColors.goalAccentSoft
+        }
+
+        if let slot = task.slot {
+            return WidgetColors.daySlotFill(slot, completed: task.isComplete)
         }
 
         if task.isComplete {
@@ -1490,24 +1569,45 @@ struct WidgetTimeBlockStrip: View {
                     // inside the window (not clipped off the left edge).
                     let startsInWindow = rawFraction(for: block.start) >= 0
 
-                    // The block itself.
+                    // The block itself. Tinted by day slot, matching the app's
+                    // timeline and Today rows; events take the one stone tint
+                    // outside the rotation. A task with no slot falls back to
+                    // the event tint, same as the app does.
+                    let fill = block.slot.map {
+                        WidgetColors.daySlotFill($0, completed: block.isComplete)
+                    } ?? WidgetColors.eventSlotFill(completed: block.isComplete)
+                    let stroke = block.slot.map {
+                        WidgetColors.daySlotAccent($0, completed: block.isComplete)
+                    } ?? WidgetColors.eventSlotAccent(completed: block.isComplete)
+
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(block.isEvent
-                              ? WidgetColors.neutral.opacity(0.35)
-                              : WidgetColors.accent.opacity(0.85))
+                        .fill(fill)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(stroke, lineWidth: 1)
+                        )
                         .frame(width: blockW, height: barHeight - inset * 2)
                         .overlay(alignment: .leading) {
                             if blockW > 40 {
                                 Text(block.title)
+                                    // Was `.white` on the old 85%-opacity blue
+                                    // fill; these tints are pale, so white is
+                                    // unreadable on them.
                                     .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(block.isEvent ? WidgetColors.textPrimary : .white)
+                                    .foregroundStyle(
+                                        block.isComplete ? WidgetColors.textMuted : WidgetColors.textPrimary
+                                    )
                                     .lineLimit(2)
                                     .minimumScaleFactor(0.75)
                                     .padding(.horizontal, 4)
                                     .frame(width: blockW, alignment: .leading)
                             }
                         }
-                        .opacity(block.isComplete ? 0.3 : 1)
+                        // 0.3 used to be the whole "this is done" signal; the
+                        // greyed fill carries it now, so this only finishes
+                        // the recession instead of washing the hue out twice.
+                        // Same value as the app's `completedBlockOpacity`.
+                        .opacity(block.isComplete ? 0.75 : 1)
                         .offset(x: startX, y: barTop + inset)
 
                     if startsInWindow {
@@ -1517,7 +1617,7 @@ struct WidgetTimeBlockStrip: View {
                             .fill(WidgetColors.textMuted)
                             .frame(width: 1, height: tickH + inset)
                             .offset(x: startX, y: labelH)
-                            .opacity(block.isComplete ? 0.3 : 1)
+                            .opacity(block.isComplete ? 0.75 : 1)
 
                         // Start-time label, left-aligned to the block edge
                         // (clamped so it doesn't run off the right side).

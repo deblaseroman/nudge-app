@@ -18,6 +18,12 @@ import SwiftData
 
 struct TodayTimelineView: View {
     let profile: UserProfile
+    /// Day-slot index per task id, from `DaySlotPalette.assignments`. Owned by
+    /// the parent (TasksTabView) rather than computed here so the tint on a
+    /// block and the tint on that task's row under Today can't drift apart —
+    /// see the note in DaySlotPalette. A task missing from the map falls back
+    /// to the neutral event/stone tint.
+    var slots: [UUID: Int] = [:]
     /// Tapped an event or task block — open its editor/detail.
     let onOpenTask: (NudgeTask) -> Void
     /// Tapped empty axis space — the Date is already rounded to 15 min.
@@ -40,11 +46,13 @@ struct TodayTimelineView: View {
 
     init(
         profile: UserProfile,
+        slots: [UUID: Int] = [:],
         onOpenTask: @escaping (NudgeTask) -> Void,
         onTapEmpty: @escaping (Date) -> Void,
         onCompleteTask: @escaping (NudgeTask) -> Void = { _ in }
     ) {
         self.profile = profile
+        self.slots = slots
         self.onOpenTask = onOpenTask
         self.onTapEmpty = onTapEmpty
         self.onCompleteTask = onCompleteTask
@@ -73,6 +81,12 @@ struct TodayTimelineView: View {
     private let markerTop: CGFloat = 112
     private let totalHeight: CGFloat = 156
     private let defaultTaskMinutes = 30
+    /// Completed blocks used to sit at 0.3, which was doing the whole job of
+    /// "this is done". The fill now carries that itself (a slot tint mixed
+    /// most of the way to grey), so this only has to finish the recession —
+    /// pushed back up so the surviving hue, the point of the muted tint, is
+    /// still legible instead of washed out twice.
+    private let completedBlockOpacity: Double = 0.75
     /// Same fallback the busy gate uses — an inline 60 here was a second
     /// copy of the constant the two would have had to keep in sync by hand.
 
@@ -270,13 +284,18 @@ struct TodayTimelineView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .frame(width: w, height: blockHeight, alignment: .topLeading)
-            .background(NudgeTheme.surface)
+            // One stone tint for every event, outside the task rotation —
+            // events are fixed points in the day, not steps in the plan.
+            .background(task.isComplete ? NudgeTheme.eventSlotFillCompleted : NudgeTheme.eventSlotFill)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(NudgeTheme.border, lineWidth: 1)
+                    .stroke(
+                        task.isComplete ? NudgeTheme.eventSlotAccentCompleted : NudgeTheme.eventSlotAccent,
+                        lineWidth: 1
+                    )
             )
-            .opacity(task.isComplete ? 0.3 : 1.0)
+            .opacity(task.isComplete ? completedBlockOpacity : 1.0)
         }
         .buttonStyle(.plain)
         .offset(x: x(for: start), y: blockTop)
@@ -285,13 +304,23 @@ struct TodayTimelineView: View {
     private func taskBlock(_ task: NudgeTask) -> some View {
         let start = task.plannedStartDate ?? Date()
         let w = width(forMinutes: taskMinutes(for: task))
+        // Tinted by position in the day. Title moves to `textPrimary` — it
+        // used to be `primary` against a flat blue-grey fill, which no longer
+        // holds contrast across six hues.
+        let slot = slots[task.id]
+        let fill = task.isComplete
+            ? (slot.map { NudgeTheme.daySlotFillCompleted($0) } ?? NudgeTheme.eventSlotFillCompleted)
+            : (slot.map { NudgeTheme.daySlotFill($0) } ?? NudgeTheme.eventSlotFill)
+        let accent = task.isComplete
+            ? (slot.map { NudgeTheme.daySlotAccentCompleted($0) } ?? NudgeTheme.eventSlotAccentCompleted)
+            : (slot.map { NudgeTheme.daySlotAccent($0) } ?? NudgeTheme.eventSlotAccent)
         return Button {
             onOpenTask(task)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .font(.custom(NudgeTheme.fontSemiBold, size: 12))
-                    .foregroundColor(task.isComplete ? NudgeTheme.textMuted : NudgeTheme.primary)
+                    .foregroundColor(task.isComplete ? NudgeTheme.textMuted : NudgeTheme.textPrimary)
                     .strikethrough(task.isComplete, color: NudgeTheme.textMuted)
                     .lineLimit(1)
                 Text(clockLabel(start))
@@ -301,13 +330,13 @@ struct TodayTimelineView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .frame(width: w, height: blockHeight, alignment: .topLeading)
-            .background(NudgeTheme.primary.opacity(0.12))
+            .background(fill)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(NudgeTheme.primary.opacity(0.5), lineWidth: 1)
+                    .stroke(accent, lineWidth: 1)
             )
-            .opacity(task.isComplete ? 0.3 : 1.0)
+            .opacity(task.isComplete ? completedBlockOpacity : 1.0)
         }
         .buttonStyle(.plain)
         // Complete from the timeline: long-press marks done with the full

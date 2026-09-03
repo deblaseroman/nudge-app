@@ -68,6 +68,7 @@
 				Models/CountdownState.swift,
 				Models/DailySession.swift,
 				Models/DailyStats.swift,
+				Models/DaySlotPalette.swift,
 				Models/EngagementState.swift,
 				Models/EventDurationStats.swift,
 				Models/FocusSessionAttributes.swift,
