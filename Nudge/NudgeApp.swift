@@ -70,6 +70,18 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         }
         #endif
 
+        // ⚠️ TEMP-INTENT-AUDIT (cycle 2026-09-03-01 item 4) — every open
+        // dated task predates the deadline/intent split and carries a
+        // possibly-fabricated deadline. This PRINTS a proposed
+        // classification and writes NOTHING; Roman reviews the table and
+        // fixes rows by hand (or approves a one-shot apply in a later
+        // cycle). Grep the tag to delete every trace.
+        #if DEBUG
+        Task { @MainActor in
+            Self.tempDumpDeadlineIntentAudit()
+        }
+        #endif
+
         return true
     }
 
@@ -155,6 +167,43 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
                 + "\t\(t.title)")
         }
         print("── TEMP-STAKES-DUMP end ───────────────────────────────────────\n")
+    }
+
+    /// ⚠️ TEMP-INTENT-AUDIT — proposes deadline-vs-intent for every open
+    /// dated task, WRITES NOTHING. "keep deadline" is proposed only where
+    /// the row shows owed-work signals (deadline-shaped title keywords, or
+    /// a generated prep/commitment row whose date IS its plan day);
+    /// everything else dated is proposed as intent — the same asymmetry as
+    /// capture's default, and these proposals are read by a human, not
+    /// applied by code.
+    @MainActor
+    static func tempDumpDeadlineIntentAudit() {
+        let context = SharedModelContainer.container.mainContext
+        let all = ((try? context.fetch(FetchDescriptor<NudgeTask>())) ?? [])
+        let dated = all
+            .filter { !$0.isComplete && !$0.isInformationalEvent && $0.hasDeadline }
+            .sorted { ($0.dueDate ?? .distantFuture, $0.title) < ($1.dueDate ?? .distantFuture, $1.title) }
+        print("\n── TEMP-INTENT-AUDIT · \(dated.count) open dated task(s), nothing written ──")
+        let deadlineWords = ["due", "submit", "turn in", "deadline", "exam",
+                             "midterm", "final", "quiz", "essay", "assignment",
+                             "application", "apply by", "register", "renew"]
+        for t in dated {
+            let title = t.title.lowercased()
+            let generated = t.source == "prep" || t.source == "commitment"
+            let wordHit = deadlineWords.first { title.contains($0) }
+            let proposal: String
+            if generated {
+                proposal = "keep deadline (generated \(t.source) row — its date is its plan day)"
+            } else if let wordHit {
+                proposal = "keep deadline (\"\(wordHit)\")"
+            } else {
+                proposal = "→ intent (no owed-work signal in the row)"
+            }
+            let day = t.dueDate?.formatted(date: .abbreviated, time: .omitted) ?? "?"
+            let time = t.specificTime?.formatted(date: .omitted, time: .shortened) ?? "—"
+            print("  \(day) \(time)\tsrc=\(t.source)\t\(proposal)\t\(t.title)")
+        }
+        print("── TEMP-INTENT-AUDIT end (review by hand; no auto-apply exists) ──\n")
     }
     #endif
 }
