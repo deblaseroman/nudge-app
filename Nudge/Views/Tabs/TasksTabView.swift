@@ -2116,6 +2116,14 @@ struct TaskRowView: View {
                 Text(dueLine)
                     .font(.custom(NudgeTheme.fontBody, size: 12))
                     .foregroundColor(rowTreatment == .overdue ? NudgeTheme.overdue : NudgeTheme.textMuted)
+            } else if !task.isComplete, !task.hasDeadline, let intended = task.intendedDate {
+                // Intent day (cycle 2026-09-03-01): the day the user means
+                // to do it — always muted, never a countdown, never coral or
+                // overdue red. The day is information; urgency would be
+                // fabrication.
+                Text(intendedDayLabel(intended))
+                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                    .foregroundColor(NudgeTheme.textMuted)
             }
 
             // One-tap "this is actually an event" correction.
@@ -2247,6 +2255,24 @@ struct TaskRowView: View {
         } else {
             try? modelContext.save()
         }
+    }
+
+    /// "Today" / "Tomorrow" / weekday within a week / short date beyond —
+    /// the intent-day label. A PAST intent day shows the day name plainly
+    /// too ("Mon"): the slip is visible from the date itself, and coloring
+    /// it would be the shame-free rule losing to the overdue idiom.
+    private func intendedDayLabel(_ day: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(day) { return "Today" }
+        if cal.isDateInTomorrow(day) { return "Tomorrow" }
+        let days = cal.dateComponents(
+            [.day],
+            from: cal.startOfDay(for: Date()),
+            to: cal.startOfDay(for: day)
+        ).day ?? 0
+        let f = DateFormatter()
+        f.dateFormat = (days > 0 && days < 7) ? "EEE" : "MMM d"
+        return f.string(from: day)
     }
 
     /// Leading importance dot. Reads STAKES (not priority) so importance is

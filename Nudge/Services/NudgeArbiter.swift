@@ -1928,8 +1928,10 @@ final class NudgeArbiter: NudgeArbitering {
     /// it that can drift.
     ///
     /// ── WHY PLACED TASKS ARE EXCLUDED ─────────────────────────────────
-    /// The fetch is `!isComplete && !isInformationalEvent && dueDate == nil`
-    /// and used to stop there — it never looked at `plannedStartDate`. But
+    /// The fetch is `!isComplete && !isInformationalEvent && dueDate == nil
+    /// && intendedDate not today-or-future` (the intent clause is cycle
+    /// 2026-09-03-01) and used to stop there — it never looked at
+    /// `plannedStartDate`. But
     /// `planMyDay()` places open non-event tasks including undated ones, and
     /// so does manual placement, so the check-in would announce that a task
     /// "is still open" at 14:00 when the user has it on the timeline for
@@ -1951,9 +1953,19 @@ final class NudgeArbiter: NudgeArbitering {
         excludePlacedOnFireDay: Bool,
         modelContext: ModelContext
     ) -> (targets: [NudgeTask], placedOut: [NudgeTask]) {
+        // "Floating" = no deadline AND no intent day still ahead (cycle
+        // 2026-09-03-01). A task intended for Friday isn't "whenever" work
+        // before Friday — but once its fire-day dawns with the intent day
+        // behind it, the slipped intention is exactly what a check-in is
+        // for. `distantPast` stands in for nil so nil-intent tasks pass the
+        // comparison (the #Predicate macro can't unwrap optionals).
+        let fireDayStart = Calendar.current.startOfDay(for: fireDate)
+        let distantPastSentinel = Date.distantPast
         var floaterDescriptor = FetchDescriptor<NudgeTask>(
             predicate: #Predicate<NudgeTask> { task in
-                !task.isComplete && !task.isInformationalEvent && task.dueDate == nil
+                !task.isComplete && !task.isInformationalEvent
+                    && task.dueDate == nil
+                    && (task.intendedDate ?? distantPastSentinel) < fireDayStart
             }
         )
         floaterDescriptor.fetchLimit = 50

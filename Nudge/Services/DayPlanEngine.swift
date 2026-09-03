@@ -190,15 +190,32 @@ enum DayPlanEngine {
         let planCandidates = openUnplaced
             .filter { $0.sequenceIndex != nil }
             .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
+        // Tasks the user said they'd do TODAY (intendedDate, cycle
+        // 2026-09-03-01) outrank score — the user already decided the day;
+        // the planner's job is placing it, not re-deciding it. After plan
+        // tasks (a stated order is the stronger claim), before score-ranked
+        // fill. Oldest first within the group — no better signal exists,
+        // and score would re-litigate the decision this group exists to
+        // honor.
+        let intentCandidates = openUnplaced
+            .filter { task in
+                task.sequenceIndex == nil
+                    && (task.intendedDate.map { cal.isDateInToday($0) } ?? false)
+            }
+            .sorted { $0.createdAt < $1.createdAt }
+        let intentIDs = Set(intentCandidates.map(\.id))
         let scoredCandidates = openUnplaced
-            .filter { $0.sequenceIndex == nil }
+            .filter { $0.sequenceIndex == nil && !intentIDs.contains($0.id) }
             .sorted { planScore(for: $0, modelContext: modelContext) > planScore(for: $1, modelContext: modelContext) }
-        let candidates = planCandidates + scoredCandidates
+        let candidates = planCandidates + intentCandidates + scoredCandidates
 
         #if DEBUG
         print("   candidates (open, non-event, unplaced) — \(candidates.count):")
         for task in planCandidates {
             print("      • \(task.title) — plan #\(task.sequenceIndex ?? 0), \(planningMinutes(for: task))m [\(task.effectiveTimeWindow.rawValue)]")
+        }
+        for task in intentCandidates {
+            print("      • \(task.title) — intended today, \(planningMinutes(for: task))m [\(task.effectiveTimeWindow.rawValue)]")
         }
         for task in scoredCandidates {
             let score = String(format: "%.2f", planScore(for: task, modelContext: modelContext))
