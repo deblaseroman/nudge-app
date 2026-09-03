@@ -85,6 +85,22 @@ update in the report commit
   the -02 report) is now doubly wrong under the split; still out of scope,
   still queued.
 
+## Addendum (same day, after Roman's device run) — `e159d49`
+
+The device run did its job. The correct half: a tomorrow task no longer
+shows under Today, and the 7–10pm event stretched correctly. The caught
+half: "study python tomorrow at 9am **and then** work on my application"
+reads as an ordered plan, and the ordered-plans rule "do NOT set
+dueDate/dueTime from a plan's order" made the model withhold the explicitly
+stated 9am — day captured, placement lost. Two prompt fixes (order
+suppresses *inference*, never *information*; intentions carry day/time in
+dueDate/dueTime with dueKind as the meaning, with a worked example in
+Roman's phrasing) and one write-site rule from Roman: a stated start with
+no stated length defaults to one hour
+(`NudgeConfig.defaultTimedIntentMinutes`). Needs a re-test of the same
+phrasing on device. Also logged (memory + this line, not built): capture
+should warn when a chat-made plan overlaps an existing calendar event.
+
 ## Open questions
 
 - When day-organized tabs land (next cycle), should "Today" mean
