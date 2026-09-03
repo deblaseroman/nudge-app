@@ -200,8 +200,13 @@ class ClaudeService {
     }
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
-    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events. "commitmentShape" / "commitmentDailyCount" / "commitmentSessionTitle" are set per the COMMITMENTS section; null on everything that isn't a commitment. "goalRef" is set per the PERSONAL GOALS section when one is present; null otherwise.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "deadline", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
+    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else.
+
+    DUE vs START — "dueKind" is REQUIRED on every TASK that has a dueDate (null on events, null when dueDate is null):
+    - "deadline": the date is when the work is OWED. Signals: "due", "deadline", "submit", "turn in", "closes", "by [date] or I'm in trouble", assignments, essays, applications with cutoff dates, anything graded or externally enforced.
+    - "start": the date is when the user MEANS TO DO IT. Signals: "I'll", "I want to", "I'm going to", "study at 7", "work on X tomorrow", chores given a day, plan items given times, self-scheduled anything.
+    THE RULE: a date is when the user will DO the work unless the message says the work is OWED then. A study session before an exam is "start" (the EXAM is the fixed thing); the essay's 11:59pm is "deadline". When genuinely uncertain, use "start" — a wrong "start" just skips a countdown, a wrong "deadline" invents time pressure the app then acts on. "timeWindow" is "anytime" | "daytime" | "businessHours" on TASKS; null on events. "commitmentShape" / "commitmentDailyCount" / "commitmentSessionTitle" are set per the COMMITMENTS section; null on everything that isn't a commitment. "goalRef" is set per the PERSONAL GOALS section when one is present; null otherwise.
 
     ORDERED PLANS (sequenceIndex):
     - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
@@ -1521,6 +1526,7 @@ struct TaskData: Codable {
     let isEvent: Bool?              // true = informational event (class/work/appointment), false/nil = actionable task
     let dueDate: String?
     let dueTime: String?
+    let dueKind: String?            // "deadline" (work is owed then) | "start" (user means to do it then); nil/unknown reads as "start" — the cheap wrong guess (cycle 2026-09-03-01)
     let priority: String?
     let category: String?
     let stakes: String?             // "high" | "medium" | "low" — consequence signal; unknown/missing → nil via TaskStakes.parse
@@ -1540,6 +1546,7 @@ struct TaskData: Codable {
         case isEvent = "isEvent"
         case dueDate = "dueDate"
         case dueTime = "dueTime"
+        case dueKind = "dueKind"
         case priority
         case category
         case stakes

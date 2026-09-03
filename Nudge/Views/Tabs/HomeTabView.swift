@@ -478,6 +478,19 @@ struct HomeTabView: View {
                     // timeless events to tasks; that hid genuine plans.)
                     let isEvent = taskData.isEvent ?? false
 
+                    // DUE vs START (cycle 2026-09-03-01): a task's date is a
+                    // deadline ONLY when the model said so. "start" (or a
+                    // missing/unknown dueKind — the cheap wrong guess) means
+                    // the date is an INTENTION: it goes to intendedDate, plus
+                    // a manual placement when a clock time was stated, and
+                    // the deadline fields stay nil so no countdown, overdue
+                    // state, or dueSoon nudge can ever fabricate from it.
+                    // Events are untouched: their time is their time.
+                    let isDeadline = isEvent || taskData.dueKind?.lowercased() == "deadline"
+                    let intentDay: Date? = (!isDeadline && newDueDate != nil)
+                        ? Calendar.current.startOfDay(for: newDueDate!) : nil
+                    let intentStart: Date? = isDeadline ? nil : specificTime
+
                     // Floater detection: no date AND no time → low-priority,
                     // "get to it whenever" task. Force low priority unless the
                     // AI explicitly said high.
@@ -494,9 +507,9 @@ struct HomeTabView: View {
 
                     let task = NudgeTask(
                         title: taskData.title,
-                        dueDate: newDueDate,
-                        dueTime: taskData.dueTime,
-                        specificTime: specificTime,
+                        dueDate: isDeadline ? newDueDate : nil,
+                        dueTime: isDeadline ? taskData.dueTime : nil,
+                        specificTime: isDeadline ? specificTime : nil,
                         priority: priority,
                         category: taskData.category,
                         source: "capture",
@@ -508,6 +521,16 @@ struct HomeTabView: View {
                         // placement; a plan is a numbered list, not a schedule.
                         sequenceIndex: isEvent ? nil : taskData.sequenceIndex
                     )
+                    task.intendedDate = intentDay
+                    // "Study at 7" is the user scheduling it themselves —
+                    // a MANUAL placement (plannedIsAuto stays false), which
+                    // the timeline, planners, and placement nudges already
+                    // understand. PlacementRollover clears it if the day
+                    // passes unstarted; intendedDate above survives as the
+                    // record of the slip.
+                    if let intentStart {
+                        task.plannedStartDate = intentStart
+                    }
                     // Stakes writes go through the one guarded automation
                     // path (never the init) so every non-user writer
                     // inherits the user-override protection. Unknown or
