@@ -207,6 +207,7 @@ class ClaudeService {
     - If the user states an ORDER — "first X, then Y, after that Z", "X then Y then Z", a numbered list, "do A before B" — assign sequenceIndex 1, 2, 3, … to those items in the STATED order (isEvent: false; these are plan tasks, not events).
     - Items NOT part of a stated order get sequenceIndex null.
     - CAPTURE-FIRST: every item in the plan MUST be saved in new_tasks. Never drop or merely ask about an item — even if a duration or detail is fuzzy, save it now (you may still ask a follow-up in "message"). A previous bug dropped an item that was only asked about; do not repeat that.
+    - THE DUMP IS NOT ONLY THE PLAN: every distinct commitment or intention in the message becomes an item. Belonging to a stated sequence is a property of an item, not a filter on which items exist. A message that describes a plan may also contain things outside that plan — an appointment, an errand, a deadline mentioned in passing — capture those too, with sequenceIndex null and their own correct isEvent/dates. A dump that mentions nine things and yields eight items has dropped one.
     - Stated durations ("for an hour", "30 min") still go in estimatedMinutes. Do NOT set dueDate/dueTime from a plan's order — a plan is an ordered list, not a timed schedule.
     - When you capture a plan, your "message" MUST render it back as a numbered list so the user sees the order, e.g. "Got it — here's your plan: 1. Gym  2. CVS  3. Shower + breakfast  4. Python (1h)". Plain text is fine.
 
@@ -410,7 +411,14 @@ class ClaudeService {
         The CURRENT LOCAL CLOCK TIME is \(nowClock12) (24h: \(nowClock24)).
         Tomorrow's date is \(tomorrowISO).
 
-        Mapping rules:
+        Mapping rules — THE PRINCIPLE FIRST: any relative reference to a day
+        or time, WHATEVER its phrasing, resolves against the date and clock
+        above to a concrete date. A reference to the current day (however it
+        says it — the day itself, its morning, its afternoon, its evening or
+        night) → \(todayISO); to the day after → \(tomorrowISO). A phrasing
+        that is not in the examples below still resolves by this rule — never
+        leave an item undated, and never shift it to another day, because its
+        wording isn't listed here.
         - "today" → dueDate = \(todayISO)
         - "tomorrow" → dueDate = \(tomorrowISO)
         - "tonight" → dueDate = \(todayISO), dueTime in the evening (after 6 PM)
