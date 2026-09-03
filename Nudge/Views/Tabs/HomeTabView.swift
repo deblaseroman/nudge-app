@@ -530,6 +530,13 @@ struct HomeTabView: View {
                     // record of the slip.
                     if let intentStart {
                         task.plannedStartDate = intentStart
+                        // A stated start with no stated length is an hour
+                        // (Roman's rule, Sep 2026) — without this the block
+                        // draws at the 30-minute task fallback and the busy
+                        // math undercounts the session.
+                        if task.estimatedMinutes == nil {
+                            task.estimatedMinutes = NudgeConfig.defaultTimedIntentMinutes
+                        }
                     }
                     // Stakes writes go through the one guarded automation
                     // path (never the init) so every non-user writer

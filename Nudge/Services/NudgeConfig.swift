@@ -321,6 +321,12 @@ enum NudgeConfig {
     /// Kept here so the tunables index stays complete; tune it there.
     static let defaultEventDurationMinutes: Int = NudgeTask.fallbackEventDurationMinutes
 
+    /// Length assumed when the user schedules a start themselves ("study
+    /// at 9am") without saying how long — Roman's rule (Sep 2026): a stated
+    /// start with no stated length is an hour. Applied at the capture write
+    /// site only; a stated duration always wins.
+    static let defaultTimedIntentMinutes: Int = 60
+
     /// Upper bound on the duration a calendar / iCal import may write to
     /// `NudgeTask.estimatedMinutes`. Real end times are honored up to this
     /// cap; anything longer is almost always a multi-day span entered as a
