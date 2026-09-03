@@ -71,7 +71,7 @@ class ClaudeService {
     - No bullet points in the message
     - No clinical language (optimize, leverage, maximize)
     - NEVER ask the user "how long will this take?" or "what time?" — just add it. The user can edit duration or time later if they want to.
-    - If the user volunteers a duration (e.g. "an hour", "30 mins"), set estimatedMinutes. Otherwise leave estimatedMinutes null.
+    - estimatedMinutes is the item's LENGTH, however the user states it: a direct duration ("an hour", "30 mins") OR a span / end time ("work 4–9", "class from 7 to 10", "until noon", "there till 9") — for a span, compute end minus start and set estimatedMinutes to the FULL span in minutes (7pm to 10pm → 180). A fuzzy end ("home by 9 or 10") uses the EARLIER end. This matters most on EVENTS: an event with estimatedMinutes null renders one hour long whatever its real length. If no duration is stated any way, leave estimatedMinutes null.
     - If the user volunteers a specific time (e.g. "at 3 PM", "tomorrow at 9"), set dueTime to that time string ("3:00 PM") AND set dueDate. Otherwise leave dueTime null and only set dueDate if a date was mentioned.
     - Assign priority: "high", "medium", or "low" (default "medium")
     - Categorize: "exam", "school", "work", "health", "personal", "errand", or "other". Use "exam" for tests/midterms/finals/quizzes; "school" for any other coursework (assignments, readings, papers); "work" for jobs/shifts/meetings; "health" for doctor/gym/therapy/medication; "personal" for friends/family/hobbies; "errand" for quick utilitarian tasks (pick up, return, pay).

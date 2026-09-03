@@ -363,10 +363,19 @@ struct TasksTabView: View {
     /// sequenceIndex order. Includes completed ones so they stay struck-
     /// through with their number; the section only SHOWS when at least one
     /// is still open (`hasActivePlan`).
+    ///
+    /// **Completed rows sink to the bottom** — open work is what the list is
+    /// for, and a finished task sitting at position 1 puts the thing you can't
+    /// act on where the eye lands first. They keep their `sequenceIndex`
+    /// numeral and their (muted) slot tint, so a sunk row is still findable;
+    /// only its position moves.
     private var planTasks: [NudgeTask] {
         actionableTasks
             .filter { $0.sequenceIndex != nil }
-            .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
+            .sorted { lhs, rhs in
+                if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
+                return (lhs.sequenceIndex ?? .max) < (rhs.sequenceIndex ?? .max)
+            }
     }
 
     private var hasActivePlan: Bool {
@@ -423,13 +432,53 @@ struct TasksTabView: View {
         }
     }
 
-    /// Open tasks placed on today's timeline. Kept in the list (in addition
-    /// to appearing on the timeline) so they stay checkable — placement must
-    /// not remove a task from completion tracking.
+    /// Tasks placed on today's timeline. Kept in the list (in addition to
+    /// appearing on the timeline) so they stay checkable — placement must not
+    /// remove a task from completion tracking.
+    ///
+    /// Built off `actionableTasks`, NOT `sortedTasks`, because that one drops
+    /// completed rows — and a checked-off placement then vanished from Today
+    /// while its block stayed on the strip above, which reads as the list and
+    /// the timeline disagreeing about the day. Now it sinks to the bottom in
+    /// its muted tint instead. Plan tasks stay excluded (`sequenceIndex`),
+    /// since `planSection` already renders those.
+    ///
+    /// Open rows are ordered by `plannedStartDate`, NOT by
+    /// `TaskSortComparator` like every other list. These rows describe a day
+    /// that is already drawn left to right above them, so the list has to read
+    /// top to bottom in the same order — the comparator's deadline buckets put
+    /// a 9am block below a 4pm one whenever the later block was due sooner,
+    /// which reads as a different plan from the one on the strip.
     private var scheduledTasks: [NudgeTask] {
-        sortedTasks.filter { task in
-            guard let p = task.plannedStartDate else { return false }
-            return Calendar.current.isDateInToday(p)
+        actionableTasks
+            .filter { task in
+                guard task.sequenceIndex == nil,
+                      let p = task.plannedStartDate else { return false }
+                return Calendar.current.isDateInToday(p)
+            }
+            .sorted { lhs, rhs in
+                if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
+                let l = lhs.plannedStartDate ?? .distantFuture
+                let r = rhs.plannedStartDate ?? .distantFuture
+                if l != r { return l < r }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+    }
+
+    /// Day-slot index per task id — the single assignment both the timeline
+    /// and Today's rows tint from. Computed here, off the tab's unbounded
+    /// `tasks` query, and passed down; see the note in `DaySlotPalette`.
+    private var daySlots: [UUID: Int] {
+        DaySlotPalette.assignments(among: tasks)
+    }
+
+    /// A row's day-slot fill: the slot's hue, or its greyed-out variant once
+    /// the task is checked off. A finished row keeps a hint of the color it
+    /// had so it stays matchable to its block on the strip — the tint recedes
+    /// with the task rather than disappearing with it.
+    private func slotFill(for task: NudgeTask, in slots: [UUID: Int]) -> Color? {
+        slots[task.id].map {
+            task.isComplete ? NudgeTheme.daySlotFillCompleted($0) : NudgeTheme.daySlotFill($0)
         }
     }
 
@@ -525,6 +574,7 @@ struct TasksTabView: View {
                 // above (its fifth composer state) — one voice in one place.
                 TodayTimelineView(
                     profile: profile,
+                    slots: daySlots,
                     onOpenTask: { task in
                         // A placed task opens the manage window (with the
                         // remove-from-timeline button); events open the editor.
@@ -615,7 +665,8 @@ struct TasksTabView: View {
                             dueTime: draft.dueTimeLabel,
                             specificTime: draft.specificTime,
                             priority: draft.priority,
-                            source: "manual"
+                            source: "manual",
+                            estimatedMinutes: draft.durationMinutes
                         )
                         // If "New task" was chosen from a timeline slot, land
                         // the new task at that time.
@@ -655,6 +706,23 @@ struct TasksTabView: View {
                             if draft.stakesUserPicked, let picked = draft.stakes {
                                 task.stakes = picked
                                 task.stakesIsUserSet = true
+                            }
+                            // Duration: only a tapped chip writes (same rule
+                            // as stakes). A hand-set EVENT length also feeds
+                            // the learned per-title stats — the user
+                            // correcting "how long is work?" is the ground
+                            // truth the learning tier was built for, and
+                            // until now nothing ever called recordDuration.
+                            if draft.durationUserPicked {
+                                task.estimatedMinutes = draft.durationMinutes
+                                if task.isInformationalEvent,
+                                   let mins = draft.durationMinutes, mins > 0 {
+                                    BusyWindowResolver.shared.recordDuration(
+                                        title: task.title,
+                                        durationMinutes: mins,
+                                        modelContext: modelContext
+                                    )
+                                }
                             }
                             try? modelContext.save()
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -852,14 +920,27 @@ struct TasksTabView: View {
     /// Uses a scroll-disabled List so SwiftUI's `.onMove` gives native drag
     /// reordering while still living inside the tab's ScrollView. No section
     /// label since the Today tab IS the label; the numbers mark the plan rows.
-    private var planSection: some View {
+    private func planSection(slots: [UUID: Int]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             List {
                 ForEach(planTasks, id: \.id) { task in
+                    // The numeral takes the row's slot accent so the number,
+                    // the card tint and the block on the strip read as one
+                    // thing. It still SHOWS `sequenceIndex` — that's the
+                    // number drag-reordering rewrites, and the plan's stated
+                    // order is a different claim from where a task landed on
+                    // the clock.
+                    let slot = slots[task.id]
                     HStack(alignment: .center, spacing: 10) {
                         Text("\(task.sequenceIndex ?? 0).")
                             .font(.custom(NudgeTheme.fontSemiBold, size: 15))
-                            .foregroundColor(task.isComplete ? NudgeTheme.textMuted : NudgeTheme.primary)
+                            .foregroundColor(
+                                slot.map {
+                                    task.isComplete
+                                        ? NudgeTheme.daySlotAccentCompleted($0)
+                                        : NudgeTheme.daySlotAccent($0)
+                                } ?? (task.isComplete ? NudgeTheme.textMuted : NudgeTheme.primary)
+                            )
                             .frame(width: 20, alignment: .trailing)
                         TaskRowView(
                             task: task,
@@ -867,7 +948,8 @@ struct TasksTabView: View {
                             onOpen: { activeSheet = .edit(taskID: task.id) },
                             onToggleComplete: { toggleCompletion(for: task) },
                             onDelete: { deleteTask(task) },
-                            onConvertToEvent: { setEventFlag(task, isEvent: true) }
+                            onConvertToEvent: { setEventFlag(task, isEvent: true) },
+                            slotTint: slotFill(for: task, in: slots)
                         )
                     }
                     .frame(height: planRowHeight)
@@ -1016,14 +1098,21 @@ struct TasksTabView: View {
     }
 
     /// The shared task row wiring, used by every tab that renders task rows.
-    private func taskRow(_ task: NudgeTask) -> some View {
+    ///
+    /// `slotTint` is the row's day-slot color — passed under Today, where the
+    /// tint is what pairs a row with its block on the timeline, and nil in the
+    /// other tabs, which aren't showing a day and would just get a rainbow.
+    /// The COLOR is passed, not the slot map: `daySlots` scans every task, so
+    /// looking it up per row would make Today O(rows × tasks) on each 60s tick.
+    private func taskRow(_ task: NudgeTask, slotTint: Color? = nil) -> some View {
         TaskRowView(
             task: task,
             isLastIncompleteTask: incompleteCount == 1 && !task.isComplete,
             onOpen: { activeSheet = .edit(taskID: task.id) },
             onToggleComplete: { toggleCompletion(for: task) },
             onDelete: { deleteTask(task) },
-            onConvertToEvent: { setEventFlag(task, isEvent: true) }
+            onConvertToEvent: { setEventFlag(task, isEvent: true) },
+            slotTint: slotTint
         )
     }
 
@@ -1171,13 +1260,18 @@ struct TasksTabView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
         } else {
+            // Resolved ONCE for the whole tab — `daySlots` scans every task,
+            // and this body re-evaluates on the 60s clock tick.
+            let slots = daySlots
             VStack(alignment: .leading, spacing: 20) {
                 if hasActivePlan {
-                    planSection
+                    planSection(slots: slots)
                 }
                 if !scheduledTasks.isEmpty {
                     VStack(spacing: 12) {
-                        ForEach(scheduledTasks, id: \.id) { taskRow($0) }
+                        ForEach(scheduledTasks, id: \.id) { task in
+                            taskRow(task, slotTint: slotFill(for: task, in: slots))
+                        }
                     }
                 }
             }
@@ -1951,6 +2045,10 @@ struct TaskRowView: View {
     /// Flips this task into an event (isInformationalEvent = true) when the
     /// AI misclassified it. One-tap correction.
     let onConvertToEvent: () -> Void
+    /// Day-slot tint (`NudgeTheme.daySlotFill`) when this row is showing under
+    /// Today, where it pairs the row with its block on the timeline. Nil
+    /// everywhere else, which leaves the row exactly as it was.
+    var slotTint: Color? = nil
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -2227,9 +2325,15 @@ struct TaskRowView: View {
         ).day
     }
 
-    /// Card fill. Tinted only for the two time-pressure states; every other
-    /// state keeps today's `surface`, so non-special rows are unchanged.
+    /// Card fill. The day-slot tint takes the fill when there is one: under
+    /// Today the fill is a wayfinding channel — it says which block on the
+    /// strip this row is — and that's a question the time-pressure tints
+    /// can't answer. No urgency signal is lost, because `stakesBarColor`
+    /// below still paints the leading bar overdue/coral; the tint was only
+    /// ever its second copy. Everywhere else `slotTint` is nil and the two
+    /// time-pressure states keep the fill exactly as before.
     private var rowBackground: Color {
+        if let slotTint { return slotTint }
         switch rowTreatment {
         case .overdue:     return NudgeTheme.overdue.opacity(0.12)
         case .approaching: return NudgeTheme.coral.opacity(0.12)
@@ -2684,6 +2788,27 @@ struct TaskEditorSheet: View {
                         .datePickerStyle(.compact)
                     }
 
+                    // Duration — how long the thing runs. This is the ONLY
+                    // hand-editable route to an event's length (capture is
+                    // the other writer), and the timeline draws an event one
+                    // hour long without it. Chips cover the common lengths;
+                    // a value between chips (AI-captured 45m, learned 100m)
+                    // shows in the header so it isn't silently invisible.
+                    editorSection(title: durationSectionTitle) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                durationChip(minutes: 30)
+                                durationChip(minutes: 60)
+                                durationChip(minutes: 90)
+                            }
+                            HStack(spacing: 10) {
+                                durationChip(minutes: 120)
+                                durationChip(minutes: 180)
+                                durationChip(minutes: 240)
+                            }
+                        }
+                    }
+
                     editorSection(title: "Importance") {
                         HStack(spacing: 10) {
                             stakesChip(title: "High", value: .high)
@@ -2783,6 +2908,45 @@ struct TaskEditorSheet: View {
         }
     }
 
+    /// "Duration" plus the current value when it isn't one of the chips —
+    /// "Duration · 45 min" — so a captured or learned length is visible
+    /// even though no chip lights up for it.
+    private var durationSectionTitle: String {
+        guard let mins = draft.durationMinutes,
+              ![30, 60, 90, 120, 180, 240].contains(mins) else { return "Duration" }
+        return "Duration · \(formatDuration(mins))"
+    }
+
+    private func formatDuration(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) min" }
+        let h = minutes / 60
+        let m = minutes % 60
+        return m == 0 ? "\(h) h" : "\(h) h \(m) min"
+    }
+
+    /// Duration selector chip. Tapping the selected chip clears the value
+    /// (back to "unknown" — the timeline then uses its fallback), tapping
+    /// another sets it. Either way it counts as a user pick, same rule as
+    /// stakes: only a tap writes back on save.
+    private func durationChip(minutes: Int) -> some View {
+        let isSelected = draft.durationMinutes == minutes
+        return Button(action: {
+            NudgeHaptics.light()
+            draft.durationMinutes = isSelected ? nil : minutes
+            draft.durationUserPicked = true
+        }) {
+            Text(formatDuration(minutes))
+                .font(.custom(NudgeTheme.fontMedium, size: 13))
+                .foregroundColor(isSelected ? .white : NudgeTheme.textPrimary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(isSelected ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+        }
+        .buttonStyle(.plain)
+    }
+
     /// Stakes selector chip. Writes `draft.stakes` and flags the choice as
     /// user-made so the save path can set `stakesIsUserSet` (which makes
     /// `setStakesFromAutomation` a no-op on the row thereafter). Priority is
@@ -2827,7 +2991,8 @@ struct TaskEditorSheet: View {
             title: task.title,
             priority: task.priority,
             dueDate: task.dueDate,
-            specificTime: task.specificTime
+            specificTime: task.specificTime,
+            durationMinutes: task.estimatedMinutes
         )
         // Show the task's current stakes selected, WITHOUT marking it a fresh
         // user choice — only tapping a chip sets stakesUserPicked, so simply
@@ -3071,6 +3236,13 @@ struct TaskDraft {
     var stakesUserPicked = false
     var dueDate: Date? = nil
     var specificTime: Date? = nil
+    /// Length in minutes — `estimatedMinutes` on the task. Same pattern as
+    /// stakes: populated on edit so the current value shows selected, but
+    /// only written back when the user actually tapped a chip
+    /// (`durationUserPicked`), so open-and-save can't overwrite an
+    /// AI-captured length with a stale draft.
+    var durationMinutes: Int? = nil
+    var durationUserPicked = false
 
     var defaultDateForPicker: Date {
         specificTime ?? dueDate ?? Date()
