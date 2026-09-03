@@ -87,6 +87,14 @@ extension NudgeTask {
         guard !isComplete else { return false }
         return sortDeadline < Date()
     }
+
+    /// True when this task is actually OWED at a moment — the deadline half
+    /// of the deadline-vs-intention split (cycle 2026-09-03-01). Read sites
+    /// that mean "does time pressure exist here" should ask this, not
+    /// re-derive it from the fields, so the split stays one rule.
+    var hasDeadline: Bool {
+        dueDate != nil || specificTime != nil
+    }
 }
 
 /// The one task ordering, with **plan-first built in** (Jul 2026 — before
@@ -183,6 +191,18 @@ final class NudgeTask {
     /// ordered plan. Independent of the timeline — a plan is a numbered,
     /// reorderable list, not a placement.
     var sequenceIndex: Int?
+
+    /// The day the user MEANS to do this — never a deadline (cycle
+    /// 2026-09-03-01). "Study Python tomorrow at 7" is an intention, not
+    /// something owed; before this field existed, capture had nowhere to put
+    /// that day except `dueDate`, and the whole app then treated it as due —
+    /// countdowns, overdue red, dueSoon nudges, fake urgency. Day
+    /// granularity, normalized to startOfDay at every write. Unlike a
+    /// placement (`plannedStartDate`), this SURVIVES its day passing — a
+    /// slipped intention is information (it's what makes a floater check-in
+    /// meaningful), where a stale placement is just clutter and gets swept.
+    /// Never set on informational events; an event's time is its time.
+    var intendedDate: Date? = nil
 
     /// How many days ahead of this EXAM EVENT study tasks should start —
     /// the coarse prep-lead band (3, 7, or 14) the capture/import
