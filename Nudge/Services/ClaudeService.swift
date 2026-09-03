@@ -38,6 +38,17 @@ class ClaudeService {
         return ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
     }()
     private let model = "claude-haiku-4-5-20251001"
+    /// Brain-dump capture ONLY (Sep 2026, Roman's call): the one call site
+    /// where judgment quality is the product — reading "study python at 9am
+    /// then work on my app" like a person. Opus 5 thinks before answering
+    /// (adaptive thinking is on by default; no param needed), which is the
+    /// step Haiku was structurally denied by "respond ONLY with JSON".
+    /// Everything else (per-task enrichment, stakes, screenshots) stays on
+    /// Haiku — cost discipline for the published-app future: tier the model
+    /// per call site, not per app. ~5–10¢/dump at solo scale; re-tier before
+    /// launch (Pro gets the big model, free tier Haiku — the DayPlanRefiner
+    /// gating pattern).
+    private let captureModel = "claude-opus-5"
     private let baseURL = "https://api.anthropic.com/v1/messages"
 
     // MARK: - System Prompts
@@ -537,9 +548,15 @@ class ClaudeService {
         }
         messages.append(["role": "user", "content": userMessage])
 
+        // max_tokens covers thinking + the JSON — 1500 was Haiku's ceiling
+        // and adaptive thinking would eat it and truncate the JSON.
+        // `fallbacks: "default"` (server-side, beta): if Opus 5's safety
+        // layer refuses a message, the request reroutes to a fallback model
+        // instead of surfacing an error bubble for a grocery list.
         let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 1500,
+            "model": captureModel,
+            "max_tokens": 8000,
+            "fallbacks": "default",
             "system": fullSystemPrompt,
             "messages": messages
         ]
@@ -1254,20 +1271,31 @@ class ClaudeService {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        // Server-side refusal fallbacks are a beta; the header rides only on
+        // requests whose body opts in (capture), never on the Haiku calls.
+        if body["fallbacks"] != nil {
+            req.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: req)
         try validateResponse(data: data, response: response)
         let resp = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-        guard let text = resp.content.first?.text else {
+        // First TEXT block, not first block: thinking-capable models
+        // (capture runs Opus 5) lead with a thinking block whose text is
+        // empty/absent, and reading content[0] blindly would hand the parser
+        // an empty string.
+        guard let text = resp.content.first(where: { $0.type == nil || $0.type == "text" })?.text,
+              !text.isEmpty else {
             throw ClaudeError.emptyResponse
         }
-        // Drop-trace (cycle 2026-08-05-02): only the first content block is
-        // read. Anything in later blocks is discarded here and nowhere else
-        // will ever see it — say so.
+        // Drop-trace (cycle 2026-08-05-02): only the first TEXT block is
+        // read. Any further text blocks are discarded here and nowhere else
+        // will ever see them — say so. Thinking blocks are not drops.
         #if DEBUG
-        if resp.content.count > 1 {
-            print("[ClaudeService] DROP: response had \(resp.content.count) content blocks; only the first was read (\(resp.content.dropFirst().map(\.text.count).reduce(0, +)) chars discarded)")
+        let textBlocks = resp.content.filter { $0.type == nil || $0.type == "text" }
+        if textBlocks.count > 1 {
+            print("[ClaudeService] DROP: response had \(textBlocks.count) text blocks; only the first was read (\(textBlocks.dropFirst().map { $0.text?.count ?? 0 }.reduce(0, +)) chars discarded)")
         }
         #endif
         return try parseResponse(text)
@@ -1422,8 +1450,12 @@ class ClaudeService {
 struct AnthropicResponse: Codable {
     let content: [ContentBlock]
 
+    // `type`/`text` optional: thinking-capable models (capture runs Opus 5)
+    // return thinking blocks with no `text` field, and a required `text`
+    // made ONE thinking block fail the decode of the whole response.
     struct ContentBlock: Codable {
-        let text: String
+        let type: String?
+        let text: String?
     }
 }
 
