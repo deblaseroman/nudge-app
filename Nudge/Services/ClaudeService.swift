@@ -1247,6 +1247,14 @@ class ClaudeService {
         guard let text = resp.content.first?.text else {
             throw ClaudeError.emptyResponse
         }
+        // Drop-trace (cycle 2026-08-05-02): only the first content block is
+        // read. Anything in later blocks is discarded here and nowhere else
+        // will ever see it — say so.
+        #if DEBUG
+        if resp.content.count > 1 {
+            print("[ClaudeService] DROP: response had \(resp.content.count) content blocks; only the first was read (\(resp.content.dropFirst().map(\.text.count).reduce(0, +)) chars discarded)")
+        }
+        #endif
         return try parseResponse(text)
     }
 
@@ -1299,7 +1307,16 @@ class ClaudeService {
         guard let d = cleaned.data(using: .utf8) else {
             throw ClaudeError.parseError
         }
-        return try JSONDecoder().decode(ClaudeResponse.self, from: d)
+        let decoded = try JSONDecoder().decode(ClaudeResponse.self, from: d)
+        // Drop-trace (cycle 2026-08-05-02): a response with no "new_tasks"
+        // key decodes cleanly and reads as a normal empty capture — which is
+        // also what a dropped array looks like. Name the difference.
+        #if DEBUG
+        if decoded.newTasks == nil {
+            print("[ClaudeService] DROP: response decoded with NO new_tasks key (message: \"\(decoded.message.prefix(80))…\") — treated as an empty capture")
+        }
+        #endif
+        return decoded
     }
 
     private func parsePrepPlanResponse(_ text: String) throws -> PrepPlanResponse {
@@ -1321,6 +1338,15 @@ class ClaudeService {
     private func normalizedJSONPayload(from text: String) -> String {
         let cleaned = stripCodeFences(text)
         if let extracted = extractJSONObject(from: cleaned) {
+            // Drop-trace (cycle 2026-08-05-02): everything outside the first
+            // balanced {…} is discarded. Usually that's fence residue or a
+            // stray preamble; if the model ever emits TWO objects, the second
+            // dies here — this line is the only witness.
+            #if DEBUG
+            if extracted.count != cleaned.count {
+                print("[ClaudeService] DROP: \(cleaned.count - extracted.count) chars outside the first balanced JSON object were discarded")
+            }
+            #endif
             return extracted
         }
         return cleaned

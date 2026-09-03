@@ -425,6 +425,13 @@ struct HomeTabView: View {
 
                 // Persist only genuinely NEW tasks
                 var newlyCreatedTasks: [NudgeTask] = []
+                // Drop-trace (cycle 2026-08-05-02): every item the model
+                // returned that does NOT become a row is recorded here with
+                // its reason, and reconciled against the returned count after
+                // the loop. The Sep 2 event vanished with zero evidence of
+                // whether the model omitted it or the app dropped it; this
+                // makes that distinction one console line.
+                var droppedItems: [(title: String, reason: String)] = []
                 for taskData in response.tasks {
                     let newTitle = taskData.title.lowercased()
                     let newDueDate = parseDateString(taskData.dueDate)
@@ -432,7 +439,9 @@ struct HomeTabView: View {
                     // Only skip if an INCOMPLETE task with the same title exists
                     // for the SAME day. Completed tasks from previous days should
                     // not block creating a fresh task for today.
-                    let alreadyExists = allTasks.contains { existing in
+                    // `first(where:)` instead of `contains` so the suppressing
+                    // row can be NAMED in the drop log — same predicate.
+                    let duplicateOf = allTasks.first { existing in
                         guard !existing.isComplete else { return false }
                         let existingTitle = existing.title.lowercased()
                         let titleMatch = existingTitle == newTitle
@@ -445,7 +454,19 @@ struct HomeTabView: View {
                         }
                         return true
                     }
-                    if alreadyExists { continue }
+                    if let duplicateOf {
+                        // Which clause suppressed it: both dates present means
+                        // the same-day comparison matched; otherwise it was
+                        // the nil-date fallthrough (title match alone).
+                        let clause = (duplicateOf.dueDate != nil && newDueDate != nil)
+                            ? "same-day" : "nil-date fallthrough"
+                        droppedItems.append((taskData.title,
+                            "dedupe vs \"\(duplicateOf.title)\" (\(clause))"))
+                        #if DEBUG
+                        print("[HomeTabView] DROP: \"\(taskData.title)\" suppressed by dedupe — matched existing \"\(duplicateOf.title)\" via \(clause)")
+                        #endif
+                        continue
+                    }
 
                     // Parse dueTime ("3:00 PM") combined with dueDate into specificTime.
                     let specificTime = parseSpecificTime(timeString: taskData.dueTime, on: newDueDate)
@@ -538,6 +559,16 @@ struct HomeTabView: View {
                     newlyCreatedTasks.append(task)
                 }
 
+                // Count reconciliation: returned = inserted + dropped, every
+                // drop named. A mismatch against what the user said is now
+                // readable in one line instead of counting parsed-date prints.
+                #if DEBUG
+                print("[HomeTabView] CAPTURE: returned=\(response.tasks.count) inserted=\(newlyCreatedTasks.count) dropped=\(droppedItems.count)")
+                for item in droppedItems {
+                    print("[HomeTabView]   dropped \"\(item.title)\": \(item.reason)")
+                }
+                #endif
+
                 // Start-day follow-up (item 3, cycle 2026-08-03-02):
                 // decided app-side with the same arithmetic the sweep
                 // uses — the model is never trusted with it — and
@@ -551,7 +582,24 @@ struct HomeTabView: View {
 
                 persistSession()
 
-                try? modelContext.save()
+                // NOT `try?` (cycle 2026-08-05-02): a failed save here
+                // discarded the whole batch AFTER the chat had already shown
+                // it as captured — the worst version of a silent drop. The
+                // user is told the fact (save failed, retry) with no invented
+                // cause; the inserts stay in the context, so the retry path
+                // is the next successful save, not re-entry.
+                do {
+                    try modelContext.save()
+                } catch {
+                    #if DEBUG
+                    print("[HomeTabView] SAVE FAILED after capture: \(error)")
+                    #endif
+                    messages.append(HomeChatMessage(
+                        role: .assistant,
+                        text: "I couldn't save that just now. If it's not in your list, send it again."
+                    ))
+                    persistSession()
+                }
 
                 if !response.tasks.isEmpty || response.taskUpdates?.isEmpty == false {
                     WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
