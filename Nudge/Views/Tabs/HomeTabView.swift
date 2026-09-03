@@ -627,7 +627,7 @@ struct HomeTabView: View {
                 print("[HomeTabView] API error: \(error)")
                 #endif
 
-                let errorText: String
+                var errorText: String
                 if let claudeError = error as? ClaudeError {
                     switch claudeError {
                     case .missingAPIKey:
@@ -642,7 +642,20 @@ struct HomeTabView: View {
                         errorText = "Sorry, something went wrong on my end. Try again in a moment."
                     }
                 } else {
-                    errorText = "Sorry, I couldn't connect right now. Check your internet and try again."
+                    // Deliberately causeless (cycle 2026-08-05-02): this
+                    // branch catches ANY non-ClaudeError — a URLError, but
+                    // just as easily a DecodingError from a malformed model
+                    // response. "Check your internet" asserted a diagnosis
+                    // the app doesn't have (fabricated precision, per
+                    // DESIGN.md), and sent users retrying a network that was
+                    // fine. State the two things actually known: it didn't
+                    // go through, and nothing from it was saved — the throw
+                    // precedes every insert, which is what makes "try again"
+                    // safe to say.
+                    errorText = "That didn't go through — nothing from it was saved. Try sending it again."
+                    #if DEBUG
+                    errorText += " [\(type(of: error))]"
+                    #endif
                 }
 
                 let fallback = HomeChatMessage(role: .assistant, text: errorText)
