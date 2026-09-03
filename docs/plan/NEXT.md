@@ -1,163 +1,165 @@
-# NEXT — Make the planner's state files checkable
+# NEXT — Make silent drops impossible, and capture what the user said
 
-**Status:** APPROVED — single item, four parts
-**Cycle ID:** 2026-08-05-01
-**Source:** transfer failure between planning conversations, diagnosed this
-session
+**Status:** APPROVED — three items
+**Cycle ID:** 2026-08-05-02
+**Source:** Sep 2 brain dump — a stated 6pm event never became a row, and
+nothing anywhere recorded why. Read-only diagnosis in chat this session.
 
-> On `fix/notification-threading-and-memory`. **One commit per part.** Both
+> On `fix/notification-threading-and-memory`. **One commit per item.** Both
 > schemes build after every commit. Do not push, do not merge.
 >
-> **This cycle touches no Swift.** It is documentation and protocol only.
->
-> **If a part is larger than described, ship the smaller honest version and
-> say so.**
+> **If an item is larger than described or needs a decision not written here,
+> ship the smaller honest version and say so.**
 
 ---
 
 ## Why this exists
 
-Two planning conversations in a row wrote or nearly wrote plans for work that
-had already shipped. The goals cycle (`2026-08-04-03`) and the placement
-lifecycle cycle (`2026-08-04-02`) were both complete, committed, and reported,
-and both were carried forward in handover notes as approved-and-unrun.
+A dump entered Sep 2 described a fixed commitment that evening ("event with my
+friends at 6, back home about 9 or 10") followed by a stated plan for the next
+day. Eight ordered tasks were created, all correct. The event does not exist
+anywhere in the app — not Events, not Calendar, not any task tab.
 
-The reports were accurate. The failure is upstream of them, in the two files a
-fresh planning conversation actually reads first.
+The diagnosis enumerated every way an item can vanish between the model's
+response and a row. Six of them, and **five log nothing at all**. The dedupe
+guard is the only per-item drop, and it was cleared for these titles: it needs
+whole-string containment, and "event with friends" doesn't match any of the
+eight. The remaining explanation is that the model never emitted the item —
+which by design leaves no trace.
 
-**`NEXT.md` has no completion state.** `README.md` defines it as a mutable
-pointer the *planner* overwrites at step 1, and step 3 archives it by **copy**,
-not move. So a finished plan sits there looking live until some future planner
-happens to replace it. Claude Code cannot clear it — the role table gives the
-planner sole write access. Every cycle produces this window; these two are not
-special.
+That is the thing to fix, and it is two problems, not one.
 
-**`CONTEXT.md` has drifted, and says so about itself.** It currently states
-six builders where the arbiter has closer to nine, two AI touchpoints where
-there are three (brain-dump capture, calendar import, and the message-box
-hook), and describes break-it-down as paused-pending-removal and the floater as
-having produced no outcome rows. Its own builder table carries the warning
-*"This table drifts. Nothing keeps it in agreement with the code."* That is an
-acknowledged, unowned generator of planner error, and it is the single input to
-every new planning conversation.
+**The app cannot tell the difference between "the model returned nothing" and
+"we threw it away."** Every path reports success. An app whose entire promise
+is *write it however it comes out* dropped a fixed commitment and told the user
+everything worked. This is the same failure shape as the dedupe marker that was
+silently killing event reminders — the symptom was absence, and absence is
+invisible until someone counts.
 
-The fix is not to correct these particular facts. It is to make the file
-derived from a census rather than remembered, to date it against a commit so a
-reader can tell how stale it is, and to attach its maintenance to the events
-that cause drift.
+**The prompt licenses dropping.** A dump containing a plan plus one item that
+isn't part of the plan risks losing the odd one out, absorbed as context rather
+than captured. `ClaudeService.swift:209` already documents this happening
+before — "a previous bug dropped an item that was only asked about; do not
+repeat that." It happened again, in a different shape.
 
-**Concurrent edits — read this before touching anything.** Roman is editing
-`DESIGN.md` and `ROADMAP.md` by hand during this cycle. **Do not edit either
-file, and do not commit uncommitted changes found in them** — the working tree
-already carried unreviewed hand edits to `DESIGN.md` at cycle `2026-08-04-03`
-(see that report's Deviations). `CONTEXT.md` is yours this cycle; those two are
-his. If the tree contains uncommitted changes to `CONTEXT.md`, stop and report
-rather than overwriting.
+Both fixes are keyed on the category, not on this dump. Item 1 makes any drop
+visible whatever causes it; item 2 states a rule about what a dump contains
+that holds for dumps nobody has written yet. Neither names an event, a title,
+or a phrase.
 
 ---
 
-## Part 1 — The census (no doc edits yet)
+## Item 1 — Every drop leaves a trace
 
-Enumerate from source, not from any document. This is ground truth and
-everything below depends on it, so do it first and put the full result in the
-report.
+**The rule: no item the model returned may fail to become a row without saying
+so.** Currently five of six drop points are silent.
 
-- **Every candidate builder** the arbiter runs: symbol name, `NudgeOutcome`
-  kind, what anchors its fire time, whether it is budget-exempt, its Settings
-  toggle and that toggle's default, and whether it is currently reachable at
-  all.
-- **Every gate**, in evaluation order, including any that are disabled, with
-  the flag and current value that disables them.
-- **Every AI call site** in the app: what it reads, what it writes, and whether
-  anything it produces reaches an arbiter decision.
-- **Every deliberately-not-armed state**: name the constant or flag, its
-  current value, and the call-site fact that makes it inert (e.g. "accepts a
-  stakes input, no production caller passes it").
+Add DEBUG logging at each, naming the item and the reason. From the diagnosis,
+in order:
 
-Where the census contradicts what `CONTEXT.md`, `CLAUDE.md`, or `ARCHITECTURE.md`
-currently claim, list the contradiction explicitly. Those are the interesting
-lines in this report — a fresh planner is reasoning from them today.
+1. `ClaudeService.swift:1247` — only the first content block is read; further
+   blocks discarded.
+2. `ClaudeService.swift:1321-1327` / `extractJSONObject` — everything outside
+   the first balanced object discarded.
+3. `ClaudeService.swift:1440` — `newTasks ?? []`: a missing or misspelled
+   `new_tasks` key becomes a normal empty capture.
+4. `HomeTabView.swift:448` — the dedupe `continue`. Log the incoming title, the
+   existing title it matched, and which clause suppressed it (same-day, or the
+   nil-date fallthrough).
+5. `HomeTabView.swift:554` — `try? modelContext.save()`. **This one is not just
+   a log.** A save failure silently discards the whole batch after the UI has
+   already shown it. Catch the error, log it, and surface a failure to the user
+   rather than swallowing it.
 
-## Part 2 — Rewrite `CONTEXT.md` from the census
+Then add the count reconciliation that makes the whole class checkable in one
+line: after the insert loop, DEBUG-print items returned, items inserted, and
+items dropped with reasons, so a mismatch is visible without counting parsed-date
+lines by hand.
 
-Same job as now: orient a planner who cannot read source. Same honest limit:
-enough to reason, not enough to skip asking.
+`#if DEBUG` for the logs. The item 5 save handling is production behavior.
 
-Changes to make:
+**Deliberately not in scope:** changing what the dedupe guard matches on. It is
+a real hazard — events are deduped against tasks, the new item's `isEvent` isn't
+read until ten lines after the guard, and a nil date suppresses on title alone.
+But the right shape for that guard is a product decision, and once it logs, the
+next collision will show its own evidence. Log it now, redesign it when there's
+a case.
 
-- Replace the builder table, the gate list, the AI-touchpoint claim, and the
-  not-armed section with the census results.
-- **Header stamp:** `Verified against <commit sha> at cycle <cycle-id>`. A
-  reader must be able to tell in one line how old the file is.
-- **Mark the derived sections** as generated from a census and regenerated by
-  cycle, distinct from the prose sections that carry judgment and are
-  hand-written.
-- Drop the self-warning about the table drifting **only if** Part 3 makes it
-  false. If Part 3 ships smaller, keep the warning and say why.
+## Item 2 — The prompt states what a dump contains
 
-Preserve the file's existing instruction to ask for a root doc to be relayed
-rather than inferring. That rule is working.
+In `chatSystemPrompt`, alongside the existing CAPTURE-FIRST rule:
 
-## Part 3 — Attach maintenance to the event that causes drift
+> Every distinct commitment or intention in the message becomes an item.
+> Belonging to a stated sequence is a property of an item, not a filter on
+> which items exist. A message that describes a plan may also contain things
+> outside that plan — capture those too.
 
-A file regenerated once is accurate once. Add a standing rule to `CLAUDE.md`,
-in the work order or alongside the hand-synced-lists invariant, whichever fits
-its existing structure:
+Phrased as a principle, not a case list. It must not name events, times of day,
+or any specific phrase — a dump mixing an errand with a deadline, or an
+appointment with a plan, has the same shape.
 
-> Any cycle that adds, removes, re-anchors, or disables a candidate builder, a
-> gate, or an AI call site updates `docs/plan/CONTEXT.md`'s census sections and
-> its verification stamp **in the same commit**.
+Also, from the previous session's trace: `"this evening"` has no resolution
+rule while `"tonight"` does. Fix the **category** — the relative-day block
+should state the principle for resolving any relative day reference to a date,
+not enumerate the phrases it happens to cover. Do not add "this evening" as a
+sixth bullet.
 
-Keyed on the change that causes the drift, so it applies to builders nobody has
-proposed yet. Say in the report where you put it and why there.
+## Item 3 — The error message stops asserting a cause
 
-## Part 4 — Give `NEXT.md` a completion state
+`HomeTabView.swift:596-598` shows *"Sorry, I couldn't connect right now. Check
+your internet and try again"* for any error that isn't a `ClaudeError` — which
+includes `DecodingError` from a malformed response. The app tells the user the
+network failed when it does not know that.
 
-Add to `README.md` — step 6 of the cycle, and the `NEXT.md` row of the role
-table — and to `CONTEXT.md`'s protocol pointer:
+That is fabricated precision in error copy, and `DESIGN.md` guards against it
+directly: a confident claim the app can't justify is worse than none. It also
+has a behavioral cost — a user told to check their internet retries, and a
+retry after a partially-successful capture is how duplicates get made.
 
-> **A plan is pending only if no file in `reports/` shares its cycle ID.**
-> `NEXT.md` states its cycle ID in its header; every report filename begins
-> with one. Check the ID before reading a plan as live work.
-
-This is deliberately a *reader-side* rule, not a new writer. It changes nobody's
-write permissions, adds no file, and needs no discipline at the moment of
-completion — the report's existence is already the signal, it just wasn't being
-read as one.
-
-If you see a cleaner mechanism that doesn't give a second party write access to
-`NEXT.md`, propose it in the report rather than building it.
+Rewrite it to state only what is known and what to do. Facts, no diagnosis.
+Follow `DESIGN.md`'s voice — the calibrated refusals are the model ("Nothing to
+plan — your list is clear"). Include the actual error type in DEBUG.
 
 ## Constraints
 
-- **No Swift.** No file under `Nudge/`, `NudgeWidget/`, or the Xcode project is
-  edited this cycle. If the census surfaces a real bug, report it — do not fix
-  it.
-- **`DESIGN.md` and `ROADMAP.md` are Roman's this cycle.** Do not edit. Do not
-  commit changes found in them.
-- `CLAUDE.md` gains one rule (Part 3) and nothing else.
-- `ROADMAP.md` §1 untouched.
+- No change to the tab predicates. The Today tab reading `sequenceIndex` and
+  no date is a real problem and is **not this cycle** — see below.
+- No change to what the dedupe guard matches on (item 1 logs it only).
+- `DESIGN.md` and `ROADMAP.md` are Roman's. Do not edit, do not commit changes
+  found in them.
+- Per `CLAUDE.md`: this cycle touches an AI call site's prompt (item 2), so
+  `docs/plan/CONTEXT.md`'s census sections and stamp update in the same commit
+  if the census facts change. Item 2 changes prompt content, not the site
+  inventory — say in the report which applies.
 
 ## Evidence it worked
 
-- **Inert by construction for the app.** No source changes, so no arbiter
-  behavior can differ and work-order item 5 does not apply. Say this in the
-  report rather than silently skipping it. Both schemes still build — the floor.
-- **The real test:** the census in the report and the rewritten `CONTEXT.md`
-  agree on the builder count, the gate list, and the AI touchpoints, and each
-  can be confirmed by a named symbol in source. A claim in `CONTEXT.md` that
-  the census can't support is a failure of this cycle, not a rounding error.
-- The contradictions list is non-empty. If it is empty, the census was read
-  from the docs instead of the code — that is the failure mode this cycle
-  exists to fix, and it would be worth saying so.
+- Re-run a dump on device that mixes a fixed commitment with a stated ordered
+  plan. The console shows returned / inserted / dropped, and the numbers
+  reconcile. If an item is dropped, the reason is named.
+- The specific case: a dump of this shape produces an item for the commitment
+  that is not part of the sequence. If it still doesn't, the log now says
+  whether the model omitted it or the app dropped it — **that distinction being
+  visible is the pass condition for item 1**, independent of whether item 2's
+  prompt change works.
+- Item 3: force a decode failure (DEBUG-only path is fine) and confirm the user
+  sees copy that doesn't mention the network.
+- No arbiter behavior changes here, so work-order item 5 doesn't apply. Say so
+  rather than skipping it silently.
 
 ## Out of scope
 
-- Fixing anything the census reveals about the arbiter. Report only.
-- `NudgeGoal.frequency` being write-only, the stubbed `MessageBoxChatShell`,
-  the `#Preview` container's four missing models, and the placement/timeline
-  duration disagreement — all known, all reported, all left alone.
-- Commit `7f57646` (found-on-branch commitment session titles). Not this
-  cycle's question.
-- The device checks outstanding from `2026-08-04-02` and `2026-08-04-03`.
-- Merging or pushing.
+- **The tab partition.** Four tabs on four different axes, Unscheduled
+  admitting by failing everything else, tasks appearing in two tabs, completed
+  unplaced tasks appearing in none, and "Today" meaning `sequenceIndex != nil`
+  rather than a date. Diagnosed this session, deliberately deferred — it needs
+  a product decision about what a plan's day is, and that decision is worth
+  making once rather than patching.
+- The countdown showing hours-to-deadline on tasks that have no real deadline.
+  Same reason: it needs a deadline-vs-intended-day distinction at capture,
+  which is its own cycle.
+- Arming stakes. Still blocked on floater baseline data and the passport flip
+  test, per `CLAUDE.md` items 1–2.
+- The slot-tint change committed outside the bus (no cycle ID, no report).
+- The unused HealthKit entitlement and the calendar full-access usage-string
+  crash — TestFlight blockers, separate cycle.
