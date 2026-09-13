@@ -291,9 +291,78 @@ final class CalendarService {
         return CalendarImportResult(importedCount: importedCount, skippedDuplicates: skippedDuplicates, errors: [])
     }
 
-    /// Fetch and parse a Canvas iCal URL, creating NudgeTasks with
-    /// source="calendar" and category="exam" (exam-shaped titles) or
-    /// "school" (everything else).
+    /// Shared fetch + validation for any iCal URL — used by BOTH the real
+    /// import and the pre-import "Check Link", so a passed check can never
+    /// disagree with what the import would then do. Fetches and parses,
+    /// writes NOTHING.
+    ///
+    /// `webcal://` is how Google/Outlook/Canvas often hand out iCal links —
+    /// plain https under a subscribe-me scheme, so it rewrites rather than
+    /// rejects. The envelope guard exists because a pasted web-page URL
+    /// (the Google Calendar page, an Outlook portal) fetches fine and
+    /// parses to zero events — indistinguishable from an empty feed unless
+    /// the iCal envelope itself is checked.
+    private enum ICalFetchOutcome {
+        case success([ParsedICalEvent])
+        case failure(String)
+    }
+
+    private func fetchICalEvents(urlString: String) async -> ICalFetchOutcome {
+        var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("webcal://") {
+            trimmed = "https://" + trimmed.dropFirst("webcal://".count)
+        }
+        guard let url = URL(string: trimmed),
+              url.scheme == "https" || url.scheme == "http" else {
+            return .failure("That's not a usable link — paste the full iCal address.")
+        }
+
+        let icsString: String
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                return .failure("The calendar server returned an error — check that the link is still published.")
+            }
+            guard let text = String(data: data, encoding: .utf8) else {
+                return .failure("Could not read that link's contents.")
+            }
+            icsString = text
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+
+        guard icsString.contains("BEGIN:VCALENDAR") else {
+            return .failure("That link isn't an iCal feed — look for the address ending in .ics (Canvas: Calendar Feed · Google: Secret address in iCal format · Outlook: Publish calendar).")
+        }
+
+        return .success(parseICalEvents(from: icsString))
+    }
+
+    /// Pre-import validation (Sep 2026, Roman): fetch and parse the feed,
+    /// import NOTHING, and report what was found — so the user can verify
+    /// a link before letting it touch their data.
+    func checkICalFeed(urlString: String) async -> (ok: Bool, message: String) {
+        switch await fetchICalEvents(urlString: urlString) {
+        case .failure(let message):
+            return (false, message)
+        case .success(let events):
+            guard !events.isEmpty else {
+                return (true, "That's a valid iCal feed, but it holds no events yet.")
+            }
+            let now = Date()
+            let cutoff = Calendar.current.date(byAdding: .day, value: 30, to: now) ?? now
+            let upcoming = events.filter { event in
+                guard let start = event.startDate else { return false }
+                return start >= now && start <= cutoff
+            }.count
+            return (true, "Valid iCal feed — \(events.count) event\(events.count == 1 ? "" : "s") found, \(upcoming) in the next 30 days. Nothing imported yet.")
+        }
+    }
+
+    /// Fetch and parse an iCal feed URL (Canvas, Google, Outlook — any
+    /// .ics), creating NudgeTasks with source="calendar" and category="exam"
+    /// (exam-shaped titles) or "school" (everything else).
     func importCanvasICal(urlString: String, modelContext: ModelContext) async -> CalendarImportResult {
         isImporting = true
         defer {
@@ -301,53 +370,14 @@ final class CalendarService {
             lastImportDate = Date()
         }
 
-        // Validate URL. `webcal://` is how Google/Outlook/Canvas often hand
-        // out iCal links — it's plain https under a subscribe-me scheme, so
-        // rewrite rather than reject (Sep 2026, generalized beyond Canvas).
-        var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.lowercased().hasPrefix("webcal://") {
-            trimmed = "https://" + trimmed.dropFirst("webcal://".count)
+        let parsedEvents: [ParsedICalEvent]
+        switch await fetchICalEvents(urlString: urlString) {
+        case .failure(let message):
+            lastImportError = message
+            return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [message])
+        case .success(let events):
+            parsedEvents = events
         }
-        guard let url = URL(string: trimmed),
-              url.scheme == "https" || url.scheme == "http" else {
-            lastImportError = "Invalid URL"
-            return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: ["Invalid iCal URL"])
-        }
-
-        // Fetch .ics data
-        let icsString: String
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                lastImportError = "Failed to fetch calendar"
-                return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: ["Server returned an error"])
-            }
-            guard let text = String(data: data, encoding: .utf8) else {
-                lastImportError = "Could not decode response"
-                return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: ["Could not decode response"])
-            }
-            icsString = text
-        } catch {
-            lastImportError = error.localizedDescription
-            return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [error.localizedDescription])
-        }
-
-        // Wrong-format guard (Sep 2026): a pasted web-page URL (the Google
-        // Calendar page, an Outlook portal) fetches fine and parses to zero
-        // events — indistinguishable from an empty feed unless we check for
-        // the iCal envelope itself. Say what's wrong instead of importing 0.
-        guard icsString.contains("BEGIN:VCALENDAR") else {
-            lastImportError = "Not an iCal feed"
-            return CalendarImportResult(
-                importedCount: 0,
-                skippedDuplicates: 0,
-                errors: ["That link isn't an iCal feed — look for the address ending in .ics (Canvas: Calendar Feed · Google: Secret address in iCal format · Outlook: Publish calendar)."]
-            )
-        }
-
-        // Parse VEVENT blocks
-        let parsedEvents = parseICalEvents(from: icsString)
 
         // Filter to next 30 days and map to tasks
         let now = Date()

@@ -19,6 +19,7 @@ struct CalendarTabView: View {
 
     @State private var selectedSource = ""
     @State private var canvasURL = ""
+    @State private var isCheckingLink = false
     @State private var availableAppleCalendars: [AppleCalendarOption] = []
     @State private var selectedAppleCalendarID: String?
     @State private var statusMessage: String?
@@ -302,14 +303,35 @@ struct CalendarTabView: View {
                         .stroke(NudgeTheme.border, lineWidth: 1)
                 )
 
-            Button(action: importCanvasCalendar) {
-                actionLabel(
-                    title: CalendarService.shared.isImporting ? "Importing..." : "Save Feed and Import",
-                    systemImage: "link.badge.plus"
-                )
+            // Check before you run (Roman, Sep 2026): fetches and parses
+            // the feed through the SAME validation the import uses, writes
+            // nothing, and reports what it found — so a bad link is caught
+            // before it touches the store.
+            HStack(spacing: 10) {
+                Button(action: checkCalendarLink) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isCheckingLink ? "hourglass" : "checkmark.shield")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(isCheckingLink ? "Checking..." : "Check Link")
+                            .font(.custom(NudgeTheme.fontMedium, size: 14))
+                    }
+                    .foregroundColor(NudgeTheme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(NudgeTheme.surfaceAlt)
+                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                }
+                .disabled(isCheckingLink || CalendarService.shared.isImporting)
+
+                Button(action: importCanvasCalendar) {
+                    actionLabel(
+                        title: CalendarService.shared.isImporting ? "Importing..." : "Save Feed and Import",
+                        systemImage: "link.badge.plus"
+                    )
+                }
+                .disabled(CalendarService.shared.isImporting || isCheckingLink)
+                .opacity(CalendarService.shared.isImporting ? 0.7 : 1)
             }
-            .disabled(CalendarService.shared.isImporting)
-            .opacity(CalendarService.shared.isImporting ? 0.7 : 1)
         }
     }
 
@@ -602,6 +624,24 @@ struct CalendarTabView: View {
             statusMessage = result.errors.isEmpty
                 ? "\(result.summary) Connected to \(profile.connectedAppleCalendarTitle ?? "Apple Calendar")."
                 : result.errors.joined(separator: "\n")
+        }
+    }
+
+    /// Dry-run the pasted link: same fetch + validation as the import,
+    /// zero writes, result lands in the shared status line.
+    private func checkCalendarLink() {
+        let trimmedURL = canvasURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else {
+            NudgeHaptics.error()
+            statusMessage = "Paste a link first, then check it."
+            return
+        }
+        isCheckingLink = true
+        Task {
+            let result = await CalendarService.shared.checkICalFeed(urlString: trimmedURL)
+            isCheckingLink = false
+            statusMessage = result.message
+            if result.ok { NudgeHaptics.light() } else { NudgeHaptics.error() }
         }
     }
 
