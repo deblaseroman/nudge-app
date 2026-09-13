@@ -81,17 +81,40 @@ enum DayPlanEngine {
         modelContext: ModelContext,
         clearAutoFirst: Bool = false
     ) -> Outcome {
+        plan(day: Calendar.current.startOfDay(for: Date()),
+             profile: profile, modelContext: modelContext,
+             clearAutoFirst: clearAutoFirst)
+    }
+
+    /// One planning pass over ANY day (cycle 2026-09-13-03 — Roman's
+    /// tomorrow-planning ruling). Same engine, day-parameterized; the
+    /// today-isms are exactly three: scanStart clamps to `now` only when
+    /// the day IS today, placements on a FUTURE day are marked
+    /// `plannedIsAuto = false` (the agreed staleness rule: that day's
+    /// morning auto-run treats them like manual placements — respected,
+    /// never released — and refills the remaining gaps with whatever
+    /// arrived since), and displacement never evicts on a future day
+    /// (nothing there is auto). Zero AI, zero tokens, any day.
+    @discardableResult
+    static func plan(
+        day rawDay: Date,
+        profile: UserProfile,
+        modelContext: ModelContext,
+        clearAutoFirst: Bool = false
+    ) -> Outcome {
         let cal = Calendar.current
+        let day = cal.startOfDay(for: rawDay)
+        let isToday = cal.isDateInToday(day)
         let tasks = (try? modelContext.fetch(FetchDescriptor<NudgeTask>())) ?? []
 
         // Day window: one shared derivation (`DayWindow`) — wake-anchored,
-        // so a past-midnight bedtime extends today instead of collapsing
-        // the window into yesterday.
+        // so a past-midnight bedtime extends the day instead of collapsing
+        // the window into the previous one.
         let wake = profile.wakeTime ?? profile.morningCheckInTime
         #if DEBUG
-        print("🧭 [PlanMyDay] invoked \(traceTime(Date()))\(clearAutoFirst ? " (replan)" : "")")
+        print("🧭 [PlanMyDay] invoked \(traceTime(Date())) for \(day.formatted(date: .abbreviated, time: .omitted))\(clearAutoFirst ? " (replan)" : "")")
         #endif
-        guard let window = DayWindow.resolve(on: Date(), wake: wake, bedtime: profile.bedtime) else {
+        guard let window = DayWindow.resolve(on: day, wake: wake, bedtime: profile.bedtime) else {
             #if DEBUG
             print("   ❌ WINDOW UNRESOLVABLE — sleep window shorter than its quiet buffers (misconfigured profile). Nothing placed.")
             #endif
@@ -119,7 +142,7 @@ enum DayPlanEngine {
             var released = 0
             for task in tasks {
                 guard task.plannedIsAuto, let p = task.plannedStartDate,
-                      cal.isDateInToday(p) else { continue }
+                      cal.isDate(p, inSameDayAs: day) else { continue }
                 task.plannedStartDate = nil
                 task.plannedDurationMinutes = nil
                 task.plannedIsAuto = false
@@ -144,7 +167,7 @@ enum DayPlanEngine {
         var autoPlacedIntervals: [UUID: (start: Date, end: Date)] = [:]
 
         for task in tasks where task.isInformationalEvent == false {
-            guard let p = task.plannedStartDate, cal.isDateInToday(p) else { continue }
+            guard let p = task.plannedStartDate, cal.isDate(p, inSameDayAs: day) else { continue }
             let mins = task.plannedDurationMinutes ?? planningMinutes(for: task)
             let interval = (p, p.addingTimeInterval(Double(mins) * 60))
             busy.append(interval)
@@ -158,7 +181,7 @@ enum DayPlanEngine {
         // event free rather than scheduling work right up against it.
         let preEventBuffer: TimeInterval = 60 * 60
         for event in tasks where event.isInformationalEvent {
-            guard let start = event.specificTime, cal.isDateInToday(start) else { continue }
+            guard let start = event.specificTime, cal.isDate(start, inSameDayAs: day) else { continue }
             busy.append((start.addingTimeInterval(-preEventBuffer), start))
         }
 
@@ -183,33 +206,49 @@ enum DayPlanEngine {
             guard !task.isComplete, !task.isInformationalEvent,
                   task.plannedStartDate == nil else { return false }
             if task.source == "prep" || task.source == "commitment" {
-                guard let due = task.dueDate, cal.isDateInToday(due) else { return false }
+                guard let due = task.dueDate, cal.isDate(due, inSameDayAs: day) else { return false }
             }
             return true
         }
-        // Day-integrity glue (cycle 2026-09-13-01): a task intended for a
-        // FUTURE day is off-limits to today's plan — plan tasks included
-        // (a stated day outranks a stated order). "Pick up friend at the
-        // airport in 5 days" must not be seated into today's gaps.
+        // Day-integrity glue (cycles 2026-09-13-01/-03), generalized to any
+        // planning day: a task belongs to ITS day. "Belongs elsewhere" =
+        // it carries a still-ahead intent day that isn't the day being
+        // planned — those are untouchable here (their own day's run picks
+        // them up). A SLIPPED intent (day already past) belongs anywhere
+        // again; dateless and deadline-only tasks are eligible on any day
+        // (working ahead of a deadline is the point of planning).
+        let today = cal.startOfDay(for: Date())
+        func belongsElsewhere(_ task: NudgeTask) -> Bool {
+            guard let d = task.scheduledDay else { return false }
+            return d > today && !cal.isDate(d, inSameDayAs: day)
+        }
+        // Plan tasks: only the ones whose plan-day IS this day — a stated
+        // day outranks a stated order, and a dateless plan is today's plan
+        // (never a future day's).
         let planCandidates = openUnplaced
-            .filter { $0.sequenceIndex != nil && !$0.intentIsFuture() }
+            .filter { task in
+                guard task.sequenceIndex != nil else { return false }
+                if let d = task.scheduledDay, d > today {
+                    return cal.isDate(d, inSameDayAs: day)
+                }
+                return isToday
+            }
             .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
-        // Tasks the user said they'd do TODAY (intendedDate, cycle
-        // 2026-09-03-01) outrank score — the user already decided the day;
-        // the planner's job is placing it, not re-deciding it. After plan
-        // tasks (a stated order is the stronger claim), before score-ranked
-        // fill. Oldest first within the group — no better signal exists,
-        // and score would re-litigate the decision this group exists to
-        // honor.
+        // Tasks the user said they'd do on THIS day outrank score — the
+        // user already decided the day; the planner's job is placing it,
+        // not re-deciding it. After plan tasks (a stated order is the
+        // stronger claim), before score-ranked fill. Oldest first within
+        // the group — score would re-litigate the decision this group
+        // exists to honor.
         let intentCandidates = openUnplaced
             .filter { task in
                 task.sequenceIndex == nil
-                    && (task.intendedDate.map { cal.isDateInToday($0) } ?? false)
+                    && (task.intendedDate.map { cal.isDate($0, inSameDayAs: day) } ?? false)
             }
             .sorted { $0.createdAt < $1.createdAt }
         let intentIDs = Set(intentCandidates.map(\.id))
         let scoredCandidates = openUnplaced
-            .filter { $0.sequenceIndex == nil && !intentIDs.contains($0.id) && !$0.intentIsFuture() }
+            .filter { $0.sequenceIndex == nil && !intentIDs.contains($0.id) && !belongsElsewhere($0) }
             .sorted { planScore(for: $0, modelContext: modelContext) > planScore(for: $1, modelContext: modelContext) }
         let candidates = planCandidates + intentCandidates + scoredCandidates
 
@@ -247,21 +286,23 @@ enum DayPlanEngine {
         // (or none at all — businessHours on a weekend); the task is left
         // UNPLACED rather than placed at a time that makes it undoable.
         func bandBounds(for band: TaskTimeWindow) -> (from: Date, to: Date)? {
-            func todayAt(_ hour: Int) -> Date? {
-                cal.date(bySettingHour: hour, minute: 0, second: 0, of: Date())
+            // Anchored to the PLANNING day, not `now` — a Friday run must
+            // use Friday's daytime hours and Friday's weekend-ness.
+            func dayAt(_ hour: Int) -> Date? {
+                cal.date(bySettingHour: hour, minute: 0, second: 0, of: day)
             }
             switch band {
             case .anytime:
                 return (scanStart, dayEnd)
             case .daytime:
-                guard let s = todayAt(NudgeConfig.daytimeStartHour),
-                      let e = todayAt(NudgeConfig.daytimeEndHour) else { return (scanStart, dayEnd) }
+                guard let s = dayAt(NudgeConfig.daytimeStartHour),
+                      let e = dayAt(NudgeConfig.daytimeEndHour) else { return (scanStart, dayEnd) }
                 let from = max(scanStart, s), to = min(dayEnd, e)
                 return from < to ? (from, to) : nil
             case .businessHours:
-                guard !cal.isDateInWeekend(Date()) else { return nil }
-                guard let s = todayAt(NudgeConfig.businessHoursStartHour),
-                      let e = todayAt(NudgeConfig.businessHoursEndHour) else { return (scanStart, dayEnd) }
+                guard !cal.isDateInWeekend(day) else { return nil }
+                guard let s = dayAt(NudgeConfig.businessHoursStartHour),
+                      let e = dayAt(NudgeConfig.businessHoursEndHour) else { return (scanStart, dayEnd) }
                 let from = max(scanStart, s), to = min(dayEnd, e)
                 return from < to ? (from, to) : nil
             }
@@ -441,13 +482,18 @@ enum DayPlanEngine {
             #endif
             task.plannedStartDate = start
             task.plannedDurationMinutes = planningMinutes(for: task)
-            task.plannedIsAuto = true
+            // The staleness rule (cycle 2026-09-13-03): FUTURE-day
+            // placements are marked manual, so that day's morning auto-run
+            // respects them (never releases, fills remaining gaps around
+            // them). Today's placements stay auto — Clear plan and replan
+            // keep their existing meaning.
+            task.plannedIsAuto = isToday
             if isPrep { prepPlacedCount += 1 }
             placedTitles.append(task.title)
             // Occupy this slot + 15 min spacing for the next placement.
             let interval = (start, start.addingTimeInterval(duration + spacing))
             busy.append(interval)
-            autoPlacedIntervals[task.id] = interval
+            if isToday { autoPlacedIntervals[task.id] = interval }
             placedCount += 1
         }
 

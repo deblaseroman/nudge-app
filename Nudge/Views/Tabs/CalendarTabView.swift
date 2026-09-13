@@ -26,6 +26,9 @@ struct CalendarTabView: View {
     @State private var displayedMonth: Date = Calendar.current.startOfDay(for: Date())
     @State private var selectedDay: Date = Calendar.current.startOfDay(for: Date())
     @State private var editingTarget: CalendarEditTarget?
+    /// Feedback line under the day header after a Plan-this-day run;
+    /// cleared when the selection moves.
+    @State private var planDayNote: String?
 
     private struct CalendarEditTarget: Identifiable {
         let id: UUID
@@ -308,9 +311,37 @@ struct CalendarTabView: View {
 
             // Selected day's items.
             VStack(alignment: .leading, spacing: 10) {
-                Text(selectedDay.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-                    .font(.custom(NudgeTheme.fontSemiBold, size: 14))
-                    .foregroundColor(NudgeTheme.textMuted)
+                HStack {
+                    Text(selectedDay.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                        .foregroundColor(NudgeTheme.textMuted)
+                    Spacer()
+                    // Plan-ahead (cycle 2026-09-13-03): future days only —
+                    // today's planning lives on the Tasks tab.
+                    if selectedDay > cal.startOfDay(for: Date()) {
+                        Button {
+                            planSelectedDay()
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "wand.and.stars")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Plan this day")
+                                    .font(.custom(NudgeTheme.fontMedium, size: 12))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(NudgeTheme.primary)
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if let planDayNote {
+                    Text(planDayNote)
+                        .font(.custom(NudgeTheme.fontBody, size: 12))
+                        .foregroundColor(NudgeTheme.textMuted)
+                }
                 if selectedItems.isEmpty {
                     Text("Nothing on this day.")
                         .font(.custom(NudgeTheme.fontBody, size: 13))
@@ -345,6 +376,7 @@ struct CalendarTabView: View {
         return Button {
             NudgeHaptics.light()
             selectedDay = day
+            planDayNote = nil
         } label: {
             VStack(spacing: 4) {
                 Text("\(cal.component(.day, from: day))")
@@ -369,6 +401,33 @@ struct CalendarTabView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Runs the deterministic engine on the selected future day and reports
+    /// the outcome inline. Zero AI; placements are marked manual so that
+    /// day's morning auto-run respects them and refills around them.
+    private func planSelectedDay() {
+        NudgeHaptics.medium()
+        let outcome = DayPlanEngine.plan(
+            day: selectedDay,
+            profile: profile,
+            modelContext: modelContext
+        )
+        NudgeArbiter.shared.reevaluate(
+            reason: .taskCreatedOrEdited,
+            profile: profile,
+            modelContext: modelContext
+        )
+        switch outcome {
+        case .placed(let count, _, _, _):
+            planDayNote = "Planned \(count) task\(count == 1 ? "" : "s") for this day."
+        case .noCandidates:
+            planDayNote = "Nothing available to place on this day."
+        case .noRoom:
+            planDayNote = "No room left on this day."
+        case .windowCollapsed:
+            planDayNote = "Couldn't compute this day's window — check wake and bedtime in Settings."
+        }
     }
 
     private func calendarItemRow(_ item: CalendarDayItem) -> some View {

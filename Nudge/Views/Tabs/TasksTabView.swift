@@ -1347,10 +1347,33 @@ struct TasksTabView: View {
         let plan = planTasks(on: day)
         let dayTasks = dayTasks(on: day)
         let events = dayEvents(on: day)
-        if plan.isEmpty && dayTasks.isEmpty && events.isEmpty {
-            tabEmptyLine("Nothing scheduled yet.")
-        } else {
-            VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 20) {
+            // Plan-ahead (cycle 2026-09-13-03): same free deterministic
+            // engine, pointed at this day. Its placements are marked
+            // manual, so tomorrow's morning auto-run respects them and
+            // fills the remaining gaps with whatever arrives overnight.
+            HStack {
+                Spacer()
+                Button {
+                    planFutureDay(day)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Plan tomorrow")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(NudgeTheme.primary)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            if plan.isEmpty && dayTasks.isEmpty && events.isEmpty {
+                tabEmptyLine("Nothing scheduled yet.")
+            } else {
                 if !plan.isEmpty { staticPlanRows(plan) }
                 if !events.isEmpty { lensEventRows(events) }
                 if !dayTasks.isEmpty {
@@ -1360,6 +1383,12 @@ struct TasksTabView: View {
                 }
             }
         }
+    }
+
+    private func planFutureDay(_ day: Date) {
+        NudgeHaptics.medium()
+        DayPlanEngine.plan(day: day, profile: profile, modelContext: modelContext)
+        refreshNotifications()
     }
 
     /// Days +2 through +7, grouped with the Events tab's day-header idiom.
