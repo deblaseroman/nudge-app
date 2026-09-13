@@ -576,9 +576,13 @@ struct TasksTabView: View {
                 // Plan my day left this row for the button stack below the
                 // timeline (cycle 2026-08-03-07); the label and the
                 // conditional Clear plan stay.
-                HStack(alignment: .center) {
+                HStack(alignment: .center, spacing: 10) {
                     sectionLabel("Today")
                     Spacer()
+                    // Plan my day lives beside the label (Roman, Sep 2026)
+                    // — it acts on the timeline directly below, and moving
+                    // it up gives Start Session the full row.
+                    planMyDayButton
                     if hasAutoPlacements {
                         Button {
                             clearPlan()
@@ -612,20 +616,13 @@ struct TasksTabView: View {
                     onCompleteTask: { toggleCompletion(for: $0) }
                 )
                 // Control order: box (chat circle on its corner) →
-                // timeline → Plan my day + Start Session side by side
-                // (design feedback after cycle 2026-08-03-08: the stacked
-                // full-height pair pushed the task lists below the fold —
-                // one 44pt row keeps them visible). The active-session
-                // banner keeps its own full-width row; it carries live
-                // content the half-width form can't hold.
-                if coordinator.isSessionActive {
-                    startSessionButton
-                } else {
-                    HStack(spacing: 10) {
-                        planMyDayButton
-                        startSessionButton
-                    }
-                }
+                // Today row (label + Plan my day + Clear plan) → timeline →
+                // Start Session full-width and thin (Roman, Sep 2026 —
+                // Plan my day moved up beside the label; the primary action
+                // gets the whole row at 38pt, so the lists stay above the
+                // fold). The active-session banner keeps its taller
+                // full-width form; it carries live content.
+                startSessionButton
                 listTabStrip
                     .padding(.top, 8)
                 selectedTabContent
@@ -1552,20 +1549,23 @@ struct TasksTabView: View {
     /// Session (same treatment on purpose — the pair's visual distinction
     /// is a separate upcoming decision; the compact row is about the task
     /// lists staying above the fold, not about telling the two apart).
+    /// Compact capsule form, sized for the Today label row beside Clear
+    /// plan (Roman, Sep 2026 — moved up from the post-timeline row so
+    /// Start Session gets that row to itself).
     private var planMyDayButton: some View {
         Button(action: planMyDay) {
             HStack(spacing: 6) {
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 12, weight: .semibold))
 
                 Text("Plan my day")
-                    .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 13))
             }
             .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 44)
+            .padding(.horizontal, 14)
+            .frame(height: 34)
             .background(NudgeTheme.primary)
-            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+            .clipShape(Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -1635,8 +1635,9 @@ struct TasksTabView: View {
                     Text("This will end your current session and stop all timers.")
                 }
             } else {
-                // Compact 44pt form, sized for the side-by-side row next
-                // to Plan my day (design feedback after 2026-08-03-08).
+                // Full-width, thinner form (Roman, Sep 2026): with Plan my
+                // day moved up to the Today row, the primary action owns
+                // this row alone — longer and 38pt tall.
                 Button(action: startSession) {
                     HStack(spacing: 6) {
                         Image(systemName: "bolt.fill")
@@ -1647,7 +1648,7 @@ struct TasksTabView: View {
                     }
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 44)
+                    .frame(height: 38)
                     .background(NudgeTheme.primary)
                     .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
                 }
