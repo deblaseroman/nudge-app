@@ -301,8 +301,13 @@ final class CalendarService {
             lastImportDate = Date()
         }
 
-        // Validate URL
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Validate URL. `webcal://` is how Google/Outlook/Canvas often hand
+        // out iCal links — it's plain https under a subscribe-me scheme, so
+        // rewrite rather than reject (Sep 2026, generalized beyond Canvas).
+        var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("webcal://") {
+            trimmed = "https://" + trimmed.dropFirst("webcal://".count)
+        }
         guard let url = URL(string: trimmed),
               url.scheme == "https" || url.scheme == "http" else {
             lastImportError = "Invalid URL"
@@ -326,6 +331,19 @@ final class CalendarService {
         } catch {
             lastImportError = error.localizedDescription
             return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [error.localizedDescription])
+        }
+
+        // Wrong-format guard (Sep 2026): a pasted web-page URL (the Google
+        // Calendar page, an Outlook portal) fetches fine and parses to zero
+        // events — indistinguishable from an empty feed unless we check for
+        // the iCal envelope itself. Say what's wrong instead of importing 0.
+        guard icsString.contains("BEGIN:VCALENDAR") else {
+            lastImportError = "Not an iCal feed"
+            return CalendarImportResult(
+                importedCount: 0,
+                skippedDuplicates: 0,
+                errors: ["That link isn't an iCal feed — look for the address ending in .ics (Canvas: Calendar Feed · Google: Secret address in iCal format · Outlook: Publish calendar)."]
+            )
         }
 
         // Parse VEVENT blocks

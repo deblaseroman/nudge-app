@@ -30,7 +30,16 @@ struct CalendarTabView: View {
     @State private var screenshotCategory: String = "work"
     private let screenshotCategoryOptions = ["work", "school", "personal", "health"]
 
-    private let sourceOptions = ["Apple Calendar", "Canvas iCal", "Google Calendar", "I’ll do this later"]
+    /// "Calendar Link (iCal)" covers every service that publishes an .ics
+    /// feed — Canvas, Google, Outlook — through the one deterministic
+    /// import path (zero AI cost, Sep 2026). Legacy stores hold
+    /// "Canvas iCal" in `profile.calendarSource`; `normalizedSource` maps
+    /// it forward so old installs land on the merged option.
+    private let sourceOptions = ["Apple Calendar", "Calendar Link (iCal)", "I’ll do this later"]
+
+    private func normalizedSource(_ raw: String) -> String {
+        raw == "Canvas iCal" ? "Calendar Link (iCal)" : raw
+    }
 
     private var calendarTasks: [NudgeTask] {
         allTasks.filter { $0.source == "calendar" }
@@ -47,13 +56,11 @@ struct CalendarTabView: View {
     }
 
     private var currentConnectionLabel: String {
-        switch profile.calendarSource {
+        switch normalizedSource(profile.calendarSource) {
         case "Apple Calendar":
             return profile.connectedAppleCalendarTitle ?? "All calendars"
-        case "Canvas iCal":
-            return profile.calendarImportURL?.isEmpty == false ? "Canvas feed connected" : "Canvas feed not added"
-        case "Google Calendar":
-            return "Google Calendar"
+        case "Calendar Link (iCal)":
+            return profile.calendarImportURL?.isEmpty == false ? "Calendar link connected" : "Calendar link not added"
         default:
             return "Not connected"
         }
@@ -188,13 +195,8 @@ struct CalendarTabView: View {
         switch selectedSource {
         case "Apple Calendar":
             appleCalendarSection
-        case "Canvas iCal":
+        case "Calendar Link (iCal)", "Canvas iCal":
             canvasSection
-        case "Google Calendar":
-            unsupportedSection(
-                title: "Google Calendar is not wired up yet.",
-                subtitle: "Use Apple Calendar or a Canvas iCal feed for now."
-            )
         default:
             unsupportedSection(
                 title: "Calendar sync is currently off.",
@@ -270,9 +272,23 @@ struct CalendarTabView: View {
 
     private var canvasSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionLabel("Canvas iCal Feed")
+            sectionLabel("Calendar Link (iCal)")
 
-            TextField("Paste your Canvas iCal URL", text: $canvasURL)
+            // Format note (Roman, Sep 2026): the link must be an iCal feed,
+            // not a web page — say so, and say where each service hides it.
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Paste an iCal link — the address ends in .ics or comes from your calendar's “subscribe” or “publish” option.")
+                    .font(.custom(NudgeTheme.fontBody, size: 14))
+                    .foregroundColor(NudgeTheme.textMuted)
+                Text("Canvas: Calendar → Calendar Feed.  Google: Settings → your calendar → Secret address in iCal format.  Outlook: Settings → Shared calendars → Publish.")
+                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                    .foregroundColor(NudgeTheme.textMuted)
+                Text("A picture of a schedule isn't a calendar link — use Add from Screenshot below instead.")
+                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                    .foregroundColor(NudgeTheme.textMuted)
+            }
+
+            TextField("Paste your iCal link (.ics)", text: $canvasURL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .font(.custom(NudgeTheme.fontBody, size: 15))
@@ -541,7 +557,9 @@ struct CalendarTabView: View {
     }
 
     private func syncDraftState() {
-        selectedSource = profile.calendarSource.isEmpty ? "I’ll do this later" : profile.calendarSource
+        selectedSource = profile.calendarSource.isEmpty
+            ? "I’ll do this later"
+            : normalizedSource(profile.calendarSource)
         canvasURL = profile.calendarImportURL ?? ""
         selectedAppleCalendarID = profile.connectedAppleCalendarID
     }
@@ -596,7 +614,7 @@ struct CalendarTabView: View {
         }
 
         Task {
-            profile.calendarSource = "Canvas iCal"
+            profile.calendarSource = "Calendar Link (iCal)"
             profile.calendarImportURL = trimmedURL
             profile.connectedAppleCalendarID = nil
             profile.connectedAppleCalendarTitle = nil
