@@ -9,6 +9,7 @@ import SwiftUI
 import SwiftData
 import EventKit
 import PhotosUI
+import WidgetKit
 
 struct CalendarTabView: View {
     @Bindable var profile: UserProfile
@@ -16,6 +17,19 @@ struct CalendarTabView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Query private var allTasks: [NudgeTask]
+
+    // ── Nudge calendar (cycle 2026-09-13-02) ────────────────────────────
+    // A read-only month glance over everything in the store that carries a
+    // day — pure display, downstream of the store, never an input to the
+    // AI or the arbiter (Roman's constraint). Tap an item → the shared
+    // TaskEditorSheet, whose intent-aware `apply` moves the right field.
+    @State private var displayedMonth: Date = Calendar.current.startOfDay(for: Date())
+    @State private var selectedDay: Date = Calendar.current.startOfDay(for: Date())
+    @State private var editingTarget: CalendarEditTarget?
+
+    private struct CalendarEditTarget: Identifiable {
+        let id: UUID
+    }
 
     @State private var selectedSource = ""
     @State private var canvasURL = ""
@@ -71,6 +85,7 @@ struct CalendarTabView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                nudgeCalendarSection
                 connectionOverview
                 sourcePickerSection
                 sourceConfigurationSection
@@ -82,6 +97,36 @@ struct CalendarTabView: View {
             .padding(.bottom, 24)
         }
         .background(NudgeTheme.background)
+        .sheet(item: $editingTarget) { target in
+            if let task = allTasks.first(where: { $0.id == target.id }) {
+                TaskEditorSheet(
+                    mode: .edit(task: task),
+                    onSave: { draft in
+                        TaskEditorSheet.apply(draft, to: task, modelContext: modelContext)
+                        try? modelContext.save()
+                        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                        NudgeIntelligence.shared.refreshSoon(for: task)
+                        NudgeArbiter.shared.reevaluate(
+                            reason: .taskCreatedOrEdited,
+                            profile: profile,
+                            modelContext: modelContext
+                        )
+                    },
+                    onDelete: {
+                        ExamPrepSweep.recordDeletionIfGenerated(task, modelContext: modelContext)
+                        modelContext.delete(task)
+                        try? modelContext.save()
+                        WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                        NudgeArbiter.shared.reevaluate(
+                            reason: .taskCreatedOrEdited,
+                            profile: profile,
+                            modelContext: modelContext
+                        )
+                    }
+                )
+                .presentationDetents([.medium, .large])
+            }
+        }
         .task {
             syncDraftState()
             await refreshAppleCalendarsIfNeeded()
@@ -101,6 +146,264 @@ struct CalendarTabView: View {
             ScreenHeader(title: "Calendar", subtitle: "Review imports, reconnect a source, or switch which calendar Nudge uses.")
             Spacer(minLength: 0)
         }
+    }
+
+    // MARK: - Nudge calendar (cycle 2026-09-13-02)
+
+    /// One row per item on a given day, classified for its dot/chip.
+    /// A task carrying both an intent day and a deadline classifies as
+    /// scheduled (the else-if order), so it renders once.
+    private struct CalendarDayItem: Identifiable {
+        enum Kind { case event, scheduled, deadline }
+        let task: NudgeTask
+        let kind: Kind
+        let time: Date?
+        var id: UUID { task.id }
+    }
+
+    private func dayItems(on day: Date) -> [CalendarDayItem] {
+        let cal = Calendar.current
+        var items: [CalendarDayItem] = []
+        for t in allTasks where !t.isComplete {
+            if t.isInformationalEvent {
+                guard let anchor = t.specificTime ?? t.dueDate,
+                      cal.isDate(anchor, inSameDayAs: day) else { continue }
+                items.append(.init(task: t, kind: .event, time: t.specificTime))
+            } else if let d = t.scheduledDay {
+                guard cal.isDate(d, inSameDayAs: day) else { continue }
+                items.append(.init(task: t, kind: .scheduled, time: t.plannedStartDate))
+            } else if t.hasDeadline {
+                guard let due = t.specificTime ?? t.dueDate,
+                      cal.isDate(due, inSameDayAs: day) else { continue }
+                items.append(.init(task: t, kind: .deadline, time: t.specificTime))
+            }
+        }
+        return items.sorted { lhs, rhs in
+            let l = lhs.time ?? .distantFuture
+            let r = rhs.time ?? .distantFuture
+            if l != r { return l < r }
+            return lhs.task.title < rhs.task.title
+        }
+    }
+
+    /// Month grid cells: leading nils pad to the calendar's first weekday.
+    private var monthCells: [Date?] {
+        let cal = Calendar.current
+        guard let interval = cal.dateInterval(of: .month, for: displayedMonth),
+              let dayCount = cal.range(of: .day, in: .month, for: displayedMonth)?.count
+        else { return [] }
+        let firstWeekday = cal.component(.weekday, from: interval.start)
+        let leading = (firstWeekday - cal.firstWeekday + 7) % 7
+        var cells: [Date?] = Array(repeating: nil, count: leading)
+        for offset in 0..<dayCount {
+            cells.append(cal.date(byAdding: .day, value: offset, to: interval.start))
+        }
+        return cells
+    }
+
+    private var weekdaySymbols: [String] {
+        let cal = Calendar.current
+        let symbols = cal.veryShortWeekdaySymbols
+        let shift = cal.firstWeekday - 1
+        return Array(symbols[shift...] + symbols[..<shift])
+    }
+
+    private func kindColor(_ kind: CalendarDayItem.Kind) -> Color {
+        switch kind {
+        case .event:     return NudgeTheme.eventSlotAccent
+        case .scheduled: return NudgeTheme.primary
+        case .deadline:  return NudgeTheme.amber
+        }
+    }
+
+    private func kindLabel(_ kind: CalendarDayItem.Kind) -> String {
+        switch kind {
+        case .event:     return "Event"
+        case .scheduled: return "Planned"
+        case .deadline:  return "Due"
+        }
+    }
+
+    private var nudgeCalendarSection: some View {
+        let cal = Calendar.current
+        let cells = monthCells
+        let selectedItems = dayItems(on: selectedDay)
+        return VStack(alignment: .leading, spacing: 14) {
+            // Month header with navigation + a jump back to today.
+            HStack(spacing: 12) {
+                Button {
+                    NudgeHaptics.light()
+                    displayedMonth = cal.date(byAdding: .month, value: -1, to: displayedMonth) ?? displayedMonth
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .frame(width: 32, height: 32)
+                        .background(NudgeTheme.surfaceAlt)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+
+                Text(displayedMonth.formatted(.dateTime.month(.wide).year()))
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 17))
+                    .foregroundColor(NudgeTheme.textPrimary)
+                    .frame(maxWidth: .infinity)
+
+                if !cal.isDate(displayedMonth, equalTo: Date(), toGranularity: .month) {
+                    Button {
+                        NudgeHaptics.light()
+                        displayedMonth = cal.startOfDay(for: Date())
+                        selectedDay = cal.startOfDay(for: Date())
+                    } label: {
+                        Text("Today")
+                            .font(.custom(NudgeTheme.fontMedium, size: 12))
+                            .foregroundColor(NudgeTheme.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    NudgeHaptics.light()
+                    displayedMonth = cal.date(byAdding: .month, value: 1, to: displayedMonth) ?? displayedMonth
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .frame(width: 32, height: 32)
+                        .background(NudgeTheme.surfaceAlt)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Weekday header + grid.
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+            LazyVGrid(columns: columns, spacing: 4) {
+                ForEach(weekdaySymbols, id: \.self) { symbol in
+                    Text(symbol)
+                        .font(.custom(NudgeTheme.fontMedium, size: 10))
+                        .foregroundColor(NudgeTheme.textMuted)
+                }
+                ForEach(Array(cells.enumerated()), id: \.offset) { _, day in
+                    if let day {
+                        dayCell(day)
+                    } else {
+                        Color.clear.frame(height: 42)
+                    }
+                }
+            }
+
+            // Legend — the three dot meanings.
+            HStack(spacing: 14) {
+                ForEach([CalendarDayItem.Kind.event, .scheduled, .deadline], id: \.self) { kind in
+                    HStack(spacing: 5) {
+                        Circle().fill(kindColor(kind)).frame(width: 6, height: 6)
+                        Text(kindLabel(kind))
+                            .font(.custom(NudgeTheme.fontBody, size: 11))
+                            .foregroundColor(NudgeTheme.textMuted)
+                    }
+                }
+                Spacer()
+            }
+
+            // Selected day's items.
+            VStack(alignment: .leading, spacing: 10) {
+                Text(selectedDay.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                    .foregroundColor(NudgeTheme.textMuted)
+                if selectedItems.isEmpty {
+                    Text("Nothing on this day.")
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textMuted)
+                } else {
+                    ForEach(selectedItems) { item in
+                        calendarItemRow(item)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(NudgeTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+        .overlay(
+            RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
+                .stroke(NudgeTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func dayCell(_ day: Date) -> some View {
+        let cal = Calendar.current
+        let isToday = cal.isDateInToday(day)
+        let isSelected = cal.isDate(day, inSameDayAs: selectedDay)
+        let kinds = Array(Set(dayItems(on: day).map(\.kind)))
+            .sorted { a, b in
+                func rank(_ k: CalendarDayItem.Kind) -> Int {
+                    switch k { case .event: return 0; case .scheduled: return 1; case .deadline: return 2 }
+                }
+                return rank(a) < rank(b)
+            }
+        return Button {
+            NudgeHaptics.light()
+            selectedDay = day
+        } label: {
+            VStack(spacing: 4) {
+                Text("\(cal.component(.day, from: day))")
+                    .font(.custom(NudgeTheme.fontMedium, size: 13))
+                    .foregroundColor(isSelected ? .white : NudgeTheme.textPrimary)
+                HStack(spacing: 3) {
+                    ForEach(Array(kinds.prefix(3).enumerated()), id: \.offset) { _, kind in
+                        Circle()
+                            .fill(isSelected ? Color.white : kindColor(kind))
+                            .frame(width: 4, height: 4)
+                    }
+                }
+                .frame(height: 5)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
+            .background(
+                isSelected
+                    ? NudgeTheme.primary
+                    : (isToday ? NudgeTheme.primary.opacity(0.12) : Color.clear)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func calendarItemRow(_ item: CalendarDayItem) -> some View {
+        Button {
+            NudgeHaptics.light()
+            editingTarget = CalendarEditTarget(id: item.task.id)
+        } label: {
+            HStack(spacing: 10) {
+                Text(kindLabel(item.kind))
+                    .font(.custom(NudgeTheme.fontMedium, size: 10))
+                    .foregroundColor(kindColor(item.kind))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .overlay(Capsule().stroke(kindColor(item.kind).opacity(0.5), lineWidth: 1))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.task.title)
+                        .font(.custom(NudgeTheme.fontMedium, size: 14))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        .lineLimit(1)
+                    if let time = item.time {
+                        Text(time.formatted(date: .omitted, time: .shortened))
+                            .font(.custom(NudgeTheme.fontBody, size: 11))
+                            .foregroundColor(NudgeTheme.textMuted)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(NudgeTheme.textMuted)
+            }
+            .padding(12)
+            .background(NudgeTheme.surfaceAlt.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
     }
 
     private var connectionOverview: some View {

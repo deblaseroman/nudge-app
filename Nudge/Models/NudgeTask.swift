@@ -109,6 +109,18 @@ extension NudgeTask {
         guard let intendedDate else { return false }
         return intendedDate > Calendar.current.startOfDay(for: reference)
     }
+
+    /// The day this TASK is scheduled to — intent day, else placement day,
+    /// else nil (the day-membership rule, cycle 2026-09-04-01; hoisted to
+    /// the model in 2026-09-13-02 so the Today lenses and the calendar view
+    /// read ONE implementation). Deadline-only tasks return nil: owed is
+    /// not scheduled. Meaningless on events — their anchor is
+    /// `specificTime ?? dueDate`.
+    var scheduledDay: Date? {
+        if let intendedDate { return Calendar.current.startOfDay(for: intendedDate) }
+        if let plannedStartDate { return Calendar.current.startOfDay(for: plannedStartDate) }
+        return nil
+    }
 }
 
 /// The one task ordering, with **plan-first built in** (Jul 2026 — before

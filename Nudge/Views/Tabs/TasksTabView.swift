@@ -439,15 +439,13 @@ struct TasksTabView: View {
 
     // MARK: Day membership (cycle 2026-09-04-01)
 
-    /// The day a TASK belongs to: its intent day, else its placement's day,
-    /// else nil. Deadline-only tasks return nil on purpose — a bare due
-    /// date is owed, not scheduled (Roman's rule), so they keep living in
-    /// Unscheduled/Overdue rather than under a day lens.
+    /// The day a TASK belongs to — forwards to `NudgeTask.scheduledDay`
+    /// (hoisted to the model in cycle 2026-09-13-02 so the calendar view
+    /// reads the same rule). Deadline-only tasks return nil on purpose —
+    /// a bare due date is owed, not scheduled (Roman's rule), so they keep
+    /// living in Unscheduled/Overdue rather than under a day lens.
     private func scheduledDay(of task: NudgeTask) -> Date? {
-        let cal = Calendar.current
-        if let intended = task.intendedDate { return cal.startOfDay(for: intended) }
-        if let placed = task.plannedStartDate { return cal.startOfDay(for: placed) }
-        return nil
+        task.scheduledDay
     }
 
     /// A plan task with no day of its own reads as TODAY — a dateless
@@ -721,35 +719,10 @@ struct TasksTabView: View {
                     TaskEditorSheet(
                         mode: .edit(task: task),
                         onSave: { draft in
-                            task.title = draft.title
-                            task.priority = draft.priority
-                            task.dueDate = draft.dueDate
-                            task.dueTime = draft.dueTimeLabel
-                            task.specificTime = draft.specificTime
-                            // Hand-set stakes: write directly + flag as
-                            // user-set so no later automation pass overwrites
-                            // it. Only when a chip was actually tapped.
-                            if draft.stakesUserPicked, let picked = draft.stakes {
-                                task.stakes = picked
-                                task.stakesIsUserSet = true
-                            }
-                            // Duration: only a tapped chip writes (same rule
-                            // as stakes). A hand-set EVENT length also feeds
-                            // the learned per-title stats — the user
-                            // correcting "how long is work?" is the ground
-                            // truth the learning tier was built for, and
-                            // until now nothing ever called recordDuration.
-                            if draft.durationUserPicked {
-                                task.estimatedMinutes = draft.durationMinutes
-                                if task.isInformationalEvent,
-                                   let mins = draft.durationMinutes, mins > 0 {
-                                    BusyWindowResolver.shared.recordDuration(
-                                        title: task.title,
-                                        durationMinutes: mins,
-                                        modelContext: modelContext
-                                    )
-                                }
-                            }
+                            // The write logic lives in the shared, intent-
+                            // aware TaskEditorSheet.apply — one rule, two
+                            // call sites (here + the calendar view).
+                            TaskEditorSheet.apply(draft, to: task, modelContext: modelContext)
                             try? modelContext.save()
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
                             // Title may have changed — re-enrich once.
@@ -3011,7 +2984,7 @@ struct TaskEditorSheet: View {
                         }
 
                         DatePicker(
-                            "Due",
+                            dateFieldLabel,
                             selection: Binding(
                                 get: { draft.specificTime ?? draft.defaultDateForPicker },
                                 set: { draft.setSpecificTime($0) }
@@ -3218,6 +3191,78 @@ struct TaskEditorSheet: View {
         )
     }
 
+    /// The ONE application of an editor draft to a task — used by the Tasks
+    /// tab AND the calendar view (cycle 2026-09-13-02), so a second call
+    /// site can't drift from the first.
+    ///
+    /// INTENT-AWARE: for a task whose only day is an intent day, the date
+    /// picker moves `intendedDate` (plus the placement when a clock time
+    /// was chosen) and NEVER mints a deadline — sliding an airport pickup
+    /// from Friday to Saturday on the calendar must not fabricate the time
+    /// pressure the deadline/intent split removed. Events and deadline
+    /// tasks keep deadline-field semantics; a task carrying BOTH edits its
+    /// deadline (rare — capture never writes both). Floaters given a date
+    /// here still receive a deadline: the editor's field says "Due", and
+    /// re-deciding that default is the deferred convert-kind question.
+    static func apply(_ draft: TaskDraft, to task: NudgeTask, modelContext: ModelContext) {
+        task.title = draft.title
+        task.priority = draft.priority
+
+        let isIntentOnly = !task.isInformationalEvent
+            && task.intendedDate != nil
+            && !task.hasDeadline
+        if isIntentOnly {
+            if let day = draft.specificTime ?? draft.dueDate {
+                task.intendedDate = Calendar.current.startOfDay(for: day)
+                if let time = draft.specificTime {
+                    // A picked clock time is the user scheduling the start
+                    // — a manual placement, same as capture's timed intents.
+                    task.plannedStartDate = time
+                    task.plannedIsAuto = false
+                }
+            } else {
+                // "No date": the intention is released back to a floater.
+                task.intendedDate = nil
+                task.plannedStartDate = nil
+            }
+        } else {
+            task.dueDate = draft.dueDate
+            task.dueTime = draft.dueTimeLabel
+            task.specificTime = draft.specificTime
+        }
+
+        // Hand-set stakes: write directly + flag as user-set so no later
+        // automation pass overwrites it. Only when a chip was tapped.
+        if draft.stakesUserPicked, let picked = draft.stakes {
+            task.stakes = picked
+            task.stakesIsUserSet = true
+        }
+        // Duration: only a tapped chip writes. A hand-set EVENT length also
+        // feeds the learned per-title stats — user correction is the ground
+        // truth the learning tier exists for.
+        if draft.durationUserPicked {
+            task.estimatedMinutes = draft.durationMinutes
+            if task.isInformationalEvent,
+               let mins = draft.durationMinutes, mins > 0 {
+                BusyWindowResolver.shared.recordDuration(
+                    title: task.title,
+                    durationMinutes: mins,
+                    modelContext: modelContext
+                )
+            }
+        }
+    }
+
+    /// What the date picker MEANS for this item — "Due" only when the date
+    /// actually is a deadline. Part of the intent-aware editor: the label
+    /// and `apply(_:to:modelContext:)` must agree about which field moves.
+    private var dateFieldLabel: String {
+        guard case .edit(let task) = mode else { return "Due" }
+        if task.isInformationalEvent { return "Time" }
+        if task.intendedDate != nil && !task.hasDeadline { return "Planned" }
+        return "Due"
+    }
+
     private func populateDraftIfNeeded() {
         guard case .edit(let task) = mode else { return }
         draft = TaskDraft(
@@ -3227,6 +3272,13 @@ struct TaskEditorSheet: View {
             specificTime: task.specificTime,
             durationMinutes: task.estimatedMinutes
         )
+        // Intent tasks seed the picker from their intent day + placement so
+        // the current plan shows in the sheet; `apply` routes the edit back
+        // to those same fields.
+        if !task.isInformationalEvent, task.intendedDate != nil, !task.hasDeadline {
+            draft.dueDate = task.intendedDate
+            draft.specificTime = task.plannedStartDate
+        }
         // Show the task's current stakes selected, WITHOUT marking it a fresh
         // user choice — only tapping a chip sets stakesUserPicked, so simply
         // opening + saving a row can't lock an automation-set value.
