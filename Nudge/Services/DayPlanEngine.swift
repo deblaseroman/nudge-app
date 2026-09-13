@@ -187,8 +187,12 @@ enum DayPlanEngine {
             }
             return true
         }
+        // Day-integrity glue (cycle 2026-09-13-01): a task intended for a
+        // FUTURE day is off-limits to today's plan — plan tasks included
+        // (a stated day outranks a stated order). "Pick up friend at the
+        // airport in 5 days" must not be seated into today's gaps.
         let planCandidates = openUnplaced
-            .filter { $0.sequenceIndex != nil }
+            .filter { $0.sequenceIndex != nil && !$0.intentIsFuture() }
             .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
         // Tasks the user said they'd do TODAY (intendedDate, cycle
         // 2026-09-03-01) outrank score — the user already decided the day;
@@ -205,7 +209,7 @@ enum DayPlanEngine {
             .sorted { $0.createdAt < $1.createdAt }
         let intentIDs = Set(intentCandidates.map(\.id))
         let scoredCandidates = openUnplaced
-            .filter { $0.sequenceIndex == nil && !intentIDs.contains($0.id) }
+            .filter { $0.sequenceIndex == nil && !intentIDs.contains($0.id) && !$0.intentIsFuture() }
             .sorted { planScore(for: $0, modelContext: modelContext) > planScore(for: $1, modelContext: modelContext) }
         let candidates = planCandidates + intentCandidates + scoredCandidates
 

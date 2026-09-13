@@ -417,7 +417,9 @@ struct TasksTabView: View {
         }) {
             return next
         }
-        return planTasks.first { !$0.isComplete }
+        // Day-integrity glue (cycle 2026-09-13-01): never propose a
+        // future-day intention as the session to start now.
+        return planTasks.first { !$0.isComplete && !$0.intentIsFuture() }
     }
 
     /// Open tasks not on today's timeline: unplaced, OR placed on some other

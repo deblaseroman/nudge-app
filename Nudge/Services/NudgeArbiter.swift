@@ -967,7 +967,12 @@ final class NudgeArbiter: NudgeArbitering {
             predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
         )
         descriptor.fetchLimit = 50
-        let open = (try? modelContext.fetch(descriptor)) ?? []
+        let fetched = (try? modelContext.fetch(descriptor)) ?? []
+        // Day-integrity glue (cycle 2026-09-13-01): "the day's biggest
+        // task" must be biggest among things DOABLE that day — naming a
+        // high-stakes airport pickup five days early would spend the app's
+        // best delivery slot on something the user can't act on.
+        let open = fetched.filter { !$0.intentIsFuture(asOf: fireDate) }
         guard !open.isEmpty else { return [] }
 
         // The ranking with no no-repeat rule applied at all. Its first entry
@@ -1317,7 +1322,12 @@ final class NudgeArbiter: NudgeArbitering {
             predicate: #Predicate { !$0.isComplete && !$0.isInformationalEvent }
         )
         unstartedDescriptor.fetchLimit = 50
-        let unstarted = (try? modelContext.fetch(unstartedDescriptor)) ?? []
+        let fetched = (try? modelContext.fetch(unstartedDescriptor)) ?? []
+        // Day-integrity glue (cycle 2026-09-13-01): a task intended for a
+        // day after the FIRE day is not "what should I start" material —
+        // keyed on the fire date like every arbiter decision, so a rolled-
+        // to-tomorrow idle nudge judges eligibility against tomorrow.
+        let unstarted = fetched.filter { !$0.intentIsFuture(asOf: fireDate) }
         // The comparator is plan-first: the plan's next item (lowest
         // sequenceIndex) IS the answer to "what should I start?" when a
         // plan exists; deadline buckets rank the rest.

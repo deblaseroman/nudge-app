@@ -113,11 +113,13 @@ final class DayPlanRefiner {
         let openUnplaced = allTasks.filter {
             !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate == nil
         }
+        // Day-integrity glue (cycle 2026-09-13-01): future-intent tasks are
+        // off-limits to today's refine, same rule as DayPlanEngine.
         let planCandidates = openUnplaced
-            .filter { $0.sequenceIndex != nil }
+            .filter { $0.sequenceIndex != nil && !$0.intentIsFuture() }
             .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
         let scoredCandidates = openUnplaced
-            .filter { $0.sequenceIndex == nil }
+            .filter { $0.sequenceIndex == nil && !$0.intentIsFuture() }
             .sorted { planScore(for: $0, modelContext: modelContext) > planScore(for: $1, modelContext: modelContext) }
         let candidates = (planCandidates + scoredCandidates).prefix(8)
 

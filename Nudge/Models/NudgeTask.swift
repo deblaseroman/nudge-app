@@ -95,6 +95,20 @@ extension NudgeTask {
     var hasDeadline: Bool {
         dueDate != nil || specificTime != nil
     }
+
+    /// The DAY-INTEGRITY invariant, task half (cycle 2026-09-13-01): a task
+    /// glued to a day still ahead is invisible to every "what should I do
+    /// NOW" path — planner candidates, morning naming, idle targeting,
+    /// session suggestions — until that day arrives. The user already chose
+    /// the day; those paths honor decisions, they don't re-make them.
+    /// Deadline tasks are deliberately NOT glued: working ahead of a due
+    /// date is the point of planning. A PAST intent day returns false — a
+    /// slipped intention is fair game again. Ask this helper, never
+    /// re-derive; one rule, every site.
+    func intentIsFuture(asOf reference: Date = Date()) -> Bool {
+        guard let intendedDate else { return false }
+        return intendedDate > Calendar.current.startOfDay(for: reference)
+    }
 }
 
 /// The one task ordering, with **plan-first built in** (Jul 2026 — before

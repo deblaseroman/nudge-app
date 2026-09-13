@@ -368,7 +368,11 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
     @MainActor
     private func pickTopOpenTask(context: ModelContext) -> NudgeTask? {
         let allTasks = (try? context.fetch(FetchDescriptor<NudgeTask>())) ?? []
-        let open = allTasks.filter { !$0.isInformationalEvent && !$0.isComplete }
+        // Day-integrity glue (cycle 2026-09-13-01): don't hand the user a
+        // future-day intention as "the thing to start now".
+        let open = allTasks.filter {
+            !$0.isInformationalEvent && !$0.isComplete && !$0.intentIsFuture()
+        }
         // The comparator is plan-first: an ordered plan's NEXT item wins
         // when one exists, deadline buckets rank the rest.
         let comparator = TaskSortComparator()
