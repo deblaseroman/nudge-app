@@ -91,8 +91,19 @@ struct TodayTimelineView: View {
     /// copy of the constant the two would have had to keep in sync by hand.
 
     // MARK: - Time window
+    //
+    // TWO windows, deliberately (Sep 2026, Roman's ruling on the "items
+    // outside wake/bed are clipped" gap):
+    //   • the BASE window (wake − 30m → bed) is where TASKS live — empty-
+    //     space taps clamp into it, so task placement stays inside the
+    //     user's day for now (revisit noted: people sometimes need to do
+    //     things outside it).
+    //   • the RENDER window additionally stretches to cover every one of
+    //     today's EVENTS, wherever they fall. An event's time is a fact;
+    //     a 6:30 shift used to exist, gate, and notify — invisibly,
+    //     because the strip silently clipped it.
 
-    private var startTime: Date {
+    private var baseStart: Date {
         let cal = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
         let comps = cal.dateComponents([.hour, .minute], from: wake)
@@ -103,7 +114,7 @@ struct TodayTimelineView: View {
         return wakeToday.addingTimeInterval(-30 * 60)
     }
 
-    private var endTime: Date {
+    private var baseEnd: Date {
         let cal = Calendar.current
         let comps = cal.dateComponents([.hour, .minute], from: profile.bedtime)
         var day = cal.dateComponents([.year, .month, .day], from: Date())
@@ -112,7 +123,25 @@ struct TodayTimelineView: View {
         let bedToday = cal.date(from: day) ?? Date()
         // Guard against a bedtime that lands before wake (misconfigured) —
         // fall back to a 16-hour window so the view never collapses.
-        return bedToday > startTime ? bedToday : startTime.addingTimeInterval(16 * 3600)
+        return bedToday > baseStart ? bedToday : baseStart.addingTimeInterval(16 * 3600)
+    }
+
+    private var startTime: Date {
+        guard let earliest = todaysEvents.compactMap(\.specificTime).min(),
+              earliest < baseStart else { return baseStart }
+        // Half an hour of lead so the earliest block isn't flush at the edge.
+        return earliest.addingTimeInterval(-30 * 60)
+    }
+
+    private var endTime: Date {
+        let latestEnd = todaysEvents
+            .compactMap { event -> Date? in
+                guard let start = event.specificTime else { return nil }
+                return start.addingTimeInterval(Double(eventMinutes(for: event)) * 60)
+            }
+            .max()
+        guard let latestEnd, latestEnd > baseEnd else { return baseEnd }
+        return latestEnd.addingTimeInterval(15 * 60)
     }
 
     private var totalSeconds: TimeInterval { endTime.timeIntervalSince(startTime) }
@@ -129,10 +158,15 @@ struct TodayTimelineView: View {
     }
 
     /// Converts a local x into a clock time snapped to the nearest 15 min.
+    /// The result is clamped into the BASE window: the strip may render
+    /// beyond wake/bed to show an early or late event, but a tap out there
+    /// proposes a task at the nearest in-window time instead — tasks stay
+    /// inside the day's bounds (Roman's ruling; revisit noted).
     private func snappedDate(forX localX: CGFloat) -> Date {
         let clamped = min(max(localX, 0), contentWidth)
         let raw = startTime.addingTimeInterval(Double(clamped / hourWidth) * 3600)
-        let ti = raw.timeIntervalSinceReferenceDate
+        let bounded = min(max(raw, baseStart), baseEnd)
+        let ti = bounded.timeIntervalSinceReferenceDate
         let snapped = (ti / 900).rounded() * 900
         return Date(timeIntervalSinceReferenceDate: snapped)
     }
