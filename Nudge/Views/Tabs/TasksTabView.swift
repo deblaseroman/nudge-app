@@ -52,6 +52,9 @@ struct TasksTabView: View {
     /// Events tab lens. Two lenses on the same data, not two buckets — a
     /// high-stakes event tomorrow appears under both.
     @State private var eventLens: EventLens = .thisWeek
+    /// Today-tab lens (cycle 2026-09-04-01). Like `eventLens`, deliberately
+    /// not persisted — every visit starts on Today.
+    @State private var todayLens: TodayLens = .today
     /// Exams whose collapsed prep-day rows are currently expanded in the
     /// Unscheduled tab (keyed by the exam's linkedEventId).
     @State private var expandedPrepExams: Set<String> = []
@@ -434,29 +437,41 @@ struct TasksTabView: View {
         }
     }
 
-    /// Tasks placed on today's timeline. Kept in the list (in addition to
-    /// appearing on the timeline) so they stay checkable — placement must not
-    /// remove a task from completion tracking.
-    ///
-    /// Built off `actionableTasks`, NOT `sortedTasks`, because that one drops
-    /// completed rows — and a checked-off placement then vanished from Today
-    /// while its block stayed on the strip above, which reads as the list and
-    /// the timeline disagreeing about the day. Now it sinks to the bottom in
-    /// its muted tint instead. Plan tasks stay excluded (`sequenceIndex`),
-    /// since `planSection` already renders those.
-    ///
-    /// Open rows are ordered by `plannedStartDate`, NOT by
-    /// `TaskSortComparator` like every other list. These rows describe a day
-    /// that is already drawn left to right above them, so the list has to read
-    /// top to bottom in the same order — the comparator's deadline buckets put
-    /// a 9am block below a 4pm one whenever the later block was due sooner,
-    /// which reads as a different plan from the one on the strip.
-    private var scheduledTasks: [NudgeTask] {
+    // MARK: Day membership (cycle 2026-09-04-01)
+
+    /// The day a TASK belongs to: its intent day, else its placement's day,
+    /// else nil. Deadline-only tasks return nil on purpose — a bare due
+    /// date is owed, not scheduled (Roman's rule), so they keep living in
+    /// Unscheduled/Overdue rather than under a day lens.
+    private func scheduledDay(of task: NudgeTask) -> Date? {
+        let cal = Calendar.current
+        if let intended = task.intendedDate { return cal.startOfDay(for: intended) }
+        if let placed = task.plannedStartDate { return cal.startOfDay(for: placed) }
+        return nil
+    }
+
+    /// A plan task with no day of its own reads as TODAY — a dateless
+    /// ordered plan is today's plan, the pre-lens semantics kept.
+    private func planDay(of task: NudgeTask) -> Date {
+        scheduledDay(of: task) ?? Calendar.current.startOfDay(for: Date())
+    }
+
+    private func planTasks(on day: Date) -> [NudgeTask] {
+        planTasks.filter { Calendar.current.isDate(planDay(of: $0), inSameDayAs: day) }
+    }
+
+    /// Non-plan tasks belonging to `day` — the old `scheduledTasks` with
+    /// membership widened from "placed today" to "intended OR placed that
+    /// day". Kept in the list (in addition to the timeline) so placed tasks
+    /// stay checkable. Open rows order by start time — the list must read
+    /// in the same order the strip above draws, not the comparator's
+    /// deadline buckets; unplaced intents follow; completed rows sink.
+    private func dayTasks(on day: Date) -> [NudgeTask] {
         actionableTasks
             .filter { task in
                 guard task.sequenceIndex == nil,
-                      let p = task.plannedStartDate else { return false }
-                return Calendar.current.isDateInToday(p)
+                      let d = scheduledDay(of: task) else { return false }
+                return Calendar.current.isDate(d, inSameDayAs: day)
             }
             .sorted { lhs, rhs in
                 if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
@@ -465,6 +480,15 @@ struct TasksTabView: View {
                 if l != r { return l < r }
                 return lhs.id.uuidString < rhs.id.uuidString
             }
+    }
+
+    /// Events anchored to `day` — same anchor the Events tab uses
+    /// (`specificTime ?? dueDate`); `eventItems` is already time-sorted.
+    private func dayEvents(on day: Date) -> [NudgeTask] {
+        eventItems.filter { event in
+            guard let anchor = event.specificTime ?? event.dueDate else { return false }
+            return Calendar.current.isDate(anchor, inSameDayAs: day)
+        }
     }
 
     /// Day-slot index per task id — the single assignment both the timeline
@@ -922,10 +946,10 @@ struct TasksTabView: View {
     /// Uses a scroll-disabled List so SwiftUI's `.onMove` gives native drag
     /// reordering while still living inside the tab's ScrollView. No section
     /// label since the Today tab IS the label; the numbers mark the plan rows.
-    private func planSection(slots: [UUID: Int]) -> some View {
+    private func planSection(tasks planTasksForDay: [NudgeTask], slots: [UUID: Int]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             List {
-                ForEach(planTasks, id: \.id) { task in
+                ForEach(planTasksForDay, id: \.id) { task in
                     // The numeral takes the row's slot accent so the number,
                     // the card tint and the block on the strip read as one
                     // thing. It still SHOWS `sequenceIndex` — that's the
@@ -959,21 +983,32 @@ struct TasksTabView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                 }
-                .onMove(perform: movePlanTasks)
+                .onMove { source, destination in
+                    movePlanTasks(from: source, to: destination, displayed: planTasksForDay)
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
-            .frame(height: planRowHeight * CGFloat(max(planTasks.count, 1)))
+            .frame(height: planRowHeight * CGFloat(max(planTasksForDay.count, 1)))
         }
     }
 
     /// Rewrites sequenceIndex to match the dropped order, persists, and
     /// reevaluates (order changes which task the idle nudge suggests first).
-    private func movePlanTasks(from source: IndexSet, to destination: Int) {
-        var reordered = planTasks
-        reordered.move(fromOffsets: source, toOffset: destination)
-        for (i, task) in reordered.enumerated() {
+    ///
+    /// The drag happens on TODAY'S slice of the plan (the only reorderable
+    /// lens), but numbering is global across the one active plan: today's
+    /// reordered tasks take the leading numbers, other days' plan tasks
+    /// follow in their existing relative order. A drag on today's list can
+    /// shift a future day's numerals but never reorders that day's tasks
+    /// among themselves.
+    private func movePlanTasks(from source: IndexSet, to destination: Int, displayed: [NudgeTask]) {
+        var reorderedToday = displayed
+        reorderedToday.move(fromOffsets: source, toOffset: destination)
+        let displayedIDs = Set(displayed.map(\.id))
+        let otherDays = planTasks.filter { !displayedIDs.contains($0.id) }
+        for (i, task) in (reorderedToday + otherDays).enumerated() {
             task.sequenceIndex = i + 1
         }
         try? modelContext.save()
@@ -994,6 +1029,14 @@ struct TasksTabView: View {
     }
 
     /// The Events tab's two lenses over the same event data.
+    /// The Today tab's three day-lenses (cycle 2026-09-04-01), mirroring
+    /// `EventLens`. Raw value is the chip label.
+    private enum TodayLens: String, CaseIterable {
+        case today = "Today"
+        case tomorrow = "Tomorrow"
+        case thisWeek = "This week"
+    }
+
     private enum EventLens: String, CaseIterable {
         case thisWeek = "This week"
         case important = "Important"
@@ -1030,7 +1073,19 @@ struct TasksTabView: View {
     private func tabHasContent(_ tab: TaskListTab) -> Bool {
         switch tab {
         case .unscheduled: return !unscheduledTasks.isEmpty
-        case .today:       return hasActivePlan || !scheduledTasks.isEmpty
+        case .today:
+            // Any lens having content lights the chip (cycle 2026-09-04-01)
+            // — the stroke must not promise an empty tab, and must not stay
+            // dark when only Tomorrow/This week hold items.
+            if hasActivePlan { return true }
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: Date())
+            guard let horizon = cal.date(byAdding: .day, value: 7, to: today) else { return hasActivePlan }
+            let anyDayTask = actionableTasks.contains { task in
+                guard !task.isComplete, let d = scheduledDay(of: task) else { return false }
+                return d >= today && d <= horizon
+            }
+            return anyDayTask || !thisWeekEvents.isEmpty
         case .events:      return !thisWeekEvents.isEmpty || !importantEvents.isEmpty
         case .overdue:     return !overdueTasks.isEmpty
         }
@@ -1234,48 +1289,198 @@ struct TasksTabView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: Today tab
+    // MARK: Today tab — three lenses (cycle 2026-09-04-01)
 
-    /// One notion of "today": the ordered plan (numbered, drag-reorderable)
-    /// followed by tasks placed on today's timeline. The two never overlap —
-    /// `scheduledTasks` derives from `sortedTasks`, which excludes plan
-    /// tasks. Empty state is the Plan my day button, nothing else.
+    /// Today / Tomorrow / This week, mirroring the Events tab's lens
+    /// pattern. Membership is DAY-based: a task belongs to its intent day,
+    /// else its placement's day (`scheduledDay`); a plan task with no day
+    /// of its own is today's plan. Each lens shows that day's events AND
+    /// its tasks — the fix for tomorrow's plan bleeding into Today.
     @ViewBuilder
     private var todayTab: some View {
-        if !hasActivePlan && scheduledTasks.isEmpty {
-            Button {
-                planMyDay()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "wand.and.stars")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Plan my day")
-                        .font(.custom(NudgeTheme.fontSemiBold, size: 13))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 34)
-                .background(NudgeTheme.primary)
-                .clipShape(Capsule())
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        VStack(alignment: .leading, spacing: 16) {
+            todayLensPicker
+            switch todayLens {
+            case .today:
+                todayLensBody(today: today)
+            case .tomorrow:
+                dayLensBody(day: cal.date(byAdding: .day, value: 1, to: today) ?? today)
+            case .thisWeek:
+                thisWeekLensBody(today: today)
             }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 24)
+        }
+    }
+
+    private var todayLensPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(TodayLens.allCases, id: \.self) { lens in
+                let isSelected = todayLens == lens
+                Button {
+                    NudgeHaptics.light()
+                    withAnimation(NudgeAnimation.standard) { todayLens = lens }
+                } label: {
+                    Text(lens.rawValue)
+                        .font(.custom(NudgeTheme.fontMedium, size: 12))
+                        .foregroundColor(isSelected ? .white : NudgeTheme.textPrimary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(isSelected ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+    }
+
+    /// The Today lens keeps everything the old tab had — reorderable plan,
+    /// slot-tinted rows, the Plan-my-day empty state — and adds today's
+    /// events between them (Roman: "the today tab should also show events").
+    @ViewBuilder
+    private func todayLensBody(today: Date) -> some View {
+        let plan = planTasks(on: today)
+        let dayTasks = dayTasks(on: today)
+        let events = dayEvents(on: today)
+        let hasOpenPlan = plan.contains { !$0.isComplete }
+        if !hasOpenPlan && dayTasks.isEmpty && events.isEmpty {
+            planMyDayEmptyButton
         } else {
-            // Resolved ONCE for the whole tab — `daySlots` scans every task,
-            // and this body re-evaluates on the 60s clock tick.
+            // Resolved ONCE for the whole lens — `daySlots` scans every
+            // task, and this body re-evaluates on the 60s clock tick.
             let slots = daySlots
             VStack(alignment: .leading, spacing: 20) {
-                if hasActivePlan {
-                    planSection(slots: slots)
+                if hasOpenPlan {
+                    planSection(tasks: plan, slots: slots)
                 }
-                if !scheduledTasks.isEmpty {
+                if !events.isEmpty {
+                    lensEventRows(events)
+                }
+                if !dayTasks.isEmpty {
                     VStack(spacing: 12) {
-                        ForEach(scheduledTasks, id: \.id) { task in
+                        ForEach(dayTasks, id: \.id) { task in
                             taskRow(task, slotTint: slotFill(for: task, in: slots))
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// One future day (Tomorrow lens): numbered plan rows WITHOUT drag
+    /// reordering — a sequence spanning days can't be coherently reordered
+    /// from one day's slice — then events, then tasks. No slot tints: slots
+    /// describe today's timeline only.
+    @ViewBuilder
+    private func dayLensBody(day: Date) -> some View {
+        let plan = planTasks(on: day)
+        let dayTasks = dayTasks(on: day)
+        let events = dayEvents(on: day)
+        if plan.isEmpty && dayTasks.isEmpty && events.isEmpty {
+            tabEmptyLine("Nothing scheduled yet.")
+        } else {
+            VStack(alignment: .leading, spacing: 20) {
+                if !plan.isEmpty { staticPlanRows(plan) }
+                if !events.isEmpty { lensEventRows(events) }
+                if !dayTasks.isEmpty {
+                    VStack(spacing: 12) {
+                        ForEach(dayTasks, id: \.id) { taskRow($0) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Days +2 through +7, grouped with the Events tab's day-header idiom.
+    @ViewBuilder
+    private func thisWeekLensBody(today: Date) -> some View {
+        let cal = Calendar.current
+        let days = (2...7).compactMap { cal.date(byAdding: .day, value: $0, to: today) }
+        let populated = days.filter { day in
+            !planTasks(on: day).isEmpty || !dayTasks(on: day).isEmpty || !dayEvents(on: day).isEmpty
+        }
+        if populated.isEmpty {
+            tabEmptyLine("Nothing scheduled for the rest of the week.")
+        } else {
+            VStack(alignment: .leading, spacing: 24) {
+                ForEach(populated, id: \.self) { day in
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(eventDayHeader(for: day))
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                            .foregroundColor(NudgeTheme.textMuted)
+                        let plan = planTasks(on: day)
+                        let dayTasks = dayTasks(on: day)
+                        let events = dayEvents(on: day)
+                        if !plan.isEmpty { staticPlanRows(plan) }
+                        if !events.isEmpty { lensEventRows(events) }
+                        if !dayTasks.isEmpty {
+                            VStack(spacing: 12) {
+                                ForEach(dayTasks, id: \.id) { taskRow($0) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var planMyDayEmptyButton: some View {
+        Button {
+            planMyDay()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Plan my day")
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 14)
+            .frame(height: 34)
+            .background(NudgeTheme.primary)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    /// Plan rows for a non-today day: same numeral + row as the reorderable
+    /// section, minus the List/onMove and minus slot accents.
+    private func staticPlanRows(_ tasks: [NudgeTask]) -> some View {
+        VStack(spacing: 12) {
+            ForEach(tasks, id: \.id) { task in
+                HStack(alignment: .center, spacing: 10) {
+                    Text("\(task.sequenceIndex ?? 0).")
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                        .foregroundColor(task.isComplete ? NudgeTheme.textMuted : NudgeTheme.primary)
+                        .frame(width: 20, alignment: .trailing)
+                    TaskRowView(
+                        task: task,
+                        isLastIncompleteTask: false,
+                        onOpen: { activeSheet = .edit(taskID: task.id) },
+                        onToggleComplete: { toggleCompletion(for: task) },
+                        onDelete: { deleteTask(task) },
+                        onConvertToEvent: { setEventFlag(task, isEvent: true) }
+                    )
+                }
+            }
+        }
+    }
+
+    /// Event rows inside a day lens — the Events tab's row, minus the
+    /// routine detection (a single day's slice can't see repetition).
+    private func lensEventRows(_ events: [NudgeTask]) -> some View {
+        VStack(spacing: 12) {
+            ForEach(events, id: \.id) { event in
+                EventRowView(
+                    task: event,
+                    onOpen: { activeSheet = .edit(taskID: event.id) },
+                    onDelete: { deleteTask(event) },
+                    onConvertToTask: { setEventFlag(event, isEvent: false) },
+                    onSetTime: { setEventTime(event, to: $0) }
+                )
             }
         }
     }
