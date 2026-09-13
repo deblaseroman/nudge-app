@@ -654,12 +654,18 @@ struct CalendarTabView: View {
         }
 
         Task {
-            profile.calendarSource = "Calendar Link (iCal)"
-            profile.calendarImportURL = trimmedURL
-            profile.connectedAppleCalendarID = nil
-            profile.connectedAppleCalendarTitle = nil
-
             let result = await CalendarService.shared.importCanvasICal(urlString: trimmedURL, modelContext: modelContext)
+            // Persist the connection only on SUCCESS (Sep 2026) — this used
+            // to write the URL before fetching, so a failed import still
+            // recorded the bad link as the connected feed and clobbered an
+            // existing Apple Calendar connection. A failure now changes
+            // nothing about the current connection.
+            if result.errors.isEmpty {
+                profile.calendarSource = "Calendar Link (iCal)"
+                profile.calendarImportURL = trimmedURL
+                profile.connectedAppleCalendarID = nil
+                profile.connectedAppleCalendarTitle = nil
+            }
             try? modelContext.save()
             statusMessage = result.errors.isEmpty ? result.summary : result.errors.joined(separator: "\n")
         }
