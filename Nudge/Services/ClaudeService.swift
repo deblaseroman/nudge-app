@@ -543,9 +543,15 @@ class ClaudeService {
             """
         }
 
-        var messages: [[String: String]] = conversationHistory.map { msg in
-            ["role": msg.role, "content": msg.content]
-        }
+        // History cap (Sep 2026): every turn re-sends the conversation, so
+        // a long session grew the input bill linearly. The capture prompt
+        // needs recent context (follow-up answers, "the essay I mentioned"),
+        // not the whole morning.
+        var messages: [[String: String]] = conversationHistory
+            .suffix(NudgeConfig.chatHistoryMaxMessages)
+            .map { msg in
+                ["role": msg.role, "content": msg.content]
+            }
         messages.append(["role": "user", "content": userMessage])
 
         // max_tokens covers thinking + the JSON — 1500 was Haiku's ceiling
@@ -1313,6 +1319,59 @@ class ClaudeService {
         }
         #endif
         return try parseResponse(text)
+    }
+
+    // MARK: - Small-talk lane (the router's cheap side, Sep 2026)
+
+    /// Pure conversation answered by Haiku with a tiny personality prompt —
+    /// no capture rulebook, no JSON envelope, ~0.05¢ and sub-second, versus
+    /// ~6¢ through the Opus capture path. `HomeTabView.isSmallTalk` is the
+    /// deterministic gate that routes here; the safety net for gate
+    /// mistakes lives in THIS prompt: the model must never claim to have
+    /// saved anything, and redirects real work back to a fresh message
+    /// (which routes to capture).
+    func smallTalk(
+        userMessage: String,
+        conversationHistory: [ChatMessage]
+    ) async throws -> String {
+        let system = """
+        You are Nudge, a warm, low-key companion inside the Nudge task app, built to be gentle for ADHD brains. The user is just chatting — reply in ONE short friendly sentence (two max). Match their energy. Never guilt, never pressure, never lecture.
+        HARD RULES:
+        - You CANNOT create, change, complete, or save anything from this reply. NEVER claim or imply that you did.
+        - If their message actually contains a task, event, or plan, say you'd love to grab that — ask them to send it again as its own message so it gets saved properly.
+        - No promises about outcomes. At most one emoji.
+        """
+        var messages = conversationHistory.suffix(6).map { msg in
+            ["role": msg.role, "content": msg.content]
+        }
+        messages.append(["role": "user", "content": userMessage])
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 300,
+            "system": system,
+            "messages": messages
+        ]
+
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let resp = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        #if DEBUG
+        if let usage = resp.usage {
+            print("[ClaudeService] USAGE: in=\(usage.inputTokens ?? 0) out=\(usage.outputTokens ?? 0) model=\(model) (small-talk lane)")
+        }
+        #endif
+        guard let text = resp.content.first(where: { $0.type == nil || $0.type == "text" })?.text,
+              !text.isEmpty else {
+            throw ClaudeError.emptyResponse
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func makePrepPlanRequest(body: [String: Any]) async throws -> PrepPlanResponse {

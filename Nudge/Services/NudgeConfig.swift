@@ -327,6 +327,12 @@ enum NudgeConfig {
     /// site only; a stated duration always wins.
     static let defaultTimedIntentMinutes: Int = 60
 
+    /// How many recent chat messages ride along with each capture call —
+    /// the whole history was re-sent every turn, growing the input bill
+    /// linearly with session length (Sep 2026). 12 = six exchanges, enough
+    /// for follow-up answers and "the essay I mentioned".
+    static let chatHistoryMaxMessages: Int = 12
+
     /// Upper bound on the duration a calendar / iCal import may write to
     /// `NudgeTask.estimatedMinutes`. Real end times are honored up to this
     /// cap; anything longer is almost always a multi-day span entered as a
