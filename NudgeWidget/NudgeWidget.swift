@@ -1555,19 +1555,38 @@ struct WidgetTimeBlockStrip: View {
         GeometryReader { geo in
             let w = geo.size.width
             let barTop = labelH + tickH
+            // Label declutter (Roman, Sep 2026): blocks that start close
+            // together were stacking their time labels into an unreadable
+            // pile. Walk the blocks in start order and grant a label only
+            // when it clears the previous label's right edge (~40pt at
+            // this type size) — the block and tick still draw, so the
+            // schedule stays complete; only the redundant text yields.
+            let sortedBlocks = entry.timeBlocks.sorted { $0.start < $1.start }
+            let labeledIDs: Set<UUID> = {
+                var granted: Set<UUID> = []
+                var lastLabelMaxX: CGFloat = -.greatestFiniteMagnitude
+                for block in sortedBlocks where rawFraction(for: block.start) >= 0 {
+                    let x = min(fraction(for: block.start) * w, w - 34)
+                    if x >= lastLabelMaxX + 6 {
+                        granted.insert(block.id)
+                        lastLabelMaxX = x + 40
+                    }
+                }
+                return granted
+            }()
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(WidgetColors.chipBackground)
                     .frame(width: w, height: barHeight)
                     .offset(y: barTop)
 
-                ForEach(entry.timeBlocks) { block in
+                ForEach(sortedBlocks) { block in
                     let startX = fraction(for: block.start) * w
                     let endDate = block.start.addingTimeInterval(Double(block.durationMinutes) * 60)
                     let blockW = max(fraction(for: endDate) * w - startX, 4)
-                    // Only flag the start time when the block genuinely starts
-                    // inside the window (not clipped off the left edge).
-                    let startsInWindow = rawFraction(for: block.start) >= 0
+                    // Label only when in-window AND granted by the
+                    // declutter pass above.
+                    let startsInWindow = labeledIDs.contains(block.id)
 
                     // The block itself. Tinted by day slot, matching the app's
                     // timeline and Today rows; events take the one stone tint

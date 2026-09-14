@@ -553,10 +553,17 @@ class ClaudeService {
         // `fallbacks: "default"` (server-side, beta): if Opus 5's safety
         // layer refuses a message, the request reroutes to a fallback model
         // instead of surfacing an error bubble for a grocery list.
+        // effort "low" (cycle-less fix, Sep 2026): capture is structured
+        // extraction against a detailed rulebook — deep adaptive thinking
+        // at the default effort was burning ~7K thinking tokens (≈ 17¢ at
+        // Opus output pricing) and most of the latency per dump. Low
+        // effort keeps thinking on but shallow; if canonical dumps regress,
+        // step to "medium" before blaming the model.
         let body: [String: Any] = [
             "model": captureModel,
             "max_tokens": 8000,
             "fallbacks": "default",
+            "output_config": ["effort": "low"],
             "system": fullSystemPrompt,
             "messages": messages
         ]
@@ -1281,6 +1288,13 @@ class ClaudeService {
         let (data, response) = try await URLSession.shared.data(for: req)
         try validateResponse(data: data, response: response)
         let resp = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        #if DEBUG
+        if let usage = resp.usage {
+            let inTok = usage.inputTokens ?? 0
+            let outTok = usage.outputTokens ?? 0
+            print("[ClaudeService] USAGE: in=\(inTok) out=\(outTok) (out includes thinking) model=\(body["model"] as? String ?? "?")")
+        }
+        #endif
         // First TEXT block, not first block: thinking-capable models
         // (capture runs Opus 5) lead with a thinking block whose text is
         // empty/absent, and reading content[0] blindly would hand the parser
@@ -1449,6 +1463,11 @@ class ClaudeService {
 
 struct AnthropicResponse: Codable {
     let content: [ContentBlock]
+    /// Token accounting — decoded so DEBUG can print the input/output
+    /// split per call. Output includes THINKING tokens, which is where an
+    /// expensive slow capture hides (Sep 2026: a routine dump cost 24¢,
+    /// ~70% of it thinking at default effort).
+    let usage: Usage?
 
     // `type`/`text` optional: thinking-capable models (capture runs Opus 5)
     // return thinking blocks with no `text` field, and a required `text`
@@ -1456,6 +1475,16 @@ struct AnthropicResponse: Codable {
     struct ContentBlock: Codable {
         let type: String?
         let text: String?
+    }
+
+    struct Usage: Codable {
+        let inputTokens: Int?
+        let outputTokens: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case inputTokens = "input_tokens"
+            case outputTokens = "output_tokens"
+        }
     }
 }
 
