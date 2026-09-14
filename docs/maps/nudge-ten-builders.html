@@ -1,0 +1,321 @@
+<title>The Ten Builders</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+  figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px 18px 14px; overflow-x:auto; }
+  figure svg { display:block; min-width:680px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption { font-size:13px; color:var(--muted); border-top:1px solid var(--line); margin-top:16px; padding-top:12px; max-width:74ch; }
+  figcaption .fig { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); margin-right:6px; }
+  svg { color: var(--ink); }
+  svg text { font-family:"Lexend",sans-serif; font-size:12.5px; fill:var(--ink); }
+  svg text.m { font-family:"IBM Plex Mono",monospace; font-size:11px; }
+  svg text.s { font-size:10.5px; fill:var(--muted); }
+  svg text.acct { fill:var(--accent); }
+  svg text.warnt { fill:var(--warn); }
+  svg .wire { stroke:currentColor; stroke-width:1.2; fill:none; }
+  svg .wire.acc { stroke:var(--accent); }
+  svg .wire.warn { stroke:var(--warn); }
+  svg .wire.dash { stroke-dasharray:5 4; }
+  svg .pin { fill:var(--accent); }
+  svg .pinw { fill:var(--warn); }
+
+  /* cards */
+  .cards { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width: 720px) { .cards { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:16px 18px; }
+  .card header { display:flex; align-items:baseline; gap:10px; margin-bottom:6px; }
+  .card .num { font-family:"IBM Plex Mono",monospace; font-size:20px; font-weight:600; color:var(--faint); }
+  .card h3 { margin:0; font-size:16px; font-weight:600; }
+  .card .kind { font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--accent); margin-left:auto; }
+  .badge { display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:600;
+    letter-spacing:0.08em; padding:1px 8px; border-radius:99px; border:1px solid; margin-bottom:8px; }
+  .badge.exempt { color:var(--warn); border-color:var(--warn); background:var(--warn-soft); }
+  .badge.counts { color:var(--muted); border-color:var(--line); background:var(--panel-2); }
+  .card dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:13.5px; }
+  .card dt { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); padding-top:3px; }
+  .card dd { margin:0; }
+  .card .say { font-style:italic; color:var(--muted); font-size:13px; border-left:2px solid var(--line); padding-left:10px; margin:10px 0 0; }
+  .note { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:4px; padding:12px 16px; font-size:14px; max-width:74ch; margin:18px 0 0; }
+  .note .why { color:var(--muted); }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <div class="name">
+      <h1>The Ten Builders</h1>
+      <p class="sub">Every notification Nudge can send comes from exactly one of ten builders. Each proposes candidates for one situation, at one anchor in the day — and each is measured separately, because its outcome kind is its analytics identity.</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-BLD-03</span></div>
+      <div><span class="k">Census</span><span class="v">CONTEXT.md ⚙</span></div>
+      <div><span class="k">Revision</span><span class="v">2026-09-13</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 THE DAY MAP ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>Where the day's nudges anchor</h2>
+    <p class="lede">Nothing fires at a fixed clock time. Six builders anchor at an <strong>offset from the user's wake time</strong>, so the whole rhythm shifts with their schedule; the other four anchor to a <strong>thing</strong> — an event, a deadline, a timeline slot — and fire relative to it. If an anchor has already passed when the arbiter runs, it rolls to tomorrow.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 330" role="img" aria-label="A day axis from wake to bedtime with six wake-anchored builders pinned at their offsets, and four object-anchored builders shown firing relative to an event, a deadline, and a timeline slot.">
+        <defs>
+          <marker id="b1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- axis -->
+        <line class="wire" x1="40" y1="140" x2="890" y2="140" marker-end="url(#b1)"/>
+        <line class="wire" x1="60" y1="128" x2="60" y2="152" stroke-width="2"/>
+        <text class="m" x="60" y="170" text-anchor="middle" font-weight="600">WAKE</text>
+        <text class="s" x="60" y="186" text-anchor="middle">e.g. 08:00</text>
+        <line class="wire" x1="850" y1="128" x2="850" y2="152" stroke-width="2"/>
+        <text class="m" x="850" y="170" text-anchor="middle" font-weight="600">BED</text>
+
+        <!-- wake-anchored pins (above axis) -->
+        <g>
+          <circle class="pin" cx="110" cy="140" r="4"/>
+          <line class="wire acc" x1="110" y1="136" x2="110" y2="96"/>
+          <text class="m acct" x="110" y="84" text-anchor="middle">+30 m</text>
+          <text x="110" y="66" text-anchor="middle" font-size="12" font-weight="500">morning prompt</text>
+        </g>
+        <g>
+          <circle class="pin" cx="240" cy="140" r="4"/>
+          <line class="wire acc" x1="240" y1="136" x2="240" y2="56"/>
+          <text class="m acct" x="240" y="44" text-anchor="middle">+2 h</text>
+          <text x="240" y="26" text-anchor="middle" font-size="12" font-weight="500">prep · come-back</text>
+        </g>
+        <g>
+          <circle class="pin" cx="330" cy="140" r="4"/>
+          <line class="wire acc" x1="330" y1="136" x2="330" y2="96"/>
+          <text class="m acct" x="330" y="84" text-anchor="middle">+3 h</text>
+          <text x="330" y="66" text-anchor="middle" font-size="12" font-weight="500">idle</text>
+        </g>
+        <g>
+          <circle class="pin" cx="500" cy="140" r="4"/>
+          <line class="wire acc" x1="500" y1="136" x2="500" y2="56"/>
+          <text class="m acct" x="500" y="44" text-anchor="middle">+6 h</text>
+          <text x="500" y="26" text-anchor="middle" font-size="12" font-weight="500">floater check-in</text>
+        </g>
+        <g>
+          <circle class="pin" cx="610" cy="140" r="4"/>
+          <line class="wire acc" x1="610" y1="136" x2="610" y2="96"/>
+          <text class="m acct" x="610" y="84" text-anchor="middle">+8 h</text>
+          <text x="610" y="66" text-anchor="middle" font-size="12" font-weight="500">goal lapse</text>
+        </g>
+
+        <!-- object-anchored (below axis) -->
+        <g>
+          <rect x="660" y="210" width="90" height="30" rx="4" fill="var(--panel-2)" stroke="currentColor" stroke-width="1.1"/>
+          <text x="705" y="230" text-anchor="middle" font-size="11.5">class 16:00</text>
+          <circle class="pinw" cx="645" cy="140" r="4"/>
+          <line class="wire warn" x1="645" y1="144" x2="645" y2="204"/>
+          <polyline class="wire warn dash" points="655,225 645,225 645,208" fill="none"/>
+          <text class="m warnt" x="628" y="258" text-anchor="end">event block · 60 m before</text>
+          <line class="wire warn dash" x1="632" y1="252" x2="645" y2="240"/>
+        </g>
+        <g>
+          <rect x="790" y="210" width="100" height="30" rx="4" fill="var(--panel-2)" stroke="currentColor" stroke-width="1.1"/>
+          <text x="840" y="230" text-anchor="middle" font-size="11.5">essay due 21:00</text>
+          <circle class="pinw" cx="775" cy="140" r="4"/>
+          <line class="wire warn" x1="775" y1="144" x2="775" y2="270"/>
+          <text class="m warnt" x="770" y="290" text-anchor="middle">dueSoon · 2 h before a real deadline</text>
+        </g>
+        <g>
+          <rect x="360" y="210" width="110" height="30" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.1"/>
+          <text x="415" y="230" text-anchor="middle" font-size="11.5">your 12:00 slot</text>
+          <circle class="pinw" cx="405" cy="140" r="4"/>
+          <line class="wire warn" x1="405" y1="144" x2="405" y2="204"/>
+          <text class="m warnt" x="300" y="262" text-anchor="start">placementLead · 5 m before your slot</text>
+          <text class="m warnt" x="300" y="280" text-anchor="start">placementMissed · 30 m after it passes, repeating</text>
+          <line class="wire warn dash" x1="430" y1="256" x2="412" y2="244"/>
+        </g>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>Blue pins are wake-anchored suggestions; amber pins are object-anchored facts. The rollover rule: a passed anchor moves to tomorrow rather than giving up — a builder that gave up instead of rolling is why one nudge never fired for months.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 2.0 THE CATALOG ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>The catalog</h2>
+    <p class="lede"><strong>EXEMPT</strong> builders state facts — they skip the shared gates and the daily budget, self-checking only what applies to them, and are seeded into the winner set first. <strong>COUNTS</strong> builders make suggestions — they pass every gate and compete for 10 budget slots at 90-minute spacing.</p>
+
+    <div class="cards">
+
+      <div class="card">
+        <header><span class="num">01</span><h3>Event blocks</h3><span class="kind">eventBlock</span></header>
+        <span class="badge exempt">EXEMPT — a fact</span>
+        <dl>
+          <dt>Fires</dt><dd>60 min before the first event of a cluster (back-to-back events share one heads-up)</dd>
+          <dt>Targets</dt><dd>Today's calendar events</dd>
+          <dt>Notable</dt><dd>Deliberately actionless — an FYI before class wants no decision from you. The one notification kind Roman kept.</dd>
+        </dl>
+        <p class="say">"Class in 1 hour."</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">02</span><h3>Morning prompt</h3><span class="kind">morningPrompt</span></header>
+        <span class="badge exempt">EXEMPT — the day's anchor</span>
+        <dl>
+          <dt>Fires</dt><dd>Wake + 30 min</dd>
+          <dt>Targets</dt><dd>Names the day's biggest open task, ranked by stakes</dd>
+          <dt>Notable</dt><dd>Skips packed days; a task steps aside after 2 straight mornings; repeats rather than naming something a whole tier less important. Tap lands in Home chat.</dd>
+        </dl>
+        <p class="say">"Biggest thing today: finish the essay."</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">03</span><h3>Idle check-in</h3><span class="kind">idle</span></header>
+        <span class="badge counts">COUNTS</span>
+        <dl>
+          <dt>Fires</dt><dd>Wake + 3 h — if no session started and nothing completed</dd>
+          <dt>Targets</dt><dd>The plan's next item, else the top-scored task</dd>
+          <dt>Notable</dt><dd>The paralysis-breaker. Its "Not yet" reply survives cold launches via a durable app-group handoff.</dd>
+        </dl>
+        <p class="say">"Want to start with a 10-minute session?"</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">04</span><h3>Prep — "start early"</h3><span class="kind">prep</span></header>
+        <span class="badge counts">COUNTS</span>
+        <dl>
+          <dt>Fires</dt><dd>Wake + 2 h on a planner-picked day before a deadline</dd>
+          <dt>Targets</dt><dd>Deadline work worth starting ahead of time</dd>
+          <dt>Notable</dt><dd>The fire <em>day</em> comes from StartByPlanner; the walk stops at the deadline — never nudges "get ahead" on something already late.</dd>
+        </dl>
+        <p class="say">"Good day to start on the lab report."</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">05</span><h3>Due soon — "this is landing"</h3><span class="kind">dueSoon</span></header>
+        <span class="badge exempt">EXEMPT — a fact</span>
+        <dl>
+          <dt>Fires</dt><dd>2 h before a real deadline, once per task ever</dd>
+          <dt>Targets</dt><dd>Only genuine deadlines — never intentions, never generated study days</dd>
+          <dt>Notable</dt><dd>Deadlines in the same hour batch into one notification. Since the deadline/intent split, this can no longer fire on fabricated pressure.</dd>
+        </dl>
+        <p class="say">"Essay due at 11:59 tonight."</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">06</span><h3>Floater check-in</h3><span class="kind">floater</span></header>
+        <span class="badge counts">COUNTS</span>
+        <dl>
+          <dt>Fires</dt><dd>Wake + 6 h</dd>
+          <dt>Targets</dt><dd>Open tasks with no deadline and no upcoming intent day — including intentions whose day slipped</dd>
+          <dt>Notable</dt><dd>Starved for months because capture dated everything; the intent split created its population. Wake+6h is a known-bad anchor, parked until outcome data exists.</dd>
+        </dl>
+        <p class="say">"'Organize desk' is still open — got a slot for it?"</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">07</span><h3>Come-back</h3><span class="kind">comeBack</span></header>
+        <span class="badge counts">COUNTS</span>
+        <dl>
+          <dt>Fires</dt><dd>3 quiet days after last engagement, at wake + 2 h</dd>
+          <dt>Targets</dt><dd>The user, not a task — names the nearest upcoming thing</dd>
+          <dt>Notable</dt><dd>Scheduled on <em>every</em> run; any engagement pushes it forward, so it only ever fires for someone genuinely away. Forward-looking copy only — never guilt.</dd>
+        </dl>
+        <p class="say">"'Chem quiz' is coming up Friday. Your list is ready when you are."</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">08</span><h3>Goal lapse</h3><span class="kind">goalLapse</span></header>
+        <span class="badge counts">COUNTS</span>
+        <dl>
+          <dt>Fires</dt><dd>30 days after a goal's last activity, wake + 8 h, at most monthly per goal</dd>
+          <dt>Targets</dt><dd>One neglected personal goal per run</dd>
+          <dt>Notable</dt><dd>Deliberate bait — near-contentless; the real message waits in the Tasks message box the tap opens, with a one-tap "20 minutes on it" offer.</dd>
+        </dl>
+        <p class="say">"Got a minute?"</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">09</span><h3>Placement heads-up</h3><span class="kind">placementLead</span></header>
+        <span class="badge counts">COUNTS</span>
+        <dl>
+          <dt>Fires</dt><dd>5 min before a timeline slot; close slots share one</dd>
+          <dt>Targets</dt><dd>Tasks you placed (or scheduled by saying "at 9am")</dd>
+          <dt>Notable</dt><dd>Urgency floored high — your own plan slipping <em>is</em> the urgency signal.</dd>
+        </dl>
+        <p class="say">"Python session in 5 minutes."</p>
+      </div>
+
+      <div class="card">
+        <header><span class="num">10</span><h3>Placement follow-up</h3><span class="kind">placementMissed</span></header>
+        <span class="badge counts">COUNTS</span>
+        <dl>
+          <dt>Fires</dt><dd>30 min after a slot passes unstarted, then every 2 h, max 4 tries, ends at midnight</dd>
+          <dt>Targets</dt><dd>The slot that slipped</dd>
+          <dt>Notable</dt><dd>Pre-scheduled as a series so it works even if the app never runs. Completing or unscheduling the task ends it declaratively.</dd>
+        </dl>
+        <p class="say">"The 12:00 Python block slipped — still doable today?"</p>
+      </div>
+
+    </div>
+
+    <div class="note"><strong>Why exactly one outcome kind per builder:</strong> <span class="why">the kind is the measurement identity. Two features once shared a kind, and their rows were indistinguishable — neither could be evaluated. Retired kinds you may see in old data: <code>getAhead</code> (split into prep + dueSoon) and break-it-down (removed entirely; do not resurrect).</span></div>
+  </section>
+
+  <!-- ════════ 3.0 WHY TWO LANES ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>Why two lanes exist at all</h2>
+    <p class="lede">The split is a product stance, not an implementation detail: <strong>facts about the world</strong> (a class is starting, a deadline is landing) must always arrive — silencing them requires an explicit per-kind toggle. <strong>Suggestions</strong> (start something, check in, come back) compete under a budget precisely so the app never becomes the thing an overwhelmed user learns to ignore. Every builder in the second lane can stand down entirely and say nothing — a quiet day is a valid output.</p>
+  </section>
+
+  <footer>
+    Companion documents: SYS-MAP-01 (system map) · SYS-ARB-02 (inside the arbiter) · census source: docs/plan/CONTEXT.md ⚙ tables, stamped 2026-09-03
+  </footer>
+</div>

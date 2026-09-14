@@ -1,0 +1,350 @@
+<title>How Nudge Tells Time</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444; --danger-soft: #F3DCDC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B; --danger-soft: #3A2626;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B; --danger-soft: #3A2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+  figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px 18px 14px; overflow-x:auto; }
+  figure svg { display:block; min-width:680px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption { font-size:13px; color:var(--muted); border-top:1px solid var(--line); margin-top:16px; padding-top:12px; max-width:74ch; }
+  figcaption .fig { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); margin-right:6px; }
+  svg { color: var(--ink); }
+  svg text { font-family:"Lexend",sans-serif; font-size:12.5px; fill:var(--ink); }
+  svg text.m { font-family:"IBM Plex Mono",monospace; font-size:11px; }
+  svg text.s { font-size:10.5px; fill:var(--muted); }
+  svg text.acct { fill:var(--accent); }
+  svg text.warnt { fill:var(--warn); }
+  svg text.goodt { fill:var(--good); }
+  svg text.dngt { fill:var(--danger); }
+  svg .wire { stroke:currentColor; stroke-width:1.2; fill:none; }
+  svg .wire.acc { stroke:var(--accent); }
+  svg .wire.warn { stroke:var(--warn); }
+  svg .wire.dng { stroke:var(--danger); }
+  svg .wire.dash { stroke-dasharray:5 4; }
+  svg .box { fill:var(--panel-2); stroke:currentColor; stroke-width:1.2; }
+  svg .soft { fill:var(--panel); stroke:var(--line); stroke-width:1; }
+  svg .accb { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.2; }
+  svg .warnb { fill:var(--warn-soft); stroke:var(--warn); stroke-width:1.2; }
+  svg .goodb { fill:var(--good-soft); stroke:var(--good); stroke-width:1.2; }
+  svg .dngb { fill:var(--danger-soft); stroke:var(--danger); stroke-width:1.2; }
+  svg .ghost { fill:none; stroke:var(--faint); stroke-width:1; stroke-dasharray:4 4; }
+  .gaps { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .gaps li { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--danger);
+    border-radius:4px; padding:12px 16px; font-size:14px; }
+  .gaps li.fixed { border-left-color:var(--good); }
+  .gaps li.pending { border-left-color:var(--warn); }
+  .gaps li strong { font-weight:500; }
+  .gaps li .why { color:var(--muted); }
+  .gaps .tag { font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:600; letter-spacing:0.08em;
+    padding:1px 8px; border-radius:99px; border:1px solid; margin-left:6px; white-space:nowrap; }
+  .tag.open { color:var(--danger); border-color:var(--danger); }
+  .tag.appr { color:var(--warn); border-color:var(--warn); }
+  .tag.done { color:var(--good); border-color:var(--good); }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <div class="name">
+      <h1>How Nudge Tells Time</h1>
+      <p class="sub">The app runs on three overlapping definitions of "when" — the calendar day, the user's awake window, and the today-horizon. Most of the behavior you've noticed at the edges lives in the seams between them.</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-TIME-04</span></div>
+      <div><span class="k">Status</span><span class="v">MAP + KNOWN GAPS</span></div>
+      <div><span class="k">Revision</span><span class="v">2026-09-13</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 ONE DAY, FOUR WINDOWS ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>One day, four windows</h2>
+    <p class="lede">A single calendar day (example: wake 08:00, bed 23:00) is carved into <strong>nested windows, each owned by a different subsystem</strong>. An item can be perfectly valid in one window and invisible in another — that's not one bug, it's the architecture, and the seams are where your observations live.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 400" role="img" aria-label="A 24-hour axis with four stacked bands: the calendar day from midnight to midnight, the timeline strip from wake minus 30 minutes to bedtime, the planning window from wake plus 30 to bed minus 60, and the quiet-hours suppression window. Two example items — a 6:30 am event and a 23:45 task — fall outside the strip and are marked invisible.">
+        <defs>
+          <marker id="t1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- hour axis: x = 40 + min * (840/1440) -->
+        <line class="wire" x1="40" y1="52" x2="880" y2="52"/>
+        <g>
+          <line class="wire" x1="40" y1="46" x2="40" y2="58"/><text class="s m" x="40" y="38" text-anchor="middle">00:00</text>
+          <line class="wire" x1="215" y1="46" x2="215" y2="58"/><text class="s m" x="215" y="38" text-anchor="middle">05:00</text>
+          <line class="wire" x1="320" y1="46" x2="320" y2="58"/><text class="s m" x="320" y="38" text-anchor="middle">08:00</text>
+          <line class="wire" x1="460" y1="46" x2="460" y2="58"/><text class="s m" x="460" y="38" text-anchor="middle">12:00</text>
+          <line class="wire" x1="670" y1="46" x2="670" y2="58"/><text class="s m" x="670" y="38" text-anchor="middle">18:00</text>
+          <line class="wire" x1="845" y1="46" x2="845" y2="58"/><text class="s m" x="845" y="38" text-anchor="middle">23:00</text>
+          <line class="wire" x1="880" y1="46" x2="880" y2="58"/><text class="s m" x="880" y="38" text-anchor="middle">24:00</text>
+        </g>
+
+        <!-- Band 1: calendar day -->
+        <rect class="soft" x="40" y="76" width="840" height="40" rx="4"/>
+        <text class="m" x="52" y="94" font-weight="600">CALENDAR DAY</text>
+        <text class="s" x="52" y="109">owns membership: isDateInToday · dueDate · intendedDate — a bare due date means 23:59, not midnight</text>
+        <line class="wire dash" x1="874" y1="76" x2="874" y2="116"/>
+        <text class="s warnt" x="868" y="130" text-anchor="end">23:59 deadline convention</text>
+
+        <!-- Band 2: timeline strip (wake-30 = 07:30 → 23:00): x 302.5 → 845 -->
+        <rect class="accb" x="302" y="150" width="543" height="40" rx="4"/>
+        <text class="m" x="314" y="168" font-weight="600">TIMELINE STRIP (what you SEE)</text>
+        <text class="s" x="314" y="183">wake − 30 m → bedtime · items outside are CLIPPED, not rejected</text>
+        <rect class="ghost" x="40" y="150" width="262" height="40" rx="4"/>
+        <text class="s" x="171" y="174" text-anchor="middle" fill="var(--faint)">exists in data · invisible here</text>
+        <rect class="ghost" x="845" y="150" width="35" height="40" rx="4"/>
+
+        <!-- Band 3: planning window (08:30 → 22:00): x 337.5 → 810 -->
+        <rect class="goodb" x="337" y="214" width="473" height="40" rx="4"/>
+        <text class="m" x="349" y="232" font-weight="600">PLANNING WINDOW (DayWindow)</text>
+        <text class="s" x="349" y="247">wake + 30 m → bed − 60 m · the ONLY hours Plan-my-day will place into</text>
+
+        <!-- Band 4: quiet hours (suppression: bed→wake, i.e. outside 08:00-23:00) -->
+        <rect class="warnb" x="40" y="278" width="280" height="40" rx="4"/>
+        <rect class="warnb" x="845" y="278" width="35" height="40" rx="4"/>
+        <rect class="soft" x="320" y="278" width="525" height="40" rx="4"/>
+        <text class="m" x="52" y="296" font-weight="600">QUIET HOURS</text>
+        <text class="s" x="52" y="311">suggestions suppressed</text>
+        <text class="s" x="332" y="296">suggestions allowed (facts — event & deadline reminders — ignore this band entirely)</text>
+        <text class="s" x="332" y="311">defaults to the sleep schedule; separately settable</text>
+
+        <!-- example items -->
+        <g>
+          <circle cx="267" cy="150" r="5" fill="var(--danger)"/>
+          <line class="wire dng dash" x1="267" y1="120" x2="267" y2="145"/>
+          <text class="s dngt" x="267" y="112" text-anchor="middle">6:30 am work shift</text>
+          <text class="s" x="267" y="126" text-anchor="middle" fill="var(--faint)">real · counted as busy · not drawn</text>
+        </g>
+        <g>
+          <circle cx="862" cy="214" r="5" fill="var(--danger)"/>
+          <line class="wire dng dash" x1="862" y1="190" x2="862" y2="209"/>
+          <text class="s dngt" x="805" y="182" text-anchor="start">23:45 task</text>
+          <text class="s" x="770" y="196" text-anchor="start" fill="var(--faint)">planner will never place it; strip clips it</text>
+        </g>
+
+        <!-- countdown night rule -->
+        <rect class="soft" x="40" y="344" width="840" height="40" rx="4"/>
+        <text class="m" x="52" y="362" font-weight="600">DISPLAY NIGHT RULE (CountdownState)</text>
+        <text class="s" x="52" y="377">23:00 – 07:00 · countdown subtitles go quiet at night — a display window, unrelated to the two above</text>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>Four windows, four owners, four different edge behaviors: the calendar day <em>includes</em> everything; the strip <em>clips</em> silently; the planner <em>refuses</em> politely; quiet hours <em>suppress</em> suggestions but wave facts through. "The app has trouble with things outside wake/bed" is precisely the strip's silent clip — the data is fine, the rendering window isn't.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 2.0 THE TODAY HORIZON ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>The horizon — detail collapses one day out</h2>
+    <p class="lede">The app's model of <strong>today</strong> is rich: a drawn timeline, colored slots, a plan, placement nudges. Its model of <strong>tomorrow</strong> is a handful of date fields with almost no surface to live on. Data survives past today; <em>rendering</em> mostly doesn't — so future items historically leaked into today's surfaces or vanished, because nothing else claimed them.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 380" role="img" aria-label="Four columns — today, tomorrow, this week, beyond — each stacked with the surfaces that render that day. Today's column is full; tomorrow's is nearly empty with two surfaces marked as approved but unbuilt; later columns show only the events list and data fields.">
+        <defs>
+          <marker id="t2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- column headers -->
+        <text class="m" x="145" y="30" text-anchor="middle" font-weight="600">TODAY</text>
+        <text class="m" x="390" y="30" text-anchor="middle" font-weight="600">TOMORROW</text>
+        <text class="m" x="620" y="30" text-anchor="middle" font-weight="600">DAYS +2 … +7</text>
+        <text class="m" x="830" y="30" text-anchor="middle" font-weight="600">BEYOND</text>
+        <line class="wire dash" x1="268" y1="20" x2="268" y2="360"/>
+        <line class="wire dash" x1="512" y1="20" x2="512" y2="360"/>
+        <line class="wire dash" x1="730" y1="20" x2="730" y2="360"/>
+
+        <!-- TODAY column -->
+        <rect class="accb" x="45" y="46" width="200" height="34" rx="4"/>
+        <text x="145" y="68" text-anchor="middle" font-size="12">timeline strip + slot colors</text>
+        <rect class="accb" x="45" y="88" width="200" height="34" rx="4"/>
+        <text x="145" y="110" text-anchor="middle" font-size="12">numbered, reorderable plan</text>
+        <rect class="accb" x="45" y="130" width="200" height="34" rx="4"/>
+        <text x="145" y="152" text-anchor="middle" font-size="12">Plan-my-day placement</text>
+        <rect class="accb" x="45" y="172" width="200" height="34" rx="4"/>
+        <text x="145" y="194" text-anchor="middle" font-size="12">placement nudges (5 m / follow-up)</text>
+        <rect class="accb" x="45" y="214" width="200" height="34" rx="4"/>
+        <text x="145" y="236" text-anchor="middle" font-size="12">widget chart + tinted rows</text>
+        <rect class="accb" x="45" y="256" width="200" height="34" rx="4"/>
+        <text x="145" y="278" text-anchor="middle" font-size="12">events on the strip + Events tab</text>
+
+        <!-- TOMORROW column -->
+        <rect class="goodb" x="290" y="46" width="200" height="34" rx="4"/>
+        <text x="390" y="68" text-anchor="middle" font-size="12">Tomorrow lens — BUILT Sep 13</text>
+        <rect class="goodb" x="290" y="88" width="200" height="34" rx="4"/>
+        <text x="390" y="110" text-anchor="middle" font-size="12">plan №s + events + tasks in lens</text>
+        <rect class="soft" x="290" y="130" width="200" height="34" rx="4"/>
+        <text x="390" y="152" text-anchor="middle" font-size="12">Events tab day group</text>
+        <rect class="soft" x="290" y="172" width="200" height="34" rx="4"/>
+        <text x="390" y="194" text-anchor="middle" font-size="12">Unscheduled list, "Tomorrow" label</text>
+        <rect class="ghost" x="290" y="214" width="200" height="34" rx="4"/>
+        <text x="390" y="236" text-anchor="middle" font-size="12" fill="var(--faint)">no timeline · no slot colors</text>
+        <rect class="goodb" x="290" y="256" width="200" height="34" rx="4"/>
+        <text x="390" y="278" text-anchor="middle" font-size="12">Plan tomorrow — BUILT Sep 13</text>
+
+        <!-- WEEK column -->
+        <rect class="soft" x="530" y="46" width="180" height="34" rx="4"/>
+        <text x="620" y="68" text-anchor="middle" font-size="12">Events tab day groups</text>
+        <rect class="goodb" x="530" y="88" width="180" height="34" rx="4"/>
+        <text x="620" y="110" text-anchor="middle" font-size="12">This-week lens — BUILT Sep 13</text>
+        <rect class="soft" x="530" y="130" width="180" height="34" rx="4"/>
+        <text x="620" y="152" text-anchor="middle" font-size="12">prep/commitment dailies exist</text>
+        <rect class="ghost" x="530" y="172" width="180" height="34" rx="4"/>
+        <text x="620" y="194" text-anchor="middle" font-size="12" fill="var(--faint)">everything else: data only</text>
+
+        <!-- BEYOND column -->
+        <rect class="goodb" x="750" y="46" width="160" height="34" rx="4"/>
+        <text x="830" y="68" text-anchor="middle" font-size="12">Nudge calendar — BUILT</text>
+        <rect class="soft" x="750" y="88" width="160" height="34" rx="4"/>
+        <text x="830" y="110" text-anchor="middle" font-size="12">high-stakes events lens</text>
+        <rect class="soft" x="750" y="130" width="160" height="34" rx="4"/>
+        <text x="830" y="152" text-anchor="middle" font-size="12">tap-to-edit via editor</text>
+
+        <!-- data survives strip -->
+        <rect class="goodb" x="45" y="310" width="865" height="40" rx="4"/>
+        <text class="m goodt" x="60" y="328" font-weight="600">DATA SURVIVES EVERY COLUMN</text>
+        <text class="s" x="60" y="343">dueDate (deadline) · intendedDate (chosen day) · event specificTime · sequenceIndex — only PLACEMENT dies at day's end (swept at rollover)</text>
+      </svg>
+      <figcaption><span class="fig">FIG 2</span>The historical bug class in one picture: with almost nothing rendering tomorrow, membership rules that didn't check dates let tomorrow's items fall into today's surfaces — the residual-bucket problem. The approved Today/Tomorrow/This-week lenses (amber) are the fix: they give future days a surface to legitimately live on.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 3.0 ROLLOVER ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>Day rollover — "tomorrow becomes today" happens at first open, not midnight</h2>
+    <p class="lede">Nothing runs at 00:00. The store still holds yesterday's shape until the app next wakes — a background refresh around 6&nbsp;am, or your first foreground of the day, whichever comes first. Only then does the sweep chain reshape the world for the new day.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 300" role="img" aria-label="Timeline from 23:59 through midnight to a 6 am background wake and the first app open, where a chain of sweeps runs: purge, placement rollover, prep sweep, arbiter, calendar refresh, auto-plan. The stretch between midnight and first wake is marked stale.">
+        <defs>
+          <marker id="t3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <line class="wire" x1="30" y1="80" x2="890" y2="80" marker-end="url(#t3)"/>
+        <line class="wire" x1="120" y1="70" x2="120" y2="90" stroke-width="2"/>
+        <text class="m" x="120" y="108" text-anchor="middle" font-weight="600">00:00</text>
+        <line class="wire" x1="430" y1="72" x2="430" y2="88"/>
+        <text class="m" x="430" y="108" text-anchor="middle">~06:00 BGTask</text>
+        <text class="s" x="430" y="124" text-anchor="middle">(iOS decides; not guaranteed)</text>
+        <line class="wire" x1="640" y1="72" x2="640" y2="88"/>
+        <text class="m" x="640" y="108" text-anchor="middle" font-weight="600">first app open</text>
+        <text class="s" x="640" y="124" text-anchor="middle">the reliable rollover</text>
+
+        <!-- stale zone -->
+        <rect x="120" y="40" width="510" height="26" rx="4" fill="var(--danger-soft)" opacity="0.8"/>
+        <text class="s dngt" x="375" y="57" text-anchor="middle">STALE ZONE — the store still has yesterday's shape (old placements, unswept rows)</text>
+
+        <!-- sweep chain -->
+        <g>
+          <rect class="box" x="470" y="160" width="130" height="40" rx="5"/>
+          <text x="535" y="178" text-anchor="middle" font-size="11.5">purge past events</text>
+          <text class="s" x="535" y="193" text-anchor="middle">+ old records</text>
+
+          <rect class="warnb" x="616" y="160" width="140" height="40" rx="5"/>
+          <text x="686" y="178" text-anchor="middle" font-size="11.5" font-weight="500">PlacementRollover</text>
+          <text class="s" x="686" y="193" text-anchor="middle">clears yesterday's slots</text>
+
+          <rect class="box" x="470" y="216" width="130" height="40" rx="5"/>
+          <text x="535" y="234" text-anchor="middle" font-size="11.5">prep sweep</text>
+          <text class="s" x="535" y="249" text-anchor="middle">today's study dailies</text>
+
+          <rect class="box" x="616" y="216" width="140" height="40" rx="5"/>
+          <text x="686" y="234" text-anchor="middle" font-size="11.5">arbiter reevaluate</text>
+          <text class="s" x="686" y="249" text-anchor="middle">rebuild all nudges</text>
+
+          <rect class="box" x="470" y="272" width="130" height="24" rx="5"/>
+          <text x="535" y="288" text-anchor="middle" font-size="11">calendar refresh</text>
+
+          <rect class="goodb" x="616" y="272" width="140" height="24" rx="5"/>
+          <text x="686" y="288" text-anchor="middle" font-size="11">auto-plan (once/day)</text>
+
+          <line class="wire" x1="640" y1="90" x2="640" y2="156" marker-end="url(#t3)"/>
+          <line class="wire" x1="600" y1="180" x2="612" y2="180" marker-end="url(#t3)"/>
+          <polyline class="wire" points="756,180 776,180 776,236 760,236" fill="none" marker-end="url(#t3)"/>
+          <line class="wire" x1="616" y1="236" x2="604" y2="236" marker-end="url(#t3)"/>
+          <polyline class="wire" points="470,236 450,236 450,284 466,284" fill="none" marker-end="url(#t3)"/>
+          <line class="wire" x1="600" y1="284" x2="612" y2="284" marker-end="url(#t3)"/>
+        </g>
+
+        <!-- survivors annotation -->
+        <rect class="soft" x="30" y="160" width="360" height="112" rx="5"/>
+        <text class="m" x="46" y="184" font-weight="600">WHAT CROSSES MIDNIGHT, WHAT DOESN'T</text>
+        <text class="s goodt" x="46" y="206">✓ survives: deadlines · intent days (a slipped intent is information)</text>
+        <text class="s goodt" x="46" y="224">✓ survives: plan numbers · events · outcome history</text>
+        <text class="s dngt" x="46" y="246">✗ cleared: yesterday's timeline placements — manual ones included;</text>
+        <text class="s" x="60" y="262">a slot belongs to one specific day, so the task returns to Unscheduled</text>
+      </svg>
+      <figcaption><span class="fig">FIG 3</span>Why "days past today" can feel mushy: the day doesn't turn over as a moment — it turns over as a <em>sweep</em>, whenever the app next runs. Open the app at 00:30 and the chain runs immediately; don't open it, and yesterday's shape lingers until ~6 am or your first look.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 4.0 KNOWN GAPS ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>Known gaps at the edges — your observations, located</h2>
+    <p class="lede">Each entry names the seam it lives in, so a fix targets a mechanism instead of a symptom.</p>
+    <ul class="gaps">
+      <li class="fixed"><strong>Events outside wake−30 → bed now draw at their real time.</strong> <span class="tag done">FIXED — Sep 13</span><br><span class="why">Seam: FIG 1, band 2. The strip's render window stretches to cover every one of today's events (an event's time is a fact); the hour-before notification always fired and is unchanged. TASK placement stays clamped inside wake−30 → bed — taps beyond it propose the nearest in-window time. Tasks outside the day's bounds are a noted, deliberately deferred question ("sometimes people need to do things outside their planning window").</span></li>
+      <li class="fixed"><strong>Future days have a surface: the Today / Tomorrow / This-week lenses.</strong> <span class="tag done">BUILT — Sep 13 (cycle 2026-09-04-01)</span><br><span class="why">Seam: FIG 2, now green. Day membership = intent day ?? placement day; each lens shows its day's plan rows, events, and tasks. Deadline-only tasks deliberately stay in Unscheduled — owed is not scheduled. Beyond +7 remains data-only until the Nudge calendar (step 3).</span></li>
+      <li class="fixed"><strong>Tomorrow's plan tasks no longer show under Today.</strong> <span class="tag done">FIXED — same cycle</span><br><span class="why">Plan membership now reads the task's day: today's slice stays reorderable; a future day's plan rows render under that day, numbered but static.</span></li>
+      <li class="fixed"><strong>Future-day items can no longer bleed into today's now-paths.</strong> <span class="tag done">FIXED — Sep 13 (day-integrity glue)</span><br><span class="why">The airport case: a task intended days out could be seated into today by Plan-my-day, named by the morning prompt, or proposed by the idle nudge. One invariant now guards all six now-paths: a future intent is invisible until its day arrives. Events and placed tasks were already glued; deadlines deliberately stay workable early.</span></li>
+      <li class="fixed"><strong>Planning beyond today.</strong> <span class="tag done">BUILT — Sep 13 (cycle 2026-09-13-03)</span><br><span class="why">The engine is day-parameterized (zero AI, zero tokens). Two doors: "Plan tomorrow" on the Tomorrow lens, "Plan this day" on a future calendar day. Staleness rule per Roman: future-day placements are treated as manual — that day's morning auto-run respects them and refills the remaining gaps, never silently deleting advance work.</span></li>
+      <li class="fixed"><strong>The stale zone between midnight and first open.</strong> <span class="tag done">ACCEPTED — by design (Roman, Sep 13)</span><br><span class="why">Seam: FIG 3. The sweeps run before anything renders on first open, so the stale window is invisible to the user; the ~6 am background task narrows it. Midnight-timer mitigation judged complexity spent on sleeping hours. Documented shrug, on purpose.</span></li>
+      <li><strong>An intention can no longer fabricate a deadline.</strong> <span class="tag done">FIXED — cycle 2026-09-03-01</span><br><span class="why">The old worst edge case: every stated day became "due at 23:59," making countdowns, false overdues, and 6 am dueSoon fires. Kept here because the 23:59 convention (FIG 1) still applies to real deadlines — that part is correct behavior.</span></li>
+      <li><strong>Past-midnight bedtimes.</strong> <span class="tag done">FIXED — DayWindow</span><br><span class="why">A bedtime at/after 00:00 counts as the next calendar day. Historically this emptied the planning window and quiet hours silently; the shared derivation fixed both. The strip guards separately with a 16-hour fallback.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    Companion documents: SYS-MAP-01 · SYS-ARB-02 · SYS-BLD-03 &nbsp;·&nbsp; window sources: DayWindow.swift · TodayTimelineView.swift · PlacementRollover.swift · CountdownState.swift
+  </footer>
+</div>
