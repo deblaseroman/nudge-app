@@ -312,7 +312,7 @@ enum TasksMessageComposer {
             )
             return TasksMessage(
                 headline: "“\(task.title)” is \(when).",
-                detail: dueLine.map { "It's marked high stakes — due \($0)." }
+                detail: dueLine.map { "It's marked high stakes, due \($0)." }
                     ?? "It's marked high stakes."
             )
         }
@@ -405,7 +405,7 @@ enum TasksMessageComposer {
     static func goalInviteMessage(goal: NudgeGoal) -> TasksMessage {
         TasksMessage(
             headline: "Nothing on the list points at “\(goal.title)” right now.",
-            detail: "Want to add one small thing toward it today? Tap the bubble and tell me — a first step can be tiny."
+            detail: "Want to add one small thing toward it today? Tap the bubble and tell me, a first step can be tiny."
         )
     }
 
@@ -421,14 +421,14 @@ enum TasksMessageComposer {
         if isCommitment {
             return TasksMessage(
                 headline: "Do you still want daily time for “\(examTitle)”?",
-                detail: "A day's task for it was removed — that day won't be re-added. "
+                detail: "A day's task for it was removed, that day won't be re-added. "
                     + "The other days are still on your list; delete them too "
                     + "if you'd rather drop it."
             )
         }
         return TasksMessage(
             headline: "Do you still want study time for “\(examTitle)”?",
-            detail: "A study task for it was removed — that day won't be re-added. "
+            detail: "A study task for it was removed, that day won't be re-added. "
                 + "Any other study days are still on your list; delete them too "
                 + "if you'd rather plan it yourself."
         )
@@ -438,9 +438,9 @@ enum TasksMessageComposer {
         let when = daysUntil == 1 ? "tomorrow" : "in \(daysUntil) days"
         let span = daysUntil == 1 ? "for today" : "each day until then"
         return TasksMessage(
-            headline: "Your “\(examTitle)” is \(when) — I've added study time \(span).",
+            headline: "Your “\(examTitle)” is \(when), I've added study time \(span).",
             detail: "One study task per day, through the day before. "
-                + "Delete any you don't want — removed days stay removed."
+                + "Delete any you don't want, removed days stay removed."
         )
     }
 
@@ -469,9 +469,9 @@ enum TasksMessageComposer {
             perDay = "one task a day"
         }
         return TasksMessage(
-            headline: "“\(context.title)” is set up \(span) — \(perDay).",
+            headline: "“\(context.title)” is set up \(span), \(perDay).",
             detail: "One task per day, on your list and ready to place. "
-                + "Delete any day you don't want — removed days stay removed."
+                + "Delete any day you don't want, removed days stay removed."
         )
     }
 
@@ -504,10 +504,10 @@ enum TasksMessageComposer {
                     ? ""
                     : " To make room, "
                         + outcome.displacedTitles.map { "“\($0)”" }.joined(separator: " and ")
-                        + " went back to Unscheduled — re-place it wherever suits you."
+                        + " went back to Unscheduled, re-place it wherever suits you."
                 return TasksMessage(
-                    headline: "I set up today — \(outcome.placedCount) task\(outcome.placedCount == 1 ? "" : "s") placed into free time.",
-                    detail: "Placed: \(titles). Tap any timeline block to move or remove it — "
+                    headline: "I set up today, \(outcome.placedCount) task\(outcome.placedCount == 1 ? "" : "s") placed into free time.",
+                    detail: "Placed: \(titles). Tap any timeline block to move or remove it, "
                         + "placements you made yourself weren't touched." + displaced
                         + (bandNote.map { " " + $0 } ?? "")
                 )
@@ -536,7 +536,7 @@ enum TasksMessageComposer {
             // contention, evict nothing.
             if let contention = outcome.contentionTitle {
                 return TasksMessage(
-                    headline: "Today is full — “\(contention)” didn't fit.",
+                    headline: "Today is full, “\(contention)” didn't fit.",
                     detail: "Everything placed today matters as much as it does, so nothing was moved. "
                         + "If you want it today, move or remove a timeline block and it can take that spot."
                 )
@@ -548,11 +548,11 @@ enum TasksMessageComposer {
             if let bandNote = bandRefusalSentence(outcome) {
                 let headline = outcome.outOfBandTitles.count == 1
                     ? "“\(outcome.outOfBandTitles[0])” didn't fit today's hours."
-                    : "Nothing placed — the free time is outside the hours these tasks fit."
+                    : "Nothing placed, the free time is outside the hours these tasks fit."
                 return TasksMessage(headline: headline, detail: bandNote)
             }
             return TasksMessage(
-                headline: "No room left today — your calendar is full.",
+                headline: "No room left today, your calendar is full.",
                 detail: "Events, the buffers around them, and existing placements take the rest of today. "
                     + "Unplaced tasks stay in the Unscheduled tab."
             )
@@ -576,7 +576,7 @@ enum TasksMessageComposer {
         let single = outcome.outOfBandTitles.count == 1
         let band = bandPhrase(outcome.outOfBandBands.first ?? "")
         return "\(names) only \(single ? "fits" : "fit") \(band), and today has no free time left there. "
-            + "\(single ? "It stays" : "They stay") in Unscheduled — "
+            + "\(single ? "It stays" : "They stay") in Unscheduled, "
             + "you can still place \(single ? "it" : "them") on the timeline yourself if now works anyway."
     }
 
@@ -632,7 +632,7 @@ enum TasksMessageComposer {
                 return TasksMessage(
                     headline: "That nudge was about “\(task.title).”",
                     detail: "It fires when starting now still leaves room before the deadline"
-                        + (dueLine.map { " — “\(task.title)” is due \($0)." } ?? ".")
+                        + (dueLine.map { ", “\(task.title)” is due \($0)." } ?? ".")
                 )
             }
             return TasksMessage(
@@ -647,7 +647,7 @@ enum TasksMessageComposer {
                 return TasksMessage(
                     headline: "That was a heads-up that a deadline is close.",
                     detail: "Due-soon reminders go out about two hours before something is due"
-                        + (dueLine.map { " — “\(task.title)” is due \($0)." } ?? ".")
+                        + (dueLine.map { ", “\(task.title)” is due \($0)." } ?? ".")
                 )
             }
             return TasksMessage(
@@ -682,7 +682,7 @@ enum TasksMessageComposer {
         case .placementLead:
             if let task {
                 return TasksMessage(
-                    headline: "That was a heads-up about “\(task.title)” — its planned slot is starting.",
+                    headline: "That was a heads-up about “\(task.title)”, its planned slot is starting.",
                     detail: "Timeline heads-ups go out a few minutes before a planned slot. Slots close together share one."
                 )
             }
@@ -716,13 +716,13 @@ enum TasksMessageComposer {
                     let phrase = goalElapsedPhrase(from: last, to: now)
                     return TasksMessage(
                         headline: "It's been \(phrase) since “\(goal.title)” last got any time.",
-                        detail: "That's a goal you told me matters. One small step today counts — want me to put something toward it on the list? Tap the bubble and say the word."
+                        detail: "That's a goal you told me matters. One small step today counts, want me to put something toward it on the list? Tap the bubble and say the word."
                     )
                 }
                 let phrase = goalElapsedPhrase(from: goal.createdAt, to: now)
                 return TasksMessage(
                     headline: "You set “\(goal.title)” \(phrase) ago.",
-                    detail: "Nothing toward it has made it onto the list yet — which is exactly when a first small step helps most. Want one for today? Tap the bubble and say the word."
+                    detail: "Nothing toward it has made it onto the list yet, which is exactly when a first small step helps most. Want one for today? Tap the bubble and say the word."
                 )
             }
             // Goal gone (removed since the bait was scheduled) — say
@@ -1240,7 +1240,7 @@ struct MessageBoxChatShell: View {
             }
         } else {
             seeded.append(MessageBoxChatLine(
-                text: "“Problem set 4” is due Friday — it's the biggest thing on your list.",
+                text: "“Problem set 4” is due Friday, it's the biggest thing on your list.",
                 isUser: false
             ))
         }
@@ -1260,7 +1260,7 @@ struct MessageBoxChatShell: View {
             options = nil
             answered = true
             lines.append(MessageBoxChatLine(
-                text: "Noted. (Prototype — nothing is saved yet.)",
+                text: "Noted. (Prototype, nothing is saved yet.)",
                 isUser: false
             ))
         }
@@ -1276,7 +1276,7 @@ struct MessageBoxChatShell: View {
             options = nil
             answered = true
             lines.append(MessageBoxChatLine(
-                text: "Noted. (Prototype — nothing is saved yet.)",
+                text: "Noted. (Prototype, nothing is saved yet.)",
                 isUser: false
             ))
             draft = ""

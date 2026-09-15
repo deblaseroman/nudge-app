@@ -405,32 +405,10 @@ final class NudgeCopyGenerator {
         // design.
         add(kind: .idle, task: nil)
 
-        // Come-back: the earliest upcoming event or deadline in roughly
-        // the window the come-back's own lookahead uses — the thing worth
-        // coming back for. Events need their own fetch (the open list
-        // above excludes them).
-        var eventDescriptor = FetchDescriptor<NudgeTask>(
-            predicate: #Predicate<NudgeTask> { $0.isInformationalEvent && !$0.isComplete }
-        )
-        eventDescriptor.fetchLimit = 50
-        let events = (try? modelContext.fetch(eventDescriptor)) ?? []
-        let comeBackHorizon = calendar.date(
-            byAdding: .day,
-            value: NudgeConfig.comeBackAfterDays + NudgeConfig.comeBackLookaheadDays,
-            to: now
-        ) ?? now
-        let comeBackTarget = (open + events)
-            .compactMap { task -> (NudgeTask, Date)? in
-                guard let deadline = task.specificTime
-                        ?? (task.dueDate != nil ? task.sortDeadline : nil),
-                      deadline > now, deadline < comeBackHorizon
-                else { return nil }
-                return (task, deadline)
-            }
-            .min { $0.1 < $1.1 }
-        if let (target, _) = comeBackTarget {
-            add(kind: .comeBack, task: target)
-        }
+        // Come-back copy is no longer generated (Sep 2026, Roman's
+        // ruling): its body is his verbatim wording, never names a task,
+        // and the arbiter's resolvedBody skips the kind — so generating
+        // for it would only fill the cache with entries nothing reads.
 
         return requests
     }

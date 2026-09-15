@@ -227,6 +227,7 @@ class ClaudeService {
     - CAPTURE-FIRST: every item in the plan MUST be saved in new_tasks. Never drop or merely ask about an item — even if a duration or detail is fuzzy, save it now (you may still ask a follow-up in "message"). A previous bug dropped an item that was only asked about; do not repeat that.
     - THE DUMP IS NOT ONLY THE PLAN: every distinct commitment or intention in the message becomes an item. Belonging to a stated sequence is a property of an item, not a filter on which items exist. A message that describes a plan may also contain things outside that plan — an appointment, an errand, a deadline mentioned in passing — capture those too, with sequenceIndex null and their own correct isEvent/dates. A dump that mentions nine things and yields eight items has dropped one.
     - Stated durations ("for an hour", "30 min") still go in estimatedMinutes. Do NOT INVENT dueDate/dueTime from a plan's order — being item 2 of a list implies nothing about when. But a day or clock time the user actually STATES on a plan item ("study python tomorrow at 9am, then work on my application") is captured exactly like any other stated time: dueDate/dueTime filled, dueKind "start". Order suppresses inference, never information.
+    - STYLE: never use an em dash ("\u{2014}") anywhere in "message" or any field. Use commas, periods, or colons instead.
     - When you capture a plan, your "message" MUST render it back as a numbered list so the user sees the order, e.g. "Got it — here's your plan: 1. Gym  2. CVS  3. Shower + breakfast  4. Python (1h)". Plain text is fine.
 
     COMMITMENTS (rates, split work, daily quantities):
@@ -1080,6 +1081,7 @@ class ClaudeService {
         TONE RULES — every one is a hard rule, not a style preference:
         - State facts, never verdicts. The deadline, the task, what's possible now.
         - Propose, never promise. No "you'll be fine", "you've got this", "and you're all set" — no outcome the app can't deliver.
+        - Never use an em dash ("\u{2014}"). Use commas or periods.
         - Never imply failure, lateness, or a pattern of avoidance. No guilt framed as motivation.
         - Warm and plain, not peppy. No exclamation marks, no emoji (the app adds its own urgency markers).
         - NEVER use "today", "tomorrow", "tonight", or any relative day word — this copy may be delivered up to three days after you write it. Use the absolute day given in the item ("Friday", "Aug 7") or no day at all.
@@ -1217,6 +1219,7 @@ class ClaudeService {
         - No guilt framed as motivation, no streak language, no "again".
         - END with one small, concrete offer to put a single small step toward the goal on today's list. Small: 15–30 minutes of it, not the whole goal.
         - Warm and plain, not peppy. No exclamation marks, no emoji.
+        - Never use an em dash ("\u{2014}"). Use commas or periods.
         - "headline": one sentence stating the elapsed-time fact, under 90 characters.
         - "detail": two or three short sentences — why it's worth a look now (you may reference what's on their list), then the offer. Under 280 characters.
 
@@ -1340,6 +1343,7 @@ class ClaudeService {
         - You CANNOT create, change, complete, or save anything from this reply. NEVER claim or imply that you did.
         - If their message actually contains a task, event, or plan, say you'd love to grab that — ask them to send it again as its own message so it gets saved properly.
         - No promises about outcomes. At most one emoji.
+        - Never use an em dash ("\u{2014}"). Use commas or periods.
         """
         var messages = conversationHistory.suffix(6).map { msg in
             ["role": msg.role, "content": msg.content]

@@ -426,7 +426,7 @@ struct CalendarTabView: View {
         case .noRoom:
             planDayNote = "No room left on this day."
         case .windowCollapsed:
-            planDayNote = "Couldn't compute this day's window — check wake and bedtime in Settings."
+            planDayNote = "Couldn't compute this day's window, check wake and bedtime in Settings."
         }
     }
 
@@ -640,13 +640,13 @@ struct CalendarTabView: View {
             // Format note (Roman, Sep 2026): the link must be an iCal feed,
             // not a web page — say so, and say where each service hides it.
             VStack(alignment: .leading, spacing: 6) {
-                Text("Paste an iCal link — the address ends in .ics or comes from your calendar's “subscribe” or “publish” option.")
+                Text("Paste an iCal link, the address ends in .ics or comes from your calendar's “subscribe” or “publish” option.")
                     .font(.custom(NudgeTheme.fontBody, size: 14))
                     .foregroundColor(NudgeTheme.textMuted)
                 Text("Canvas: Calendar → Calendar Feed.  Google: Settings → your calendar → Secret address in iCal format.  Outlook: Settings → Shared calendars → Publish.")
                     .font(.custom(NudgeTheme.fontBody, size: 12))
                     .foregroundColor(NudgeTheme.textMuted)
-                Text("A picture of a schedule isn't a calendar link — use Add from Screenshot below instead.")
+                Text("A picture of a schedule isn't a calendar link, use Add from Screenshot below instead.")
                     .font(.custom(NudgeTheme.fontBody, size: 12))
                     .foregroundColor(NudgeTheme.textMuted)
             }
@@ -708,7 +708,7 @@ struct CalendarTabView: View {
             sectionLabel("Add from Screenshot")
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Got a schedule that's not on your calendar app — like a work shift screenshot? Snap or upload it and Nudge will read it.")
+                Text("Got a schedule that's not on your calendar app, like a work shift screenshot? Snap or upload it and Nudge will read it.")
                     .font(.custom(NudgeTheme.fontBody, size: 14))
                     .foregroundColor(NudgeTheme.textMuted)
 

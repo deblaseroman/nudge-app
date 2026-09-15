@@ -2088,7 +2088,7 @@ struct TasksTabView: View {
                                         .foregroundColor(NudgeTheme.textPrimary)
                                     // Importance (stakes), one channel app-wide.
                                     // "—" when unclassified (nil stakes).
-                                    Text(task.stakes?.rawValue.capitalized ?? "—")
+                                    Text(task.stakes?.rawValue.capitalized ?? "·")
                                         .font(.custom(NudgeTheme.fontBody, size: 12))
                                         .foregroundColor(NudgeTheme.textMuted)
                                 }
@@ -3650,7 +3650,7 @@ struct IdleStartConfirmationSheet: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
 
-                Text("Just 10 minutes — that's it.")
+                Text("Just 10 minutes, that's it.")
                     .font(.custom(NudgeTheme.fontBody, size: 14))
                     .foregroundColor(NudgeTheme.textMuted)
             }

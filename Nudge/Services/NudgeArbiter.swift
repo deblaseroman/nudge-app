@@ -371,7 +371,25 @@ final class NudgeArbiter: NudgeArbitering {
 
         // 2. Run gates
         let now = Date()
-        let gateContext = GateContext(profile: profile, modelContext: modelContext, now: now)
+        let placementIntervals: [(taskID: UUID, start: Date, end: Date)] = {
+            var descriptor = FetchDescriptor<NudgeTask>(
+                predicate: #Predicate<NudgeTask> {
+                    !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate != nil
+                }
+            )
+            descriptor.fetchLimit = 100
+            return ((try? modelContext.fetch(descriptor)) ?? []).compactMap { task in
+                guard let start = task.plannedStartDate else { return nil }
+                let minutes = task.plannedDurationMinutes ?? task.estimatedMinutes ?? 30
+                return (task.id, start, start.addingTimeInterval(Double(minutes) * 60))
+            }
+        }()
+        let gateContext = GateContext(
+            profile: profile,
+            modelContext: modelContext,
+            now: now,
+            placementIntervals: placementIntervals
+        )
         let eligible = candidates.filter { passesGates($0, context: gateContext) }
         #if DEBUG
         print("[NudgeArbiter] \(eligible.count) candidates passed the gates.")
@@ -751,10 +769,10 @@ final class NudgeArbiter: NudgeArbitering {
         case 2:
             let second = block[1]
             let secondTime = fmt.string(from: second.1)
-            return "\(noun) in 1 hour (\(firstTime)). You've also got \(second.0.title) at \(secondTime) — your morning's booked."
+            return "\(noun) in 1 hour (\(firstTime)). You've also got \(second.0.title) at \(secondTime), so your morning's booked."
         default:
             let after = block.count - 1
-            return "\(noun) in 1 hour (\(firstTime)). You've got \(after) more back-to-back after that — wrap anything else first."
+            return "\(noun) in 1 hour (\(firstTime)). You've got \(after) more back-to-back after that, so wrap anything else first."
         }
     }
 
@@ -1153,7 +1171,7 @@ final class NudgeArbiter: NudgeArbitering {
         guard let phrase = morningDeadlinePhrase(for: task, fireDate: fireDate) else {
             return base + "."
         }
-        return base + " — \(phrase)."
+        return base + ", \(phrase)."
     }
 
     /// "due today at 5:00 PM" / "due tomorrow" / "due Thu at 9:00 AM" /
@@ -1551,7 +1569,7 @@ final class NudgeArbiter: NudgeArbitering {
             if plan.isDeepWork && daysOut > 1 {
                 body = "Your deadline is in \(daysOut) days. At one session a day that's maybe \(sessions) real shots at \"\(task.title)\". Start session 1 now?"
             } else {
-                body = "\"\(task.title)\" needs a start. Just \(min(estimatedMinutes, 25)) min — that's it."
+                body = "\"\(task.title)\" needs a start. Just \(min(estimatedMinutes, 25)) min. That's it."
             }
 
             let prepTier = tier(for: task, fireDate: fireDate)
@@ -1890,7 +1908,7 @@ final class NudgeArbiter: NudgeArbitering {
             )
 
             let cTier = tier(for: task, fireDate: fireDate)
-            let body = "'\(task.title)' is still open. Just \(min(estimatedMinutes, 25)) min — start there?"
+            let body = "'\(task.title)' is still open. Just \(min(estimatedMinutes, 25)) min. Start there?"
             candidates.append(NudgeCandidate(
                 id: "\(prefix)floater.\(stamp(calendar.startOfDay(for: fireDate))).\(task.id.uuidString)",
                 kind: .floater,
@@ -2105,37 +2123,19 @@ final class NudgeArbiter: NudgeArbitering {
         }
         guard let fireDate else { return [] }
 
-        // The thing worth coming back for: the earliest upcoming event or
-        // dated open task after the FIRE date, inside the lookahead.
-        let lookaheadEnd = calendar.date(
-            byAdding: .day, value: NudgeConfig.comeBackLookaheadDays, to: fireDate
-        ) ?? fireDate
+        // Copy needs only one fact: does open work exist? Roman's ruling
+        // (Sep 2026): the come-back never names a task, and it speaks even
+        // to an empty list — an invitation to plan is still content, so
+        // the old nothing-to-say stand-down is gone with the old copy.
         var openDescriptor = FetchDescriptor<NudgeTask>(
-            predicate: #Predicate<NudgeTask> { !$0.isComplete }
+            predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
         )
         openDescriptor.fetchLimit = 100
-        let all = (try? modelContext.fetch(openDescriptor)) ?? []
-        let upcoming = all
-            .compactMap { task -> (NudgeTask, Date)? in
-                guard let deadline = task.specificTime
-                        ?? (task.dueDate != nil ? task.sortDeadline : nil),
-                      deadline > fireDate, deadline < lookaheadEnd
-                else { return nil }
-                return (task, deadline)
-            }
-            .min { $0.1 < $1.1 }
-        let openTasks = all.filter { !$0.isInformationalEvent }
-
-        guard upcoming != nil || !openTasks.isEmpty else {
-            #if DEBUG
-            print("[NudgeArbiter] comeBack: SKIP — nothing upcoming and nothing open; standing down rather than sending a contentless nudge.")
-            #endif
-            return []
-        }
+        let openTasks = (try? modelContext.fetch(openDescriptor)) ?? []
 
         #if DEBUG
         print("[NudgeArbiter] comeBack: lastEngagement=\(lastEngagement) → fire=\(fireDate)"
-            + (upcoming.map { " naming '\($0.0.title)'" } ?? " (no upcoming item; open-count copy)"))
+            + " (\(openTasks.isEmpty ? "empty list, plan copy" : "\(openTasks.count) open, tasks copy"))")
         #endif
 
         return [NudgeCandidate(
@@ -2143,11 +2143,7 @@ final class NudgeArbiter: NudgeArbitering {
             kind: .comeBack,
             fireDate: fireDate,
             title: "Looking ahead",
-            body: NudgeArbiter.comeBackBody(
-                upcoming: upcoming,
-                openCount: openTasks.count,
-                fireDate: fireDate
-            ),
+            body: NudgeArbiter.comeBackBody(openCount: openTasks.count),
             categoryID: .comeBack,
             interruption: NudgeUrgencyTier.normal.interruption,
             // No taskID: the nudge is about the whole list, and pointing
@@ -2161,35 +2157,20 @@ final class NudgeArbiter: NudgeArbitering {
             receptivity: 1.0,
             countsAgainstBudget: true,
             estimatedMinutes: nil,
-            namedTaskID: upcoming?.0.id
+            namedTaskID: nil
         )]
     }
 
-    /// The come-back's deterministic body. Facts about what's ahead, in
-    /// absolute day terms — this string is baked days before delivery, so
-    /// "tomorrow" would be a lie by the time it's read.
-    static func comeBackBody(
-        upcoming: (NudgeTask, Date)?,
-        openCount: Int,
-        fireDate: Date
-    ) -> String {
-        if let (task, deadline) = upcoming {
-            let calendar = Calendar.current
-            let days = calendar.dateComponents(
-                [.day],
-                from: calendar.startOfDay(for: fireDate),
-                to: calendar.startOfDay(for: deadline)
-            ).day ?? 0
-            let fmt = DateFormatter()
-            fmt.dateFormat = days > 6 ? "MMM d" : "EEEE"
-            fmt.locale = Locale(identifier: "en_US_POSIX")
-            return "“\(task.title)” is coming up \(fmt.string(from: deadline)). Your list is ready when you are."
+    /// The come-back's body, Roman's words (Sep 2026): short, warm, and it
+    /// NEVER names a task. Two states only. Never AI-swapped (the copy
+    /// cache skips this kind). Edit these strings with Roman, not for him.
+    static func comeBackBody(openCount: Int) -> String {
+        if openCount > 0 {
+            return "Come back, you have some tasks to complete!"
         }
-        if openCount == 1 {
-            return "One open task is on your list, nothing pressing. Ready when you are."
-        }
-        return "\(openCount) open tasks are on your list, nothing pressing. Ready when you are."
+        return "Come back! There's got to be something you need to plan."
     }
+
 
     /// Goal-lapse bait (cycle 2026-08-04-03) — fires when a personal goal
     /// has gone `NudgeConfig.goalLapseAfterDays` without activity. The
@@ -2302,7 +2283,7 @@ final class NudgeArbiter: NudgeArbitering {
             // user doesn't brace for bad news. The message box delivers
             // the real message.
             title: "Got a minute?",
-            body: "Nothing's wrong — there's just something worth a look when you have a moment.",
+            body: "Nothing's wrong. There's just something worth a look when you have a moment.",
             categoryID: .goalLapse,
             interruption: NudgeUrgencyTier.normal.interruption,
             // No taskID: the nudge is about a goal, not a task, and the
@@ -2611,7 +2592,7 @@ final class NudgeArbiter: NudgeArbitering {
         fmt.dateFormat = "h:mm a"
         fmt.locale = Locale(identifier: "en_US_POSIX")
         return "“\(task.title)” was set for \(fmt.string(from: slot)) and is still open. "
-            + "Just \(min(minutes, 25)) min — start there?"
+            + "Just \(min(minutes, 25)) min. Start there?"
     }
 
     /// Deadline-proximity urgency for a placement candidate, evaluated at
@@ -2656,6 +2637,12 @@ final class NudgeArbiter: NudgeArbitering {
         let profile: UserProfile
         let modelContext: ModelContext
         let now: Date
+        /// Other tasks' planned timeline slots (Sep 2026, Roman's overlap
+        /// ruling): a discretionary nudge must not land inside a block the
+        /// user planned for a DIFFERENT task — a prep push for the essay
+        /// arriving mid Python-slot is the app talking over its own plan.
+        /// A candidate about the slot's OWN task (its follow-up) passes.
+        let placementIntervals: [(taskID: UUID, start: Date, end: Date)]
     }
 
     private func passesGates(_ candidate: NudgeCandidate, context: GateContext) -> Bool {
@@ -2685,6 +2672,24 @@ final class NudgeArbiter: NudgeArbitering {
         // bypass (they fire BEFORE the event, not during).
         if candidate.countsAgainstBudget,
            BusyWindowResolver.shared.isBusy(at: candidate.fireDate, modelContext: context.modelContext) {
+            return false
+        }
+
+        // Planned-slot gate (Sep 2026, Roman's overlap ruling) — the busy
+        // concept extended to the user's OWN plan: a discretionary nudge
+        // may not land inside a block planned for a different task. The
+        // slot's own follow-ups pass (taskID match); placement heads-ups
+        // fire before slots and pass naturally. Fire-date keyed, like
+        // every gate.
+        if candidate.countsAgainstBudget,
+           context.placementIntervals.contains(where: { interval in
+               interval.taskID != candidate.taskID
+                   && candidate.fireDate >= interval.start
+                   && candidate.fireDate < interval.end
+           }) {
+            #if DEBUG
+            print("[NudgeArbiter] gate: \(candidate.kind.rawValue) suppressed — fires inside another task's planned slot.")
+            #endif
             return false
         }
 
@@ -4143,6 +4148,10 @@ final class NudgeArbiter: NudgeArbitering {
         for candidate: NudgeCandidate,
         modelContext: ModelContext
     ) -> String {
+        // Come-back copy is Roman's verbatim wording (Sep 2026) and never
+        // names a task — the cache may still hold pre-ruling entries that
+        // do, so this kind never swaps.
+        guard candidate.kind != .comeBack else { return candidate.body }
         guard let generated = NudgeCopyStore.validBody(
             kind: candidate.kind,
             taskID: candidate.namedTaskID ?? candidate.taskID,

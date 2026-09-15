@@ -150,7 +150,7 @@ struct SettingsTabView: View {
                     // quiet days — every engagement pushes it forward.
                     toggleSettingsRow(
                         title: "Looking ahead",
-                        subtitle: "After a few days away, one note about what's coming up — never about the days themselves.",
+                        subtitle: "After a few days away, one note about what's coming up, never about the days themselves.",
                         isOn: $profile.comeBackNotificationsEnabled
                     )
                     // Cycle 2026-08-04-02: the placement lifecycle pair.
@@ -164,14 +164,14 @@ struct SettingsTabView: View {
                     )
                     toggleSettingsRow(
                         title: "Timeline follow-up",
-                        subtitle: "If a planned slot passes and the task is still open, a reminder — repeated a few times through the day until it's done.",
+                        subtitle: "If a planned slot passes and the task is still open, a reminder, repeated a few times through the day until it's done.",
                         isOn: $profile.placementMissedNotificationsEnabled
                     )
                     // Cycle 2026-08-04-03: the goal-lapse bait. Rare by
                     // construction — monthly at most per goal.
                     toggleSettingsRow(
                         title: "Goal check-in",
-                        subtitle: "If a personal goal goes a month untouched, one short note — at most once a month per goal.",
+                        subtitle: "If a personal goal goes a month untouched, one short note, at most once a month per goal.",
                         isOn: $profile.goalLapseNotificationsEnabled
                     )
                 }
@@ -185,7 +185,7 @@ struct SettingsTabView: View {
                 // reachable via Home chat's plan intent only since cycle
                 // 2026-08-02-01 removed the Tasks-tab button) is unreachable
                 // without these. Remove once real entitlement logic exists.
-                settingsSection(title: "Debug — entitlements") {
+                settingsSection(title: "Debug: entitlements") {
                     toggleSettingsRow(
                         title: "Pro access",
                         subtitle: "Sets profile.isPro. Unlocks AI “plan my day” in Home chat.",
@@ -199,7 +199,7 @@ struct SettingsTabView: View {
                     settingsCard(title: "Entitlement now", value: debugEntitlementSummary)
                 }
 
-                settingsSection(title: "Debug — classifier harness") {
+                settingsSection(title: "Debug: classifier harness") {
                     Text("Seeds backdated NudgeOutcome rows covering every branch NudgeOutcomeClassifier distinguishes, runs the real decision logic over them, and prints expected vs actual to the Xcode console. Deletes everything it created afterward.")
                         .font(.custom(NudgeTheme.fontBody, size: 13))
                         .foregroundColor(NudgeTheme.textMuted)
@@ -479,9 +479,9 @@ struct SettingsTabView: View {
     /// Mirrors the `isPro || isInTrial` expression the gates evaluate, so the
     /// row shows why AI Refine is on or off right now.
     private var debugEntitlementSummary: String {
-        if profile.isPro { return "Pro — AI Refine unlocked" }
-        if profile.isInTrial { return "Trial — AI Refine unlocked" }
-        return "Free — AI Refine gated"
+        if profile.isPro { return "Pro: AI Refine unlocked" }
+        if profile.isInTrial { return "Trial: AI Refine unlocked" }
+        return "Free: AI Refine gated"
     }
     #endif
 }

@@ -100,7 +100,7 @@ struct CalendarImportStepView: View {
                     )
                 } else {
                     await viewModel.addMascotMessage(
-                        "No worries — you can connect your calendar later in Settings.",
+                        "No worries, you can connect your calendar later in Settings.",
                         delay: 0.3
                     )
                 }

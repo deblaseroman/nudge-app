@@ -673,7 +673,7 @@ struct HomeTabView: View {
                 if let claudeError = error as? ClaudeError {
                     switch claudeError {
                     case .missingAPIKey:
-                        errorText = "I'm not set up yet — my API key is missing."
+                        errorText = "I'm not set up yet, my API key is missing."
                     case .authenticationFailed:
                         errorText = "Hmm, my credentials aren't working. Check the API key in Settings."
                     case .rateLimitExceeded:
@@ -694,7 +694,7 @@ struct HomeTabView: View {
                     // go through, and nothing from it was saved — the throw
                     // precedes every insert, which is what makes "try again"
                     // safe to say.
-                    errorText = "That didn't go through — nothing from it was saved. Try sending it again."
+                    errorText = "That didn't go through, nothing from it was saved. Try sending it again."
                     #if DEBUG
                     errorText += " [\(type(of: error))]"
                     #endif
@@ -756,7 +756,7 @@ struct HomeTabView: View {
                 parent.commitmentStartDate = cal.date(byAdding: .day, value: 1, to: today)
             case .todayForced:
                 if sentence == nil {
-                    sentence = "I'm starting “\(parent.title)” today — waiting until "
+                    sentence = "I'm starting “\(parent.title)” today, waiting until "
                         + "tomorrow would make each session longer."
                 }
             case .choice:
@@ -853,7 +853,7 @@ struct HomeTabView: View {
             #endif
             messages.append(HomeChatMessage(
                 role: .assistant,
-                text: "That didn't go through — try again in a moment."
+                text: "That didn't go through, try again in a moment."
             ))
         }
         persistSession()
@@ -891,9 +891,9 @@ struct HomeTabView: View {
         let reply: String
         switch outcome {
         case .success(let rationale), .cached(let rationale):
-            reply = rationale.isEmpty ? "Done — I laid out your day on the timeline." : rationale
+            reply = rationale.isEmpty ? "Done, I laid out your day on the timeline." : rationale
         case .noTasks:
-            reply = "You're all set — there's nothing open to schedule into today's free time."
+            reply = "You're all set, there's nothing open to schedule into today's free time."
         case .notEntitled:
             reply = "Planning your day with AI is a Pro feature."
         case .failed:
