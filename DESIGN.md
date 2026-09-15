@@ -16,7 +16,7 @@ sequencing (what's armed, what's paused, what's deliberately off) lives in
 Students and adults with ADHD and executive dysfunction.
 
 **Design for someone at their least capable, not their most motivated.** The
-person who opens this app at their worst is the person it's for. A feature that
+person who opens this app, or recieves a notification at their worst is the person it's for. A feature that
 only works when the user is already organized enough to maintain it has failed
 the target user — it's added to the executive-function load the app exists to
 reduce.
@@ -25,20 +25,24 @@ reduce.
 
 Nudge proposes a starting point. The user runs their own life.
 
-**The app must never promise an outcome.** No "follow this plan and you'll get
+**The app must never promise an outcome - But it should create a plan for the user.** No "follow this plan and you'll get
 an A" — not in notification copy, not in chat, not in onboarding. The app
 structures work and surfaces what matters; the user owns the result. Any copy
 that trades on a guaranteed outcome is out of bounds regardless of how well it
 converts.
 
-The distinction is practical, not just tonal: an assistant's wrong suggestion
-costs the user a moment's judgment, and an authority's wrong instruction costs
+Yet the app should help the user by planning sessions to complete a task before the deadline. 
+Making a promise to the user that following the sub tasks created will 100% achieve their desired goal is what needs to be avoided.
+But saying it will simply help them is ok. 
+
+The distinction is practical, not just tonal: an assistant's wrong suggestion along with a promised outcome
+costs the user a moment's judgment, and an authority's wrong instruction that costs
 them their trust in everything else it says.
 
 ## The arbiter is the product
 
 The differentiator is **deciding when to interrupt someone.** Not the task
-list, not the timeline, not the planner — those are plumbing that feeds the
+list, not the timeline, not the planner, those are plumbing that feeds the
 interruption decision.
 
 Weigh feature work against whether it improves that decision. A feature that
@@ -48,17 +52,19 @@ is the tiebreaker when scope has to be cut.
 
 ## AI at the edges, deterministic in the core
 
-There are exactly **two AI touchpoints, both where data enters the system:**
+There are exactly **Four AI touchpoints, where data enters the system and an output based on that data:**
 
 1. Brain-dump capture — free text into structured tasks.
 2. Calendar import.
+3. What will be said in a notification.
+4. The message window within the Task Tab.
 
 Everything downstream is arithmetic: ranking, planning, notification timing.
 Instant, offline, identical every run.
 
 **Do not put an API call in the arbiter's path.** Non-deterministic
-notification timing is undebuggable — you cannot reproduce a complaint about a
-badly-timed nudge if the decision isn't repeatable — and it erodes user trust
+notification timing is undebuggable. You cannot reproduce a complaint about a
+badly-timed nudge if the decision isn't repeatable. It erodes user trust
 in a way that a slightly worse deterministic decision does not. A user can
 learn the behavior of a system that always does the same thing with the same
 inputs. This constraint is the reason the notification path can be reasoned
