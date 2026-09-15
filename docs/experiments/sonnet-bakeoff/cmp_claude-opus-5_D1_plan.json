@@ -1,0 +1,9 @@
+{
+  "message": "Concert's locked in for 7 PM tonight. Tomorrow's plan: 1. Study Python (9 AM)  2. Work on your application.",
+  "new_tasks": [
+    {"title": "Concert", "isEvent": true, "priority": "medium", "category": "personal", "stakes": "low", "estimatedMinutes": 180, "dueDate": "2026-09-14", "dueTime": "7:00 PM", "dueKind": null, "sequenceIndex": null, "prepLeadDays": null, "timeWindow": null, "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null},
+    {"title": "Study Python", "isEvent": false, "priority": "medium", "category": "school", "stakes": "medium", "estimatedMinutes": null, "dueDate": "2026-09-15", "dueTime": "9:00 AM", "dueKind": "start", "sequenceIndex": 1, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null},
+    {"title": "Work on application", "isEvent": false, "priority": "medium", "category": "personal", "stakes": "medium", "estimatedMinutes": null, "dueDate": "2026-09-15", "dueTime": null, "dueKind": "start", "sequenceIndex": 2, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
+  ],
+  "task_updates": []
+}

@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; font-family: "Lexend", "Avenir Next", sans-serif; background: #F6F8F6; color: #1C211D; }
+    a { color: #5E80A6; } a:hover { color: #46648A; }
+  </style>
+</helmet>
+<div style="display: flex; flex-direction: column; gap: 16px; width: 520px; padding: 28px; background: #FFFFFF; border: 1.5px solid #1C211D; border-radius: 16px; box-sizing: border-box">
+  <div style="font-size: 26px; font-weight: 600; letter-spacing: -0.01em">How Each AI Should Act</div>
+  <div style="font-size: 14px; color: #5F665F; line-height: 1.6">Roman&#39;s behavior spec for every AI surface in Nudge. Each card below is one AI. The grey box says what it does today (facts). The blue box is yours &#8212; click any line and type how you believe it should behave: its voice, what it may read, what it must never do, when it stays silent.</div>
+  <div style="display: flex; flex-direction: column; gap: 8px; padding: 14px; background: #F0F3F0; border-radius: 10px">
+    <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.1em; color: #8C948E">SHARED PRINCIPLES — EDIT THESE TOO</div>
+    <div style="font-size: 13.5px; line-height: 1.6">&#8226; One brain: every surface reads the same data and speaks in one voice.</div>
+    <div style="font-size: 13.5px; line-height: 1.6">&#8226; Never shame the user; facts, not verdicts.</div>
+    <div style="font-size: 13.5px; line-height: 1.6">&#8226; [ADD A PRINCIPLE]</div>
+  </div>
+  <div style="font-size: 12px; color: #8C948E">When you are done, tell Claude Code to read this canvas &#8212; it becomes the routing and wiring plan.</div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

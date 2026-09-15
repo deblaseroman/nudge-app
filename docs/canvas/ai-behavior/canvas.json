@@ -1,0 +1,86 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 520,
+      "h": 470
+    },
+    {
+      "file": "Capture.dc.html",
+      "x": 0,
+      "y": 560,
+      "w": 440,
+      "h": 620
+    },
+    {
+      "file": "SmallTalk.dc.html",
+      "x": 480,
+      "y": 560,
+      "w": 440,
+      "h": 620
+    },
+    {
+      "file": "ChatBox.dc.html",
+      "x": 960,
+      "y": 560,
+      "w": 440,
+      "h": 720
+    },
+    {
+      "file": "AdviceLane.dc.html",
+      "x": 0,
+      "y": 1260,
+      "w": 440,
+      "h": 620
+    },
+    {
+      "file": "PlanRefiner.dc.html",
+      "x": 480,
+      "y": 1260,
+      "w": 440,
+      "h": 620
+    },
+    {
+      "file": "Copywriter.dc.html",
+      "x": 960,
+      "y": 1340,
+      "w": 440,
+      "h": 620
+    },
+    {
+      "file": "Enrichment.dc.html",
+      "x": 0,
+      "y": 1940,
+      "w": 440,
+      "h": 620
+    },
+    {
+      "file": "ScreenshotImport.dc.html",
+      "x": 480,
+      "y": 1940,
+      "w": 440,
+      "h": 620
+    },
+    {
+      "file": "GoalHook.dc.html",
+      "x": 960,
+      "y": 2020,
+      "w": 440,
+      "h": 620
+    }
+  ],
+  "annotations": [
+    {
+      "id": "start-here",
+      "x": 580,
+      "y": 40,
+      "w": 300,
+      "text": "Start with the Chat Box and Advice cards - they are the two undecided ones.\\nClick any line, type, then hit Save (top bar) when you are done."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}
