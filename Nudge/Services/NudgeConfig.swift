@@ -504,6 +504,16 @@ enum NudgeConfig {
     /// a genuinely imminent deadline.
     static let placementUrgencyFloor: Double = 0.75
 
+    // MARK: - Calendar import (cycle 2026-09-16-01 item 4)
+
+    /// How far ahead both calendar doors import. Was 21 for Apple
+    /// Calendar and a one-time 30 for an iCal link; the store now knows
+    /// the term so the plan reader (and the user) can see a final six
+    /// weeks out. Past events are still purged daily, so store size is
+    /// bounded by this horizon, not by history. Roman may raise it to
+    /// cover a whole calendar.
+    static let calendarImportHorizonDays: Int = 180
+
     // MARK: - Plan proposals (cycle 2026-09-16-01)
     //
     // Drives `PlanProposalSweep`: for a due-dated task or event worth

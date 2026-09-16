@@ -209,6 +209,16 @@ struct ContentView: View {
                         modelContext: modelContext
                     )
                     importedEvents = result?.importedCount ?? 0
+                } else if profile.calendarSource == "Calendar Link (iCal)" || profile.calendarSource == "Canvas iCal",
+                          let url = profile.calendarImportURL,
+                          !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // The iCal feed refreshes daily like Apple Calendar
+                    // (cycle 2026-09-16-01 item 4); it used to be a one-time
+                    // snapshot taken on the tap.
+                    let result = await CalendarService.shared.refreshICalFeedIfNeeded(
+                        urlString: url, modelContext: modelContext
+                    )
+                    importedEvents = result?.importedCount ?? 0
                 }
                 // First foreground of a new day → plan it (once; never
                 // touches manual placements; skips if a plan exists).

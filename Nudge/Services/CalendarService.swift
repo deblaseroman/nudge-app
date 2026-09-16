@@ -129,9 +129,15 @@ final class CalendarService {
             }
     }
 
-    /// Default window depth — keeps the app 3 weeks ahead in the calendar so
-    /// upcoming exams/quizzes/deadlines are visible to the prep system.
-    static let rollingWindowDays = 21
+    /// Import depth for both doors (`NudgeConfig.calendarImportHorizonDays`,
+    /// cycle 2026-09-16-01 item 4). The store knows the term; the plan
+    /// reader thinks `planProposalHorizonDays` ahead of it.
+    static var rollingWindowDays: Int { NudgeConfig.calendarImportHorizonDays }
+
+    /// Day stamp of the last successful iCal feed refresh — the feed joins
+    /// the same daily cadence Apple Calendar has (it used to be a one-time
+    /// snapshot taken on the tap).
+    static let icalSyncedDayKey = "nudge.icalSyncedDay"
 
     /// App Group UserDefaults key tracking the latest date we've fetched
     /// calendar events through. Used by `refreshRollingWindow` to incrementally
@@ -139,9 +145,10 @@ final class CalendarService {
     static let calendarSyncedThroughKey = "nudge.calendarSyncedThrough"
     private static let appGroupID = "group.com.deblaser.nudge"
 
-    /// Re-runs Apple Calendar import to maintain a rolling 3-week future window.
+    /// Re-runs Apple Calendar import to maintain a rolling future window of
+    /// `rollingWindowDays`.
     ///
-    /// - On first call (`syncedThrough == nil`): imports today → today + 21 days.
+    /// - On first call (`syncedThrough == nil`): imports today → today + horizon.
     /// - On subsequent calls: re-imports once the synced-through edge has
     ///   fallen at least a day behind today + 21, importing only the missing
     ///   tail slice (genuinely incremental — `start` is the old edge).
@@ -151,7 +158,7 @@ final class CalendarService {
     /// exactly the prep sweep's maximum lead band — an exam near the far edge
     /// could enter its lead window while still un-imported, starting prep
     /// late on the exams needing the longest runway. Extending one day per
-    /// day pins the horizon at 21; same-day repeat calls still skip (the
+    /// day pins the horizon; same-day repeat calls still skip (the
     /// guard is 0 until midnight passes).
     @discardableResult
     func refreshRollingWindow(
@@ -195,10 +202,33 @@ final class CalendarService {
     func resetRollingWindowCursor() {
         SharedModelContainer.appGroupDefaults
             .removeObject(forKey: Self.calendarSyncedThroughKey)
+        SharedModelContainer.appGroupDefaults
+            .removeObject(forKey: Self.icalSyncedDayKey)
+    }
+
+    /// Daily refresh for a connected iCal link (cycle 2026-09-16-01 item
+    /// 4): re-fetches the persisted feed once per day through the same
+    /// duplicate check and horizon as a manual import. Returns nil when
+    /// today's refresh already ran. Failures leave the day unmarked so the
+    /// next foreground tries again.
+    @discardableResult
+    func refreshICalFeedIfNeeded(
+        urlString: String,
+        modelContext: ModelContext,
+        now: Date = Date()
+    ) async -> CalendarImportResult? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        let today = NudgeCopyStore.dayStamp(now)
+        guard defaults.string(forKey: Self.icalSyncedDayKey) != today else { return nil }
+        let result = await importCanvasICal(urlString: urlString, modelContext: modelContext)
+        if result.errors.isEmpty {
+            defaults.set(today, forKey: Self.icalSyncedDayKey)
+        }
+        return result
     }
 
     /// Import events from Apple Calendar between `from` and `through`.
-    /// Defaults to the rolling 3-week window from now.
+    /// Defaults to the rolling `rollingWindowDays` window from now.
     /// Creates NudgeTasks with source="calendar", deduplicating by title+dueDate.
     func importAppleCalendar(
         modelContext: ModelContext,
@@ -222,7 +252,7 @@ final class CalendarService {
             }
         }
 
-        // Date range: caller-provided or default 3-week window
+        // Date range: caller-provided or the default horizon
         let startDate = startDateOverride ?? Date()
         let endDate = endDateOverride
             ?? Calendar.current.date(byAdding: .day, value: Self.rollingWindowDays, to: startDate)!
@@ -351,12 +381,12 @@ final class CalendarService {
                 return (true, "That's a valid iCal feed, but it holds no events yet.")
             }
             let now = Date()
-            let cutoff = Calendar.current.date(byAdding: .day, value: 30, to: now) ?? now
+            let cutoff = Calendar.current.date(byAdding: .day, value: Self.rollingWindowDays, to: now) ?? now
             let upcoming = events.filter { event in
                 guard let start = event.startDate else { return false }
                 return start >= now && start <= cutoff
             }.count
-            return (true, "Valid iCal feed — \(events.count) event\(events.count == 1 ? "" : "s") found, \(upcoming) in the next 30 days. Nothing imported yet.")
+            return (true, "Valid iCal feed — \(events.count) event\(events.count == 1 ? "" : "s") found, \(upcoming) in the next \(Self.rollingWindowDays) days. Nothing imported yet.")
         }
     }
 
@@ -379,9 +409,9 @@ final class CalendarService {
             parsedEvents = events
         }
 
-        // Filter to next 30 days and map to tasks
+        // Filter to the import horizon and map to tasks
         let now = Date()
-        let cutoff = Calendar.current.date(byAdding: .day, value: 30, to: now)!
+        let cutoff = Calendar.current.date(byAdding: .day, value: Self.rollingWindowDays, to: now)!
 
         var importedCount = 0
         var skippedDuplicates = 0

@@ -975,7 +975,7 @@ struct CalendarTabView: View {
             profile.connectedAppleCalendarTitle = selectedCalendar?.title ?? "All calendars"
 
             // Reset cursor so reconnecting / switching calendars starts a
-            // fresh 3-week window via the rolling path.
+            // fresh window (the full import horizon) via the rolling path.
             CalendarService.shared.resetRollingWindowCursor()
             let result = await CalendarService.shared.refreshRollingWindow(
                 modelContext: modelContext,
