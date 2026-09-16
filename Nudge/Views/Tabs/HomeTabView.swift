@@ -622,6 +622,38 @@ struct HomeTabView: View {
                 }
                 messages.append(HomeChatMessage(role: .assistant, text: assistantText))
 
+                // Study-plan question and answer (cycle 2026-09-16-01 item
+                // 3). The question is recorded so the one-word answer is
+                // routed to capture; the answer is consent or refusal —
+                // a Yes builds and writes the plan at once (no second
+                // Yes / No in the message box), a No is final for that
+                // anchor. Either way the outstanding question clears.
+                if let question = response.planQuestion,
+                   let parent = planParent(named: question.title, among: newlyCreatedTasks) {
+                    PlanQuestionStore.markAsked(parentID: parent.id)
+                }
+                if let consents = response.planConsent, !consents.isEmpty {
+                    for consent in consents {
+                        guard let parent = planParent(named: consent.title, among: newlyCreatedTasks) else { continue }
+                        if consent.wants {
+                            PlanProposalSweep.shared.requestPlan(parentID: parent.id, modelContext: modelContext) { written in
+                                guard written > 0 else { return }
+                                WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                                NudgeArbiter.shared.reevaluate(
+                                    reason: .taskCreatedOrEdited,
+                                    profile: profile,
+                                    modelContext: modelContext
+                                )
+                            }
+                        } else {
+                            PlanProposalSweep.shared.decline(PlanProposalContext(
+                                parentID: parent.id, parentTitle: parent.title, reason: "", sessions: []
+                            ))
+                        }
+                    }
+                    PlanQuestionStore.clear()
+                }
+
                 persistSession()
 
                 // NOT `try?` (cycle 2026-08-05-02): a failed save here
@@ -799,6 +831,23 @@ struct HomeTabView: View {
     /// must reach the full capture path to become a task_update.
     private var hasOutstandingModelQuestion: Bool {
         allTasks.contains { $0.commitmentStartAskedAt != nil }
+            || PlanQuestionStore.outstandingParentID() != nil
+    }
+
+    /// The exam the model's study-plan question or answer names: the
+    /// open exam event whose title matches, else the parent the question
+    /// was recorded for (the model may paraphrase the title back).
+    private func planParent(named title: String, among created: [NudgeTask]) -> NudgeTask? {
+        let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pool = created + allTasks.filter { task in !created.contains { $0.id == task.id } }
+        if let exact = pool.first(where: { !$0.isComplete && $0.title.lowercased() == wanted }) {
+            return exact
+        }
+        if let outstanding = PlanQuestionStore.outstandingParentID(),
+           let parent = pool.first(where: { $0.id == outstanding }) {
+            return parent
+        }
+        return pool.first { !$0.isComplete && $0.isInformationalEvent && $0.title.lowercased().contains(wanted) }
     }
 
     /// Words that mean a message might carry work. Word-boundary matched

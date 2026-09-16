@@ -8,7 +8,7 @@
 //  1. sendChat()            — brain dump conversation (Feature 1)
 //  2. captureWordVomit()    — quick-capture task extraction (Feature 1)
 //  3. generateTimeBlocks()  — schedule generation from tasks (Feature 2)
-//  4. generatePrepPlan()    — multi-day prep for upcoming events (Feature 4)
+//  4. proposePlans()        — plan proposals for due-dated items (cycle 2026-09-16-01)
 //
 
 import Foundation
@@ -214,6 +214,9 @@ class ClaudeService {
       "new_tasks": [],
       "task_updates": []
     }
+    Two optional keys, absent unless the STUDY PLAN rule below applies:
+      "plan_question": {"title": "<exam title>"}  — only in the turn where you asked the study-plan question.
+      "plan_consent": [{"title": "<exam title>", "wants": true}]  — only in the turn where the user answered it.
 
     new_tasks format:
     {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "deadline", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
@@ -276,6 +279,7 @@ class ClaudeService {
 
     KNOWN COMMITMENT SIZES: if the context lists a known size whose work is clearly the same kind (another module of the same course, the next chapter of the same book), set estimatedMinutes from it instead of asking. Mention the reuse briefly in "message" ("counting Module 5 at about 8 hours like the last one").
     START DAY: the app itself sometimes appends "start today, or from tomorrow?" to your message. NEVER ask that question yourself — the app only asks when the choice is real. When the user's reply answers it ("tomorrow", "start today", "tomorrow's fine"), emit task_updates for that commitment's task with "commitmentStartDay": "today" or "tomorrow" and change nothing else.
+    STUDY PLAN: when this dump creates an exam-category EVENT with a date and the dump contains NO study task of the user's own for it, end "message" with ONE question, "Want me to build a study plan for <exam title>?", and set "plan_question": {"title": "<exam title>"}. It counts toward the two-question ceiling. If the dump DOES include the user's own study task for that exam, ask nothing: the app follows what they said. When the user's next message answers that question ("yes", "sure", "no", "not now"), set "plan_consent": [{"title": "<exam title>", "wants": true or false}], create nothing, update nothing, and reply in one short line. Never re-ask for an exam already answered.
 
     task_updates format (for updating existing tasks by id):
     {"id": "uuid-string", "estimatedMinutes": 60, "priority": "high", "dueDate": "YYYY-MM-DD"}
@@ -319,32 +323,6 @@ class ClaudeService {
     """
 
     // Time block scheduling prompt removed — the time block system is being rebuilt.
-
-    private let prepPlanSystemPrompt = """
-    You are Nudge's prep planner. Given an upcoming important event (exam, deadline,
-    presentation, etc.), generate a multi-day preparation plan.
-
-    Rules:
-    - Spread prep work across the days leading up to the event
-    - Earlier days: lighter review. Later days: intensive practice
-    - Each prep block should be 30-90 minutes
-    - Include variety (reading, practice problems, review notes, etc.)
-    - Return ONLY valid JSON
-
-    Return format:
-    {
-      "message": "I've created a 5-day study plan for your exam!",
-      "prep_blocks": [
-        {
-          "dayOffset": -5,
-          "title": "Review Chapter 1-3 notes",
-          "estimatedMinutes": 60,
-          "category": "school",
-          "notes": "Light review to refresh memory"
-        }
-      ]
-    }
-    """
 
     // MARK: - Feature 1: Brain Dump Chat Session
 
@@ -684,53 +662,6 @@ class ClaudeService {
         let cleaned = normalizedJSONPayload(from: text)
         guard let d = cleaned.data(using: .utf8) else { throw ClaudeError.parseError }
         return try JSONDecoder().decode(DayPlanResult.self, from: d)
-    }
-
-    // MARK: - Feature 4: Multi-Day Prep Plan Generation
-
-    /// Generate a multi-day preparation plan for an upcoming important event.
-    ///
-    // ── CLAUDE API INTEGRATION ──────────────────────────────────────
-    // Endpoint: POST https://api.anthropic.com/v1/messages
-    // Model: claude-haiku-4-5-20251001
-    // Pass: event { title, date }, existingTasks[], userSchedulePreferences
-    // System prompt: prepPlanSystemPrompt (defined above)
-    // Expected return: PrepPlanResponse { message, prep_blocks[] }
-    // ────────────────────────────────────────────────────────────────
-    func generatePrepPlan(
-        eventTitle: String,
-        eventDate: Date,
-        existingTaskTitles: [String],
-        wakeTime: Date,
-        bedtime: Date
-    ) async throws -> PrepPlanResponse {
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "h:mm a"
-
-        let daysUntil = Calendar.current.dateComponents([.day], from: Date(), to: eventDate).day ?? 0
-
-        let prompt = """
-        Generate a multi-day prep plan for this upcoming event:
-        Event: "\(eventTitle)"
-        Date: \(eventDate.formatted(date: .abbreviated, time: .omitted)) (\(daysUntil) days away)
-        User wake time: \(timeFormatter.string(from: wakeTime))
-        User bedtime: \(timeFormatter.string(from: bedtime))
-        Existing tasks (avoid conflicts): \(existingTaskTitles)
-        """
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 2000,
-            "system": prepPlanSystemPrompt,
-            "messages": [["role": "user", "content": prompt]]
-        ]
-
-        // ── STUB: Replace with real API call ──
-        #if DEBUG
-        print("[ClaudeService] generatePrepPlan stub called for '\(eventTitle)' in \(daysUntil) days")
-        #endif
-
-        return try await makePrepPlanRequest(body: body)
     }
 
     // MARK: - Feature 5: Screenshot Calendar Parsing
@@ -1436,6 +1367,9 @@ class ClaudeService {
         let category: String
         let stakes: String
         let estimatedMinutes: Int?
+        /// The user already said yes in the chat: build the plan, do not
+        /// judge whether it is worth one.
+        var consented: Bool = false
     }
 
     struct PlanProposalSession: Codable {
@@ -1473,6 +1407,7 @@ class ClaudeService {
                          "days available before it: \(c.daysUntilAnchor) (offsets 0 to \(max(c.daysUntilAnchor - 1, 0)))",
                          "category: \(c.category)", "stakes: \(c.stakes)"]
             if let m = c.estimatedMinutes { parts.append("estimated: \(m) min") }
+            if c.consented { parts.append("THE USER ALREADY ASKED FOR THIS PLAN: worth_plan must be true; build it") }
             return "- " + parts.joined(separator: " | ")
         }.joined(separator: "\n")
 
@@ -1657,27 +1592,6 @@ class ClaudeService {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func makePrepPlanRequest(body: [String: Any]) async throws -> PrepPlanResponse {
-        guard !apiKey.isEmpty else {
-            throw ClaudeError.missingAPIKey
-        }
-
-        var req = URLRequest(url: URL(string: baseURL)!)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: req)
-        try validateResponse(data: data, response: response)
-        let resp = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-        guard let text = resp.content.first?.text else {
-            throw ClaudeError.emptyResponse
-        }
-        return try parsePrepPlanResponse(text)
-    }
-
     private func validateResponse(data: Data, response: URLResponse) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ClaudeError.invalidResponse
@@ -1716,14 +1630,6 @@ class ClaudeService {
         }
         #endif
         return decoded
-    }
-
-    private func parsePrepPlanResponse(_ text: String) throws -> PrepPlanResponse {
-        let cleaned = normalizedJSONPayload(from: text)
-        guard let d = cleaned.data(using: .utf8) else {
-            throw ClaudeError.parseError
-        }
-        return try JSONDecoder().decode(PrepPlanResponse.self, from: d)
     }
 
     private func stripCodeFences(_ text: String) -> String {
@@ -1872,12 +1778,29 @@ struct ClaudeResponse: Codable {
     let taskUpdates: [TaskUpdate]?
     let newTasks: [TaskData]?
     let settingsUpdates: [String: String]?
+    /// The model asked "want a study plan for X?" this turn (cycle
+    /// 2026-09-16-01). The app records the outstanding question so the
+    /// user's one-word answer reaches capture, not the small-talk lane.
+    let planQuestion: PlanQuestion?
+    /// The user answered that question this turn.
+    let planConsent: [PlanConsent]?
+
+    struct PlanQuestion: Codable {
+        let title: String
+    }
+
+    struct PlanConsent: Codable {
+        let title: String
+        let wants: Bool
+    }
 
     enum CodingKeys: String, CodingKey {
         case message
         case taskUpdates = "task_updates"
         case newTasks = "new_tasks"
         case settingsUpdates = "settings_updates"
+        case planQuestion = "plan_question"
+        case planConsent = "plan_consent"
     }
 
     /// Safe accessor — never nil
@@ -1980,34 +1903,6 @@ struct TaskUpdate: Codable {
     let category: String?
     let commitmentStartDay: String?  // "today" | "tomorrow" — the user's answer to the app-asked start-day question
     let commitmentDailyCount: Int?   // the user's answer to a per-day count question ("how many a day?")
-}
-
-// MARK: - Feature 4 Response Types (Prep Plan)
-
-struct PrepPlanResponse: Codable {
-    let message: String
-    let prepBlocks: [PrepBlockData]
-
-    enum CodingKeys: String, CodingKey {
-        case message
-        case prepBlocks = "prep_blocks"
-    }
-}
-
-struct PrepBlockData: Codable {
-    let dayOffset: Int              // negative = days before event (e.g. -5 = 5 days before)
-    let title: String
-    let estimatedMinutes: Int
-    let category: String
-    let notes: String?
-
-    enum CodingKeys: String, CodingKey {
-        case dayOffset = "dayOffset"
-        case title
-        case estimatedMinutes = "estimatedMinutes"
-        case category
-        case notes
-    }
 }
 
 // MARK: - Screenshot Calendar DTO

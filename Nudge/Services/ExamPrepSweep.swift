@@ -2,35 +2,20 @@
 //  ExamPrepSweep.swift
 //  Nudge
 //
-//  Turns exam-category calendar events into daily study tasks — the app's
-//  defining feature (DESIGN.md "Study tasks from exam events"): the user
-//  who most needs that scaffolding is least likely to build it by hand.
+//  The generated-work sweep. Since cycle 2026-09-16-01 (Roman's realignment)
+//  it no longer creates exam study tasks on its own: a study plan is a
+//  PROPOSAL from `PlanProposalSweep`, written only on the user's Yes. What
+//  stays here is the machinery that proposal shares — the title-match
+//  dedupe (`userStudyTaskMatch`: the user's own study task always wins),
+//  the (parent, day) stamps, `PrepTombstone` (a deleted day is never
+//  recreated; the message box asks once whether they still want study
+//  time), and the announcement the message box shows when study time is
+//  added on the user's word — plus the commitment half below, which is the
+//  user's own instruction and still expands by itself.
 //
 //  Runs on launch and day-change (called from `ContentView` beside
 //  `PlacementRollover`, BEFORE the arbiter reevaluate, so freshly created
-//  tasks are in the store when candidates are built). For each open
-//  exam-category event whose day is within its prep-lead band of today:
-//
-//    • CREATE one study task per remaining day up to (not including) the
-//      exam day — `source = "prep"`, titled plainly, linked to the exam,
-//      stakes high, duration from the exam category prior.
-//    • IDEMPOTENT — a (exam, day) pair that already has a prep task
-//      creates nothing; running the sweep twice is a no-op.
-//    • DEDUPE — if the user already made their own study task for that
-//      exam (deterministic title matching, see `userStudyTaskMatch`),
-//      create nothing for that exam at all. Duplicating the user's own
-//      planning is worse than doing nothing.
-//    • TOMBSTONES — a day the user deleted (recorded as `PrepTombstone`,
-//      which survives the task's removal) is never recreated. The message
-//      box asks once whether they still want study time for that exam.
-//    • ANNOUNCE — silent creation is not acceptable: when tasks are
-//      created, an announcement context is written for the Tasks message
-//      box ("Your Stats exam is in 6 days — I've added study time each
-//      day until then").
-//
-//  The decision core (`decide`) is a pure static function over value
-//  inputs so the copy-harness technique can run fixture exams against the
-//  exact shipped logic without SwiftData.
+//  tasks are in the store when candidates are built).
 //
 //  ── COMMITMENTS (cycle 2026-08-03-01) ────────────────────────────────
 //  This sweep is also the general form of itself: a brain-dumped
@@ -110,81 +95,6 @@ final class ExamPrepSweep {
     static func validLeadBand(_ value: Int?) -> Int? {
         guard let value, NudgeConfig.prepLeadBands.contains(value) else { return nil }
         return value
-    }
-
-    // MARK: Pure decision core
-
-    /// Everything the sweep decides about one exam, computed from values —
-    /// no SwiftData. `run` maps store rows into these inputs; the DEBUG
-    /// fixture harness calls it directly.
-    struct Decision {
-        let examTitle: String
-        let leadDays: Int
-        let daysRemaining: Int
-        /// False when the exam is today/past (no study days left) or still
-        /// beyond its lead band (not yet the sweep's business).
-        let inWindow: Bool
-        /// The user's own study task that blocked creation, if any.
-        let dedupeHit: String?
-        /// Day stamps the user deleted — never recreated.
-        let tombstonedStamps: [String]
-        /// Day stamps that already have a prep task (idempotence).
-        let existingStamps: [String]
-        /// Day stamps the sweep should create tasks for.
-        let createStamps: [String]
-    }
-
-    static func decide(
-        examTitle: String,
-        examDay: Date,
-        prepLeadDays: Int?,
-        today: Date,
-        userTaskTitles: [String],
-        existingPrepDayStamps: Set<String>,
-        tombstonedDayStamps: Set<String>,
-        calendar: Calendar = .current
-    ) -> Decision {
-        let lead = validLeadBand(prepLeadDays) ?? NudgeConfig.defaultPrepLeadDays
-        let start = calendar.startOfDay(for: today)
-        let exam = calendar.startOfDay(for: examDay)
-        let daysRemaining = calendar.dateComponents([.day], from: start, to: exam).day ?? 0
-
-        // Exam today or past: no study days left. Beyond the band: not yet.
-        guard daysRemaining >= 1, daysRemaining <= lead else {
-            return Decision(
-                examTitle: examTitle, leadDays: lead, daysRemaining: daysRemaining,
-                inWindow: false, dedupeHit: nil,
-                tombstonedStamps: tombstonedDayStamps.sorted(),
-                existingStamps: existingPrepDayStamps.sorted(), createStamps: []
-            )
-        }
-
-        if let hit = userStudyTaskMatch(examTitle: examTitle, taskTitles: userTaskTitles) {
-            return Decision(
-                examTitle: examTitle, leadDays: lead, daysRemaining: daysRemaining,
-                inWindow: true, dedupeHit: hit,
-                tombstonedStamps: tombstonedDayStamps.sorted(),
-                existingStamps: existingPrepDayStamps.sorted(), createStamps: []
-            )
-        }
-
-        // One task per remaining day, today through the day BEFORE the
-        // exam: 3 days out → 3 tasks. Capped by construction — daysRemaining
-        // ≤ lead ≤ 14 — and by the stamp dedupe (one per exam per day).
-        let create = Self.missingStamps(
-            from: start,
-            dayOffsets: 0..<daysRemaining,
-            existing: existingPrepDayStamps,
-            tombstoned: tombstonedDayStamps,
-            calendar: calendar
-        )
-
-        return Decision(
-            examTitle: examTitle, leadDays: lead, daysRemaining: daysRemaining,
-            inWindow: true, dedupeHit: nil,
-            tombstonedStamps: tombstonedDayStamps.sorted(),
-            existingStamps: existingPrepDayStamps.sorted(), createStamps: create
-        )
     }
 
     /// The one day-window walk both halves of the sweep share: which of
@@ -451,10 +361,12 @@ final class ExamPrepSweep {
         let today = calendar.startOfDay(for: now)
         let tombstones = (try? modelContext.fetch(FetchDescriptor<PrepTombstone>())) ?? []
 
-        let created = examPhase(
-            modelContext: modelContext, tombstones: tombstones,
-            today: today, now: now, calendar: calendar
-        ) + commitmentPhase(
+        // Exams no longer expand here (cycle 2026-09-16-01, Roman's
+        // ruling): a study plan is PROPOSED by the plan reader and written
+        // only on the user's Yes, through the message box or the chat.
+        // The commitment half is the user's own instruction and still
+        // expands on its own.
+        let created = commitmentPhase(
             modelContext: modelContext, tombstones: tombstones,
             today: today, now: now, calendar: calendar
         )
@@ -470,131 +382,6 @@ final class ExamPrepSweep {
             NudgeCopyGenerator.shared.noteShift(.generatedWork, modelContext: modelContext)
         }
         return created
-    }
-
-    // MARK: Exam phase
-
-    private func examPhase(
-        modelContext: ModelContext,
-        tombstones: [PrepTombstone],
-        today: Date,
-        now: Date,
-        calendar: Calendar
-    ) -> Int {
-        let events = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
-            predicate: #Predicate<NudgeTask> { $0.isInformationalEvent && !$0.isComplete }
-        ))) ?? []
-        let exams = events
-            .filter { $0.taskCategory == .exam }
-            .compactMap { exam -> (NudgeTask, Date)? in
-                guard let day = exam.specificTime ?? exam.dueDate else { return nil }
-                return (exam, day)
-            }
-            .sorted { $0.1 < $1.1 }
-        guard !exams.isEmpty else { return 0 }
-
-        // One fetch each for the sweep's cross-checks.
-        let prepSource = "prep"
-        let allPrep = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
-            predicate: #Predicate<NudgeTask> { $0.source == prepSource }
-        ))) ?? []
-        let openUserTasks = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
-            predicate: #Predicate<NudgeTask> {
-                !$0.isComplete && !$0.isInformationalEvent && $0.source != prepSource
-            }
-        ))) ?? []
-        let userTitles = openUserTasks.map(\.title)
-
-        var createdTotal = 0
-        var announced = false
-
-        for (exam, examDay) in exams {
-            let examID = exam.id.uuidString
-            let existingStamps = Set(
-                allPrep
-                    .filter { $0.linkedEventId == examID }
-                    .compactMap { $0.dueDate.map { Self.stamp(calendar.startOfDay(for: $0)) } }
-            )
-            let tombstonedStamps = Set(
-                tombstones.filter { $0.examEventId == examID }.map(\.dayStamp)
-            )
-
-            let decision = Self.decide(
-                examTitle: exam.title,
-                examDay: examDay,
-                prepLeadDays: exam.prepLeadDays,
-                today: today,
-                userTaskTitles: userTitles,
-                existingPrepDayStamps: existingStamps,
-                tombstonedDayStamps: tombstonedStamps,
-                calendar: calendar
-            )
-
-            #if DEBUG
-            // The per-exam dump work-order item 5 asks for: lead band, days
-            // remaining, dedupe verdict, tombstone state, created days.
-            print("[ExamPrepSweep] \"\(exam.title)\" lead=\(decision.leadDays)d "
-                + "remaining=\(decision.daysRemaining)d "
-                + (decision.inWindow ? "IN WINDOW" : "out of window")
-                + " dedupe=\(decision.dedupeHit.map { "user task \"\($0)\"" } ?? "none")"
-                + " tombstoned=\(decision.tombstonedStamps.isEmpty ? "—" : decision.tombstonedStamps.joined(separator: ","))"
-                + " existing=\(decision.existingStamps.count)"
-                + " create=\(decision.createStamps.isEmpty ? "—" : decision.createStamps.joined(separator: ","))")
-            #endif
-
-            guard !decision.createStamps.isEmpty else { continue }
-
-            let fmt = DateFormatter()
-            fmt.dateFormat = "yyyyMMdd"
-            fmt.locale = Locale(identifier: "en_US_POSIX")
-            for stamp in decision.createStamps {
-                guard let day = fmt.date(from: stamp) else { continue }
-                let task = NudgeTask(
-                    title: "Study for \(exam.title)",
-                    // Due at the END of its own day (23:59, capture's
-                    // bare-date convention) — start-of-day made today's
-                    // study task read "N hours ago" from birth (cycle
-                    // 2026-08-03-02 item 1).
-                    dueDate: Self.sessionDueDate(on: day, calendar: calendar),
-                    priority: "medium",
-                    category: TaskCategory.exam.rawValue,
-                    source: "prep",
-                    // The category prior, stated explicitly so the task
-                    // shows a duration the user can see and edit. Learning
-                    // prep effort from history is out of scope for v1.
-                    estimatedMinutes: NudgeConfig.categoryEffortPriors[.exam]
-                        ?? NudgeConfig.defaultEffortPriorMinutes,
-                    linkedEventId: examID
-                )
-                // "Stakes inherited high": an exam's misses are consequential
-                // by definition (the import path stamps the event high the
-                // same way). Through the guarded automation path, never the
-                // init.
-                task.setStakesFromAutomation(.high)
-                modelContext.insert(task)
-                createdTotal += 1
-            }
-            #if DEBUG
-            if !decision.createStamps.isEmpty {
-                print("   ↳ \(decision.createStamps.count) study task(s) created, "
-                    + "each due 23:59 of its own day (was start-of-day before 2026-08-03-02)")
-            }
-            #endif
-
-            // Announce the SOONEST exam that got tasks this run — silent
-            // creation is not acceptable (DESIGN.md). Exams are processed in
-            // date order, so the first is the soonest.
-            if !announced {
-                Self.writeAnnouncement(
-                    examTitle: exam.title,
-                    daysUntil: decision.daysRemaining,
-                    now: now
-                )
-                announced = true
-            }
-        }
-
-        return createdTotal
     }
 
     // MARK: Commitment phase
@@ -998,7 +785,7 @@ final class ExamPrepSweep {
     static let announcementCreatedAtKey = "nudge.prepAnnouncement.createdAt"
     static let announcementShownAtKey = "nudge.prepAnnouncement.shownAt"
 
-    private static func writeAnnouncement(examTitle: String, daysUntil: Int, now: Date) {
+    static func writeAnnouncement(examTitle: String, daysUntil: Int, now: Date) {
         let defaults = SharedModelContainer.appGroupDefaults
         defaults.set(examTitle, forKey: announcementTitleKey)
         defaults.set(daysUntil, forKey: announcementDaysKey)

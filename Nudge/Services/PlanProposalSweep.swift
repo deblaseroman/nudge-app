@@ -116,6 +116,37 @@ enum PlanProposalStore {
     }
 }
 
+// MARK: - The chat's outstanding question
+
+/// "Want me to build a study plan for X?" was asked in the Home chat this
+/// turn. Held in app-group defaults for the rest of the day so the user's
+/// one-word answer is routed to capture (not the small-talk lane) and so
+/// the message box does not ask the same question a second way.
+enum PlanQuestionStore {
+    static let parentKey = "nudge.planQuestion.parentID"
+    static let dayKey = "nudge.planQuestion.day"
+
+    static func markAsked(parentID: UUID, now: Date = Date()) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        defaults.set(parentID.uuidString, forKey: parentKey)
+        defaults.set(NudgeCopyStore.dayStamp(now), forKey: dayKey)
+    }
+
+    static func outstandingParentID(now: Date = Date()) -> UUID? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now),
+              let raw = defaults.string(forKey: parentKey)
+        else { return nil }
+        return UUID(uuidString: raw)
+    }
+
+    static func clear() {
+        let defaults = SharedModelContainer.appGroupDefaults
+        defaults.removeObject(forKey: parentKey)
+        defaults.removeObject(forKey: dayKey)
+    }
+}
+
 // MARK: - The sweep
 
 @MainActor
@@ -167,6 +198,8 @@ final class PlanProposalSweep {
                     return false
                 }
                 if childParentIDs.contains(task.id.uuidString) { return false }
+                // The chat is already asking about this one.
+                if PlanQuestionStore.outstandingParentID(now: now) == task.id { return false }
                 let othersTitles = userTitles.filter { $0 != task.title }
                 if ExamPrepSweep.userStudyTaskMatch(examTitle: task.title, taskTitles: othersTitles) != nil {
                     return false
@@ -252,6 +285,74 @@ final class PlanProposalSweep {
             }
             PlanProposalStore.write(decisions)
             NotificationCenter.default.post(name: .nudgePlanProposalsChanged, object: nil)
+        }
+    }
+
+    /// The chat path (cycle 2026-09-16-01 item 3): the user already said
+    /// yes to a study plan in the Home chat, so this reads the one parent,
+    /// asks the reader to BUILD (not judge), writes the sessions at once,
+    /// and announces them through the message box. No second Yes / No.
+    /// `onWritten` runs on the main actor after rows land, so the caller
+    /// can reevaluate the arbiter with its profile.
+    func requestPlan(
+        parentID: UUID,
+        modelContext: ModelContext,
+        now: Date = Date(),
+        onWritten: @escaping @MainActor (Int) -> Void
+    ) {
+        guard let parent = try? modelContext.fetch(FetchDescriptor<NudgeTask>(
+                  predicate: #Predicate<NudgeTask> { $0.id == parentID }
+              )).first,
+              !parent.isComplete,
+              let anchor = Self.anchor(of: parent)
+        else { return }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let anchorDay = calendar.startOfDay(for: anchor)
+        let days = calendar.dateComponents([.day], from: today, to: anchorDay).day ?? 0
+        guard days >= 1 else { return }
+
+        let dueLine = CountdownState.dueDateLine(dueDate: parent.dueDate, specificTime: parent.specificTime) ?? ""
+        let when = days == 1 ? "tomorrow" : "in \(days) days"
+        let candidate = ClaudeService.PlanProposalCandidate(
+            id: parent.id.uuidString,
+            title: parent.title,
+            kind: parent.isInformationalEvent ? "event" : "task",
+            anchorLine: dueLine.isEmpty ? when : "\(when) (\(dueLine))",
+            daysUntilAnchor: days,
+            category: parent.category ?? "school",
+            stakes: parent.stakes?.rawValue ?? "high",
+            estimatedMinutes: parent.estimatedMinutes,
+            consented: true
+        )
+        let title = parent.title
+        let stamp = ExamPrepSweep.stamp(anchorDay)
+        PlanProposalStore.noteCall(now: now)
+        Task { @MainActor [weak self] in
+            guard let self,
+                  let results = try? await ClaudeService.shared.proposePlans(candidates: [candidate]),
+                  let result = results.first
+            else { return }
+            let sessions = Self.validSessions(result.sessions, today: today, daysUntilAnchor: days, calendar: calendar)
+            guard !sessions.isEmpty else {
+                PlanProposalStore.set(PlanProposalStore.Decision(
+                    status: .notWorth, anchorStamp: stamp, parentTitle: title,
+                    reason: result.reason, sessions: [], decidedAt: now
+                ), for: parentID)
+                return
+            }
+            let proposal = PlanProposalContext(parentID: parentID, parentTitle: title, reason: result.reason, sessions: sessions)
+            PlanProposalStore.set(PlanProposalStore.Decision(
+                status: .proposed, anchorStamp: stamp, parentTitle: title,
+                reason: result.reason, sessions: sessions, decidedAt: now
+            ), for: parentID)
+            let written = self.accept(proposal, modelContext: modelContext, now: now)
+            if written > 0 {
+                // Silent creation is not acceptable: the message box says
+                // study time was added, the same line the old sweep used.
+                ExamPrepSweep.writeAnnouncement(examTitle: title, daysUntil: days, now: now)
+            }
+            onWritten(written)
         }
     }
 

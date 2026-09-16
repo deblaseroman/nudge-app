@@ -487,45 +487,16 @@ final class CalendarService {
         }
     }
 
-    // MARK: - High-Priority Event Detection (Feature 4)
+    // MARK: - High-priority keywords
 
-    /// Keywords that indicate an event is important enough to trigger a multi-day prep plan.
+    /// Keywords that mark an imported title as consequential (the keyword
+    /// half of `inferStakes`). Plans for such events are proposed by
+    /// `PlanProposalSweep`, not keyed on this list.
     private let highPriorityKeywords = [
         "exam", "final", "midterm", "test", "quiz", "presentation",
         "interview", "deadline", "due date", "defense", "surgery",
         "board meeting", "review", "audit", "demo", "showcase"
     ]
-
-    /// Scans imported calendar tasks for upcoming high-priority events within
-    /// the next 7 days that don't already have prep plans generated.
-    ///
-    // ── CLAUDE API INTEGRATION ──────────────────────────────────────
-    // When a high-priority event is detected, call:
-    //   ClaudeService.shared.generatePrepPlan(eventTitle:eventDate:...)
-    // to create a multi-day prep sequence, then create NudgeTasks from the
-    // returned PrepBlockData items with source = "prep".
-    // ────────────────────────────────────────────────────────────────
-    func detectHighPriorityEvents(modelContext: ModelContext) -> [NudgeTask] {
-        let calendarSource = "calendar"
-        let allCalendarTasks = (try? modelContext.fetch(
-            FetchDescriptor<NudgeTask>(
-                predicate: #Predicate<NudgeTask> { $0.source == calendarSource }
-            )
-        )) ?? []
-
-        let now = Date()
-        let sevenDaysOut = Calendar.current.date(byAdding: .day, value: 7, to: now)!
-
-        return allCalendarTasks.filter { task in
-            guard !task.isComplete else { return false }
-            guard let dueDate = task.dueDate ?? task.specificTime else { return false }
-            guard dueDate > now && dueDate <= sevenDaysOut else { return false }
-
-            // Check if the event title matches high-priority keywords
-            let lower = task.title.lowercased()
-            return highPriorityKeywords.contains { lower.contains($0) }
-        }
-    }
 
     /// Returns true if the given event title contains keywords indicating importance.
     /// Also the keyword half of `inferStakes` below.
