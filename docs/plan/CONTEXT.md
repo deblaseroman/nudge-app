@@ -168,6 +168,15 @@ Every site degrades to a deterministic path with no API key.
 These are considered states, not oversights. Proposing to "fix" one without
 saying why it's now authorized will get pushback.
 
+- **The due-date importance ladder is live** (Sep 16 2026, Roman's ruling):
+  `EisenhowerScorer.importance` returns `dueDatedImportance` (0.6) for any
+  item with a due date and `dueTodayImportance` (0.9) on its due day,
+  before the weighted mix; only undated items are scored by the mix.
+  Every task-bearing call site passes the ladder inputs.
+- **Skipped is a section, not Overdue** (same day): `PlacementRollover`
+  counts skips on single no-due-date tasks (one reschedule, then the
+  Skipped tab); subtasks and owed work are never counted. A captured task
+  identical to an overdue or skipped one replaces it.
 - **Stakes is not wired into scoring.** The scorer accepts an optional stakes
   input; every production call site omits it — only the DEBUG harness passes
   it, so live scores are identical to pre-stakes. Reading `task.stakes`
