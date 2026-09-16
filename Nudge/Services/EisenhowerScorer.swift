@@ -52,11 +52,17 @@ enum EisenhowerScorer {
 
     // MARK: - Importance
     //
-    // Weighted sum of stable signals. Category provides the base prior;
+    // Two regimes. A DUE-DATED item takes the ladder (`dueDatedImportance`,
+    // `dueTodayImportance`) and nothing else. An UNDATED item takes the
+    // weighted sum of stable signals: category provides the base prior;
     // user-stated urgency, deep-work cognitive load, and dependencies bump
     // it. Clamped to 0...1.
 
-    /// - Parameter stakes: the CONSEQUENCE signal (`NudgeTask.stakes`).
+    /// - Parameters:
+    ///   - hasDueDate / isDueToday: the ladder inputs — `task.hasDeadline`
+    ///     and whether `task.sortDeadline` falls today. Call sites that
+    ///     have a task pass both; the DEBUG stakes dump passes neither.
+    ///   - stakes: the CONSEQUENCE signal (`NudgeTask.stakes`).
     ///   Defaults to `nil`, which contributes exactly nothing — so a caller
     ///   that doesn't pass it gets the identical pre-stakes number. Every
     ///   production call site is currently in that state on purpose: the
@@ -67,8 +73,17 @@ enum EisenhowerScorer {
         isDeepWork: Bool,
         statedUrgency: StatedUrgency,
         hasDependencies: Bool,
-        stakes: TaskStakes? = nil
+        stakes: TaskStakes? = nil,
+        hasDueDate: Bool = false,
+        isDueToday: Bool = false
     ) -> Double {
+        // The due-date ladder (Roman, Sep 16 2026) runs AHEAD of the mix:
+        // a due-dated item is medium from creation and high on its due
+        // day, full stop. Only undated items fall through to the weights.
+        if hasDueDate {
+            return isDueToday ? NudgeConfig.dueTodayImportance : NudgeConfig.dueDatedImportance
+        }
+
         var score = baseImportance(for: category)
 
         // ── The correlated pair ──────────────────────────────────────────

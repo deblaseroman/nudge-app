@@ -1384,7 +1384,9 @@ final class NudgeArbiter: NudgeArbitering {
             category: target.taskCategory,
             isDeepWork: isDeepWork,
             statedUrgency: signals.statedUrgency,
-            hasDependencies: target.dependsOnTaskId != nil
+            hasDependencies: target.dependsOnTaskId != nil,
+            hasDueDate: target.hasDeadline,
+            isDueToday: target.hasDeadline && Calendar.current.isDateInToday(target.sortDeadline)
         )
 
         let idleTier = tier(for: target, fireDate: fireDate)
@@ -1560,7 +1562,9 @@ final class NudgeArbiter: NudgeArbitering {
                 category: task.taskCategory,
                 isDeepWork: plan.isDeepWork,
                 statedUrgency: signals.statedUrgency,
-                hasDependencies: task.dependsOnTaskId != nil
+                hasDependencies: task.dependsOnTaskId != nil,
+                hasDueDate: task.hasDeadline,
+                isDueToday: task.hasDeadline && Calendar.current.isDateInToday(task.sortDeadline)
             )
 
             let daysOut = Calendar.current.dateComponents([.day], from: now, to: due).day ?? 0
@@ -1904,7 +1908,9 @@ final class NudgeArbiter: NudgeArbitering {
                 category: task.taskCategory,
                 isDeepWork: isDeepWork,
                 statedUrgency: signals.statedUrgency,
-                hasDependencies: task.dependsOnTaskId != nil
+                hasDependencies: task.dependsOnTaskId != nil,
+                hasDueDate: task.hasDeadline,
+                isDueToday: task.hasDeadline && Calendar.current.isDateInToday(task.sortDeadline)
             )
 
             let cTier = tier(for: task, fireDate: fireDate)
@@ -2627,7 +2633,9 @@ final class NudgeArbiter: NudgeArbitering {
             category: task.taskCategory,
             isDeepWork: isDeepWork,
             statedUrgency: signals.statedUrgency,
-            hasDependencies: task.dependsOnTaskId != nil
+            hasDependencies: task.dependsOnTaskId != nil,
+            hasDueDate: task.hasDeadline,
+            isDueToday: task.hasDeadline && Calendar.current.isDateInToday(task.sortDeadline)
         )
     }
 

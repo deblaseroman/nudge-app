@@ -242,7 +242,9 @@ final class DayPlanRefiner {
             category: task.taskCategory,
             isDeepWork: isDeep,
             statedUrgency: signals.statedUrgency,
-            hasDependencies: task.dependsOnTaskId != nil
+            hasDependencies: task.dependsOnTaskId != nil,
+            hasDueDate: task.hasDeadline,
+            isDueToday: task.hasDeadline && Calendar.current.isDateInToday(task.sortDeadline)
         )
         let urgency: Double
         if let deadline = task.specificTime ?? task.dueDate {

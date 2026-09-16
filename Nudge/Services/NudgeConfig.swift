@@ -171,6 +171,14 @@ enum NudgeConfig {
     /// Importance must be ≥ this to land in an "important" quadrant.
     static let importantThreshold: Double = 0.55
 
+    /// The due-date ladder (Roman, Sep 16 2026): a task or event WITH a due
+    /// date is "medium" importance from the day it is created and "high"
+    /// on the day it is due. Anything without a due date keeps the
+    /// weighted mix below. These two numbers ARE the ladder; the mix never
+    /// runs for a due-dated item.
+    static let dueDatedImportance: Double = 0.6
+    static let dueTodayImportance: Double = 0.9
+
     /// Final-score exponents. Urgency is weighted slightly higher than
     /// importance because ADHD users under-produce deadline salience, so
     /// we want time pressure to break ties.
