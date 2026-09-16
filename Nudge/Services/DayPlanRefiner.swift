@@ -9,7 +9,7 @@
 //  plannedDurationMinutes / plannedIsAuto. It NEVER schedules notifications;
 //  the arbiter reevaluates from data as usual.
 //
-//  Gated behind isPro || isInTrial. Cached once per day (app-group defaults)
+//  One version, no tiers (Roman). Cached once per day (app-group defaults)
 //  — at most one refine call per day unless the caller forces it (an explicit
 //  user ask, e.g. a "plan my day" chat message).
 //
@@ -31,7 +31,6 @@ final class DayPlanRefiner {
     enum Outcome {
         case success(rationale: String)
         case cached(rationale: String)
-        case notEntitled
         case noTasks
         case failed(String)
     }
@@ -48,8 +47,6 @@ final class DayPlanRefiner {
     /// we already refined today (no API call). `force == true` (explicit user
     /// ask) always calls.
     func refine(profile: UserProfile, modelContext: ModelContext, force: Bool) async -> Outcome {
-        guard profile.isPro || profile.isInTrial else { return .notEntitled }
-
         let defaults = SharedModelContainer.appGroupDefaults
         if !force,
            defaults.string(forKey: refinedDateKey) == Self.dayKey(),

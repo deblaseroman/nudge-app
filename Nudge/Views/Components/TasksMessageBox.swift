@@ -1072,18 +1072,17 @@ enum TasksMessageComposer {
 /// concerned about the user's list is `DESIGN.md`'s never-shame rule
 /// violated in art instead of copy.
 enum MessageBoxExpression: String, CaseIterable {
+    /// The one expression the box renders since the shell went read-only
+    /// (Sep 2026); `asking` and `pleased` went with the prototype's
+    /// question. Add a case back when a surface actually needs it.
     case neutral
-    case asking
-    case pleased
 
-    /// THE mapping — the one place real art lands later. All nil for now
+    /// THE mapping — the one place real art lands later. Nil for now
     /// (grey placeholder); when assets exist this becomes
     /// `Image("pigeon-\(rawValue)")` and no call site changes.
     var image: Image? {
         switch self {
         case .neutral: return nil
-        case .asking:  return nil
-        case .pleased: return nil
         }
     }
 }

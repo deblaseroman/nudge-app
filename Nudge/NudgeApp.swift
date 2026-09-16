@@ -53,14 +53,6 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         }
         Self.scheduleNextDailyRecalc()
 
-        // One-shot repair of the stakes signal on rows that predate it or
-        // got the deterministic calendar-import value. Fire-and-forget and
-        // fails silently — it must never delay or block launch. Lives here
-        // rather than in a view because it is a data migration, not UI.
-        Task { @MainActor in
-            StakesBackfill.shared.runIfNeeded()
-        }
-
         // ⚠️ TEMP-STAKES-DUMP — remove after verifying capture-assigned
         // stakes. Grep the tag to delete every trace (this block + the
         // method below).
@@ -147,9 +139,8 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
 
     // ⚠️ TEMP-STAKES-DUMP — remove after verifying capture-assigned stakes.
     // Prints every NudgeTask at launch so we can eyeball what stakes freshly
-    // captured tasks receive. The StakesBackfill dry-run table excludes them
-    // by design (they're neither nil-stakes nor calendar rows), so this is
-    // the only place we see the capture flow's own output. Sorted by source
+    // captured tasks receive. This is the one place we see the capture
+    // flow's own stakes output. Sorted by source
     // so capture / calendar / manual rows cluster. Grep "TEMP-STAKES-DUMP".
     #if DEBUG
     @MainActor

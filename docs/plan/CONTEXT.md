@@ -101,7 +101,7 @@ timing and selection are reproducible from local data. Do not propose an API
 call in that path; non-deterministic timing is undebuggable (`DESIGN.md`).
 
 But "no AI anywhere near the arbiter" is false, and plans that assume it
-mis-predict behavior. Ten live call sites (all through `ClaudeService`):
+mis-predict behavior. Nine live call sites (all through `ClaudeService`; item 4 retired, numbering kept):
 
 1. **Brain-dump capture** (`sendChat`) — dump → tasks, commitments, goal
    links. Feeds the data every builder reads. Since cycle 2026-09-03-01 it
@@ -123,10 +123,10 @@ mis-predict behavior. Ten live call sites (all through `ClaudeService`):
    `statedUrgency` signal is read (cache-only, synchronously) inside the
    idle, prep, and floater builders and **feeds importance scoring, hence
    winner selection**. AI-derived data, deterministic read.
-4. **Stakes classification** (`StakesBackfill`) — writes `task.stakes`; the
-   morning prompt ranks on stakes directly, so this also **reaches an
-   arbiter decision** (which task the morning names — not the scorer; see
-   not-armed below).
+4. **Stakes classification** — RETIRED Sep 16 2026 (cleanup): the one-shot
+   Haiku backfill and `classifyStakes` are gone. Imports get deterministic
+   stakes at creation (`CalendarService.inferStakes`); capture writes
+   stakes from the dump. The morning prompt still ranks on `task.stakes`.
 5. **Notification copy** (`NudgeCopyService`) — bodies pre-generated and
    cached; the arbiter swaps text at scheduling. Copy only, never timing.
 6. **AI day-plan refine** (`DayPlanRefiner`) — writes timeline placements,

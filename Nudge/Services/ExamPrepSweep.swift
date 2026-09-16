@@ -88,15 +88,6 @@ final class ExamPrepSweep {
     static let shared = ExamPrepSweep()
     private init() {}
 
-    // MARK: Lead band
-
-    /// Tolerant read of a classifier-emitted lead value: only the coarse
-    /// bands are valid, anything else is "the model didn't say".
-    static func validLeadBand(_ value: Int?) -> Int? {
-        guard let value, NudgeConfig.prepLeadBands.contains(value) else { return nil }
-        return value
-    }
-
     /// The one day-window walk both halves of the sweep share: which of
     /// these day offsets still need a generated task — not already
     /// created (idempotence) and not deleted by the user (tombstones,

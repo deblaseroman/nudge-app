@@ -216,7 +216,7 @@ enum NudgeConfig {
     // clamped to 0...1 and the interesting tasks already crowd the top, so
     // buying separation at the bottom (where there is headroom) beats
     // buying it at the top (where the clamp eats it). `nil` — never
-    // classified, which `StakesBackfill` hasn't necessarily reached — is
+    // classified, which the retired stakes backfill hasn't necessarily reached — is
     // absence of evidence and scores 0.
 
     /// Additive importance term per stakes level. Applied in
@@ -566,16 +566,6 @@ enum NudgeConfig {
     // (`source == "prep"`), the app's defining feature (DESIGN.md "Study
     // tasks from exam events").
 
-    /// The coarse prep-lead bands the capture classifier may emit for
-    /// `NudgeTask.prepLeadDays`. Anything else is invalid and reads as
-    /// missing — coarse bands only, no invented precision.
-    static let prepLeadBands: Set<Int> = [3, 7, 14]
-
-    /// Lead band assumed when an exam event carries no valid
-    /// `prepLeadDays` (deterministic calendar imports never can; the AI
-    /// may answer null or nonsense).
-    static let defaultPrepLeadDays: Int = 7
-
     /// How long the message box keeps showing the "I've added study time"
     /// announcement and the one-time tombstone note after each first
     /// renders. Reuses the tap-context freshness idea: a passive display
@@ -699,27 +689,6 @@ enum NudgeConfig {
     /// step"). Small on purpose — the ask is re-contact with the goal,
     /// not a work session; 20 minutes is startable on a bad day.
     static let goalStepMinutes: Int = 20
-
-    // MARK: - Stakes backfill
-    //
-    // Drives `StakesBackfill`, the one-shot pass that classifies stakes on
-    // rows that never got a value and re-classifies calendar rows the
-    // deterministic `CalendarService.inferStakes` fallback got wrong.
-
-    /// Unique normalized titles per Claude request. The pass dedupes first,
-    /// so this bounds request size, not row count — 40 titles is a few
-    /// hundred output tokens, comfortably inside the response budget.
-    static let stakesBackfillChunkSize: Int = 40
-
-    /// Pause between chunk requests. Cheap insurance against tripping the
-    /// rate limit on a large import; the pass is background work with no
-    /// deadline, so there is nothing to gain by going faster.
-    static let stakesBackfillInterChunkDelaySeconds: Double = 0.5
-
-    /// How long to wait before the single retry after a 429. One retry
-    /// only — if the limit is still hot, the pass abandons and runs again
-    /// on a later launch.
-    static let stakesBackfillRateLimitBackoffSeconds: Double = 5.0
 
     // MARK: - Stakes row display
     //

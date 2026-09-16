@@ -58,12 +58,10 @@ class ClaudeService {
 
     // MARK: - System Prompts
 
-    /// The stakes rule — the definition of the CONSEQUENCE signal. Shared
-    /// verbatim between the brain-dump system prompt below and the batch
-    /// classifier (`classifyStakes`) that the backfill pass uses: both
-    /// write the same field on the same model, so they must apply the same
-    /// definition, and interpolating one constant into both is what keeps
-    /// them from drifting. Says nothing about tasks-vs-events or the
+    /// The stakes rule — the definition of the CONSEQUENCE signal, written
+    /// once and interpolated into the brain-dump system prompt below. (The
+    /// batch classifier that also used it, the one-shot stakes backfill,
+    /// was retired Sep 2026: imports get deterministic stakes at creation.) Says nothing about tasks-vs-events or the
     /// response schema on purpose — those differ per call site.
     static let stakesRuleText = """
     Stakes means CONSEQUENCE — how bad is it if this is missed or handled badly? It is NOT urgency and NOT category. Time pressure is scored elsewhere: something due tomorrow is not automatically high stakes, and a final exam three weeks away is still "high".
@@ -93,7 +91,6 @@ class ClaudeService {
     - Categorize: "exam", "school", "work", "health", "personal", "errand", or "other". Use "exam" for tests/midterms/finals/quizzes; "school" for any other coursework (assignments, readings, papers); "work" for jobs/shifts/meetings; "health" for doctor/gym/therapy/medication; "personal" for friends/family/hobbies; "errand" for quick utilitarian tasks (pick up, return, pay).
     - Assign stakes: "high", "medium", or "low" on EVERY item. \(ClaudeService.stakesRuleText)
     - For TASKS, assign "timeWindow": when is this task APPROPRIATE to do, judged from its nature. EXACTLY one of: "anytime" (no constraint — study, reading, writing, laundry, tidying; THE DEFAULT, use it whenever unsure), "daytime" (reasonable waking hours — calling people, errands, chores that mean leaving the house or making noise), "businessHours" (weekday working hours — calling an office, a bank, a doctor's front desk, anything with staff). This is about the task's nature, never its deadline. Events get null.
-    - For EVENTS with category "exam" ONLY, also set "prepLeadDays": how many days ahead studying should start. EXACTLY 3, 7, or 14 — a coarse band, never any other number. Judge from the exam title alone: course level and subject carry the signal (an organic chemistry final outranks an intro marketing quiz). 3 = light/low-stakes quiz or intro-level test; 7 = a typical course exam or midterm; 14 = a final, a cumulative exam, or a notoriously heavy subject. If you can't tell, use null. Every non-exam item gets null.
 
     CRITICAL — TASKS vs EVENTS:
     Every item the user mentions is EITHER a task OR an event. You MUST decide which and set the "isEvent" boolean field:
@@ -219,8 +216,8 @@ class ClaudeService {
       "plan_consent": [{"title": "<exam title>", "wants": true}]  — only in the turn where the user answered it.
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "deadline", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
-    The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "deadline", "sequenceIndex": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
+    The "isEvent" boolean is REQUIRED on every new item.
 
     TITLES (the list, the timeline, and the widget have one line each): a short noun phrase, at most five words where the scope allows, condensed the way a person would write it on a sticky note — "Apply to a Masters program" → "Masters Application"; "go pick up the package from the mail room" → "Pick up package"; "I need to finish the reading for bio" → "Bio reading". Drop lead-in verbs and filler ("go", "try to", "I need to", "make sure I") unless the verb IS the task. Keep every identifying number or name (module 4, Chem 101, Portland), and keep an EVENT's own name as the calendar would show it. Never abbreviate into something the user would not recognize.
 
@@ -688,8 +685,7 @@ class ClaudeService {
             "startISO": "<datetime, format YYYY-MM-DDTHH:MM:SS, LOCAL TIME, no timezone suffix>",
             "durationMinutes": <int or null>,
             "category": "exam" | "school" | "work" | "health" | "personal" | "errand" | "other" | null,
-            "stakes": "high" | "medium" | "low" | null,
-            "prepLeadDays": 3 | 7 | 14 | null
+            "stakes": "high" | "medium" | "low" | null
           }
         ]
 
@@ -702,7 +698,6 @@ class ClaudeService {
         - When in doubt about whether something is an event vs. UI text, INCLUDE IT. The user can delete bad ones.
         - Default category to "\(defaultCategory)" when unsure.
         - stakes = the CONSEQUENCE of missing the event, not its timing: "high" for exams/finals/interviews/flights/medical appointments; "medium" for regular classes and work shifts; "low" for optional or social items. Use null when you can't tell.
-        - prepLeadDays: for category "exam" ONLY — how many days ahead studying should start, judged from the title alone. EXACTLY 3, 7, or 14 (a coarse band, never any other number): 3 = light quiz/intro-level test, 7 = typical course exam or midterm, 14 = final/cumulative/heavy subject. Null when you can't tell; null for every non-exam item.
         - Only return [] if there is genuinely zero date/time information anywhere in the text.
 
         OCR TEXT:
@@ -778,10 +773,7 @@ class ClaudeService {
                 startDate: start,
                 estimatedMinutes: json.durationMinutes,
                 category: json.category,
-                stakes: TaskStakes.parse(json.stakes),
-                // Tolerant: only the coarse bands survive; 5, 0, -3, 30
-                // all read as "didn't say".
-                prepLeadDays: ExamPrepSweep.validLeadBand(json.prepLeadDays)
+                stakes: TaskStakes.parse(json.stakes)
             )
         }
         #if DEBUG
@@ -835,146 +827,13 @@ class ClaudeService {
         return nil
     }
 
-    // MARK: - Batch stakes classification (backfill / upgrade pass)
-
-    /// Classifies a batch of task titles into `TaskStakes` in ONE request.
-    /// Array in, array out — the backfill pass dedupes ~100 rows down to
-    /// ~15 unique normalized titles and spends one call on them, instead of
-    /// one call per row.
-    ///
-    /// Uses the same `stakesRuleText` as the brain-dump prompt, so a row
-    /// upgraded here lands where capture would have put it.
-    ///
-    /// Matching is by INDEX, not by echoed title: the model rewords and
-    /// re-cases titles, and a title-keyed response would silently drop rows.
-    ///
-    /// The response must cover the request EXACTLY — every index sent,
-    /// once each — or the whole chunk is thrown away. A truncated response
-    /// (`max_tokens`) or a model that renumbers is still well-formed JSON,
-    /// so the decoder alone cannot catch it, and applying a partial answer
-    /// would leave rows silently unclassified while looking like a success.
-    ///
-    /// A `null` stakes is the one legitimate gap: it means "couldn't tell",
-    /// occupies its index, and is simply absent from the returned map —
-    /// `setStakesFromAutomation(nil)` already treats that as "keep the
-    /// current value".
-    ///
-    /// - Parameter titles: Unique titles. Keys of the returned dictionary
-    ///   are these strings verbatim, so the caller can map straight back.
-    /// - Returns: One entry per title the model gave a real answer for —
-    ///   smaller than `titles` only by the `null`s. Empty for empty input.
-    /// - Throws: `ClaudeError.parseError` if the response doesn't decode or
-    ///   doesn't cover the request; the network errors otherwise.
-    func classifyStakes(titles: [String]) async throws -> [String: TaskStakes] {
-        guard !titles.isEmpty else { return [:] }
-
-        let numbered = titles.enumerated()
-            .map { "\($0.offset). \($0.element)" }
-            .joined(separator: "\n")
-
-        let prompt = """
-        Classify the STAKES of each item on someone's task list.
-
-        \(ClaudeService.stakesRuleText)
-
-        Return ONLY a JSON array. No prose, no markdown fences. Schema:
-        [
-          {"index": <the item's number below>, "stakes": "high" | "medium" | "low" | null}
-        ]
-
-        Rules:
-        - Return exactly one object per item, covering every index from 0 to \(titles.count - 1).
-        - Titles are lowercased and stripped of punctuation. That is normalization for matching — it is NOT a signal about how important the item is.
-        - You only get the title. Judge the typical consequence of missing an item with that name; do not invent context.
-        - Use null ONLY when the title is genuinely too vague to judge at all. Prefer a real answer.
-
-        ITEMS:
-        \(numbered)
-        """
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 4000,
-            "system": "You are a precise classifier. Return only valid JSON matching the requested schema. No prose, no commentary.",
-            "messages": [["role": "user", "content": prompt]]
-        ]
-
-        guard !apiKey.isEmpty else { throw ClaudeError.missingAPIKey }
-
-        var req = URLRequest(url: URL(string: baseURL)!)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: req)
-        try validateResponse(data: data, response: response)
-        let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-        guard let text = anthropicResponse.content.first?.text else {
-            throw ClaudeError.emptyResponse
-        }
-
-        return try Self.decodeStakesClassifications(from: text, titles: titles)
-    }
-
-    /// Strips fences, decodes the JSON array, verifies it covers the
-    /// request, and maps indices back onto the caller's titles.
-    private static func decodeStakesClassifications(
-        from raw: String,
-        titles: [String]
-    ) throws -> [String: TaskStakes] {
-        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.hasPrefix("```json") { cleaned = String(cleaned.dropFirst(7)) }
-        if cleaned.hasPrefix("```")     { cleaned = String(cleaned.dropFirst(3)) }
-        if cleaned.hasSuffix("```")     { cleaned = String(cleaned.dropLast(3)) }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let start = cleaned.firstIndex(of: "["),
-              let end = cleaned.lastIndex(of: "]"),
-              let arrayData = String(cleaned[start...end]).data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([StakesClassificationJSON].self, from: arrayData)
-        else {
-            #if DEBUG
-            print("[ClaudeService] classifyStakes — unparseable response:\n\(raw)")
-            #endif
-            throw ClaudeError.parseError
-        }
-
-        // Coverage check, before a single value is mapped back. Requiring
-        // the index SET to match (not just the count) also rejects
-        // duplicates and out-of-range indices, which would otherwise let a
-        // full-length response leave real titles unclassified.
-        let returnedIndices = Set(decoded.map(\.index))
-        guard decoded.count == titles.count, returnedIndices == Set(titles.indices) else {
-            #if DEBUG
-            print(
-                "[ClaudeService] classifyStakes — response does not cover the request: "
-                + "sent \(titles.count) title(s), got \(decoded.count) row(s) over "
-                + "\(returnedIndices.count) distinct index/indices. Abandoning chunk."
-            )
-            #endif
-            throw ClaudeError.parseError
-        }
-
-        var result: [String: TaskStakes] = [:]
-        for row in decoded {
-            // A null/unknown stakes is the model saying "couldn't tell".
-            // It held its index above, so coverage is satisfied; it just
-            // contributes no entry here.
-            guard let stakes = TaskStakes.parse(row.stakes) else { continue }
-            result[titles[row.index]] = stakes
-        }
-        return result
-    }
-
     // MARK: - Batch nudge-copy generation (cycle 2026-08-03-03)
 
     /// Writes notification body copy for a batch of (kind, task) pairs in
     /// ONE request — the cache-ahead pass `NudgeCopyGenerator` runs a few
     /// times a day. One call per pass, never one per kind.
     ///
-    /// Same coverage contract as `classifyStakes`: matching is by INDEX,
+    /// Coverage contract (once shared with the retired stakes classifier): matching is by INDEX,
     /// and the response must cover the request exactly or the whole pass
     /// is thrown away — a partial answer applied silently would leave some
     /// kinds "generated" and some not, with nothing to say which.
@@ -1864,7 +1723,6 @@ struct TaskData: Codable {
     let recurrence: String?
     let dependsOnTask: String?      // title of the task this depends on (resolved client-side)
     let sequenceIndex: Int?         // 1-based order when the user states a plan ("first X, then Y")
-    let prepLeadDays: Int?          // exam events only: coarse study-lead band (3|7|14); anything else → nil via ExamPrepSweep.validLeadBand
     let timeWindow: String?         // tasks only: "anytime" | "daytime" | "businessHours" appropriateness band; unknown/missing → nil via TaskTimeWindow.parse
     let commitmentShape: String?    // "splitWork" | "rate" | "quantity" on commitment tasks; unknown/missing → nil via CommitmentShape.parse
     let commitmentDailyCount: Int?  // quantity commitments only: units per day
@@ -1884,7 +1742,6 @@ struct TaskData: Codable {
         case recurrence
         case dependsOnTask = "depends_on_task"
         case sequenceIndex = "sequenceIndex"
-        case prepLeadDays = "prepLeadDays"
         case timeWindow = "timeWindow"
         case commitmentShape = "commitmentShape"
         case commitmentDailyCount = "commitmentDailyCount"
@@ -1915,19 +1772,6 @@ private struct ScreenshotEventJSON: Codable {
     let durationMinutes: Int?
     let category: String?
     let stakes: String?             // consequence signal; unknown/missing → nil via TaskStakes.parse
-    let prepLeadDays: Int?          // exam events only: 3|7|14 band; anything else → nil via ExamPrepSweep.validLeadBand
-}
-
-// MARK: - Batch stakes classification DTO
-
-/// One row of `classifyStakes`'s array response. Keyed by `index` into the
-/// caller's title array rather than by title — the model rewords titles,
-/// indices survive. `stakes` is optional twice over: the model may answer
-/// `null` ("can't tell"), and an unknown string decodes to nil via
-/// `TaskStakes.parse`. Both mean "no classification for this row".
-private struct StakesClassificationJSON: Codable {
-    let index: Int
-    let stakes: String?
 }
 
 // MARK: - Nudge-copy generation DTO

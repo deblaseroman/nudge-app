@@ -568,7 +568,6 @@ struct HomeTabView: View {
                     // band-validated (3|7|14, else nil) so no invented
                     // precision reaches the store.
                     if isEvent {
-                        task.prepLeadDays = ExamPrepSweep.validLeadBand(taskData.prepLeadDays)
                     } else {
                         // Appropriateness band — tasks only (events aren't
                         // placed). Unknown strings parse to nil, which
@@ -933,17 +932,8 @@ struct HomeTabView: View {
     }
 
     /// Runs the AI day-plan refiner and replies in-chat with the rationale.
-    /// Gated behind Pro / trial. An explicit chat message → `force: true`.
+    /// An explicit chat message → `force: true`.
     private func handlePlanIntent() async {
-        guard profile.isPro || profile.isInTrial else {
-            messages.append(HomeChatMessage(
-                role: .assistant,
-                text: "Planning your day with AI is a Pro feature. You can still use “Plan my day” in the Tasks tab any time."
-            ))
-            persistSession()
-            return
-        }
-
         let outcome = await DayPlanRefiner.shared.refine(
             profile: profile,
             modelContext: modelContext,
@@ -955,8 +945,6 @@ struct HomeTabView: View {
             reply = rationale.isEmpty ? "Done, I laid out your day on the timeline." : rationale
         case .noTasks:
             reply = "You're all set, there's nothing open to schedule into today's free time."
-        case .notEntitled:
-            reply = "Planning your day with AI is a Pro feature."
         case .failed:
             reply = "I couldn't rework the schedule just now. Try again in a moment, or use “Plan my day” in the Tasks tab."
         }

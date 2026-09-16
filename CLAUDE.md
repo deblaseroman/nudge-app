@@ -83,7 +83,7 @@ Both targets read and write one SwiftData store (`Nudge.store`) and one `UserDef
 ### AI vs deterministic split
 
 - All Anthropic calls live in `ClaudeService` (Haiku). `NudgeIntelligence` caches per-task AI signals in `TaskIntelligence` (7-day TTL, single-flight).
-- **Plan-my-day has two implementations.** The deterministic one is `DayPlanEngine` (entered from `planMyDay()` in `Nudge/Views/Tabs/TasksTabView.swift`). `DayPlanRefiner` is the AI layer over it (Pro/trial gated, cached once per day). Both write only `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto`.
+- **Plan-my-day has two implementations.** The deterministic one is `DayPlanEngine` (entered from `planMyDay()` in `Nudge/Views/Tabs/TasksTabView.swift`). `DayPlanRefiner` is the AI layer over it (cached once per day; no tier gate, the app ships as one version). Both write only `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto`.
 - The notification path is fully deterministic: `EisenhowerScorer` (urgency×importance → quadrant), `DurationModel` (category priors + learned `CategoryDurationStats`), `StartByPlanner`, `BusyWindowResolver`. No LLM calls in the arbiter.
 
 ### Conventions
