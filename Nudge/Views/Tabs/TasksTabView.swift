@@ -1441,7 +1441,19 @@ struct TasksTabView: View {
         let events = dayEvents(on: today)
         let hasOpenPlan = plan.contains { !$0.isComplete }
         if !hasOpenPlan && dayTasks.isEmpty && events.isEmpty {
-            planMyDayEmptyButton
+            // Nothing on today (Roman, Sep 16 2026): still offer something
+            // to work on — the fillers (floaters, loose tasks) and work
+            // that could be done early — above the Plan my day button.
+            VStack(alignment: .leading, spacing: 12) {
+                let fillers = fillerCandidates(today: today)
+                if !fillers.isEmpty {
+                    Text("Nothing planned yet. You could work on:")
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textMuted)
+                    ForEach(fillers, id: \.id) { taskRow($0) }
+                }
+                planMyDayEmptyButton
+            }
         } else {
             // Resolved ONCE for the whole lens — `daySlots` scans every
             // task, and this body re-evaluates on the 60s clock tick.
@@ -1548,6 +1560,22 @@ struct TasksTabView: View {
                 }
             }
         }
+    }
+
+    /// What an empty Today can offer: open single tasks with no day of
+    /// their own (floaters, loose tasks) and due-dated work whose anchor
+    /// is still ahead (could be done early). Skipped tasks and other days'
+    /// intentions stay out; comparator order; a short list on purpose.
+    private func fillerCandidates(today: Date) -> [NudgeTask] {
+        sortedTasks
+            .filter { task in
+                guard task.linkedEventId == nil || task.intendedDate == nil else { return false }
+                if let day = task.scheduledDay { return day <= today }
+                if task.hasDeadline { return task.sortDeadline >= Date() }
+                return true
+            }
+            .prefix(6)
+            .map { $0 }
     }
 
     private var planMyDayEmptyButton: some View {
