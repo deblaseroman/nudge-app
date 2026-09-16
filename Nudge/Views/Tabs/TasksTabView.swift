@@ -808,10 +808,20 @@ struct TasksTabView: View {
                             source: "manual",
                             estimatedMinutes: draft.durationMinutes
                         )
+                        // The scheduled clock from the editor (day, and a
+                        // manual placement when a time was picked).
+                        if let day = draft.intendedDate {
+                            newTask.intendedDate = Calendar.current.startOfDay(for: day)
+                            if let start = draft.plannedStart {
+                                newTask.plannedStartDate = start
+                                newTask.plannedIsAuto = false
+                            }
+                        }
                         // If "New task" was chosen from a timeline slot, land
                         // the new task at that time.
                         if let placeAt = pendingPlacementTime {
                             newTask.plannedStartDate = placeAt
+                            newTask.intendedDate = Calendar.current.startOfDay(for: placeAt)
                             pendingPlacementTime = nil
                         }
                         // Hand-set stakes: write directly + flag as user-set
@@ -3160,39 +3170,35 @@ struct TaskEditorSheet: View {
                             .foregroundColor(NudgeTheme.textMuted)
                     }
 
-                    editorSection(title: "Reschedule") {
-                        HStack(spacing: 10) {
-                            quickDateChip(title: "Today", offset: 0)
-                            quickDateChip(title: "Tomorrow", offset: 1)
-                            quickDateChip(title: "Next Week", offset: 7)
-                        }
-
-                        HStack(spacing: 10) {
-                            Button(action: {
-                                NudgeHaptics.light()
-                                draft.clearDueDate()
-                            }) {
-                                Text("No date")
-                                    .font(.custom(NudgeTheme.fontMedium, size: 13))
-                                    .foregroundColor(NudgeTheme.textPrimary)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .background(NudgeTheme.surfaceAlt)
-                                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                    if isEventMode {
+                        // An event has one clock: when it is. Unchanged.
+                        editorSection(title: "Reschedule") {
+                            HStack(spacing: 10) {
+                                quickDateChip(title: "Today", offset: 0)
+                                quickDateChip(title: "Tomorrow", offset: 1)
+                                quickDateChip(title: "Next Week", offset: 7)
                             }
 
-                            Spacer()
-                        }
+                            HStack(spacing: 10) {
+                                clearButton("No date") { draft.clearDueDate() }
+                                Spacer()
+                            }
 
-                        DatePicker(
-                            dateFieldLabel,
-                            selection: Binding(
-                                get: { draft.specificTime ?? draft.defaultDateForPicker },
-                                set: { draft.setSpecificTime($0) }
-                            ),
-                            displayedComponents: [.date, .hourAndMinute]
-                        )
-                        .datePickerStyle(.compact)
+                            DatePicker(
+                                "Time",
+                                selection: Binding(
+                                    get: { draft.specificTime ?? draft.defaultDateForPicker },
+                                    set: { draft.setSpecificTime($0) }
+                                ),
+                                displayedComponents: [.date, .hourAndMinute]
+                            )
+                            .datePickerStyle(.compact)
+                        }
+                    } else {
+                        // A task has two clocks (Roman, Sep 16 2026):
+                        // when you mean to work on it, and when it is owed.
+                        scheduledSection
+                        dueDateSection
                     }
 
                     // Duration — how long the thing runs. This is the ONLY
@@ -3299,11 +3305,132 @@ struct TaskEditorSheet: View {
         return "Due"
     }
 
+    /// Editing an event: one picker, its time. Creating is always a task.
+    private var isEventMode: Bool {
+        if case .edit(let task) = mode { return task.isInformationalEvent }
+        return false
+    }
+
+    /// The SCHEDULED clock: the day (and optionally the time) the user
+    /// means to work on this, before it is owed. Writes the intention and
+    /// a manual placement; never the due date.
+    private var scheduledSection: some View {
+        editorSection(title: "Reschedule") {
+            HStack(spacing: 10) {
+                quickDateChip(title: "Today", offset: 0)
+                quickDateChip(title: "Tomorrow", offset: 1)
+                quickDateChip(title: "Next Week", offset: 7)
+            }
+
+            DatePicker(
+                "Day",
+                selection: Binding(
+                    get: { draft.intendedDate ?? Date() },
+                    set: { draft.setScheduledDay($0) }
+                ),
+                displayedComponents: [.date]
+            )
+            .datePickerStyle(.compact)
+            .opacity(draft.intendedDate == nil ? 0.55 : 1)
+
+            if draft.intendedDate != nil {
+                DatePicker(
+                    "Time",
+                    selection: Binding(
+                        get: { draft.plannedStart ?? draft.defaultScheduledTime },
+                        set: { draft.setScheduledTime($0) }
+                    ),
+                    displayedComponents: [.hourAndMinute]
+                )
+                .datePickerStyle(.compact)
+                .opacity(draft.plannedStart == nil ? 0.55 : 1)
+            }
+
+            HStack(spacing: 10) {
+                clearButton("No date") { draft.clearScheduled() }
+                if draft.intendedDate != nil {
+                    clearButton("No time") { draft.clearScheduledTime() }
+                }
+                Spacer()
+            }
+
+            Text(draft.intendedDate == nil
+                 ? "No day picked: the app places it when it fits."
+                 : (draft.plannedStart == nil
+                    ? "That day, as a floater. Plan my day picks the time."
+                    : "Anchored to the timeline at that time."))
+                .font(.custom(NudgeTheme.fontBody, size: 12))
+                .foregroundColor(NudgeTheme.textMuted)
+        }
+    }
+
+    /// The DUE clock: the anchor. A due date is medium importance from the
+    /// day it is set and high on the day it lands; a date with no time is
+    /// due at 11:59 PM. Only a task with a due date can receive a plan.
+    private var dueDateSection: some View {
+        editorSection(title: "Due date") {
+            DatePicker(
+                "Due",
+                selection: Binding(
+                    get: { draft.dueDate ?? Date() },
+                    set: { draft.setDueDay($0) }
+                ),
+                displayedComponents: [.date]
+            )
+            .datePickerStyle(.compact)
+            .opacity(draft.dueDate == nil ? 0.55 : 1)
+
+            if draft.dueDate != nil {
+                DatePicker(
+                    "Due time",
+                    selection: Binding(
+                        get: { draft.specificTime ?? draft.defaultDueTime },
+                        set: { draft.setDueTime($0) }
+                    ),
+                    displayedComponents: [.hourAndMinute]
+                )
+                .datePickerStyle(.compact)
+                .opacity(draft.specificTime == nil ? 0.55 : 1)
+            }
+
+            HStack(spacing: 10) {
+                clearButton("No due date") { draft.clearDueDate() }
+                if draft.dueDate != nil {
+                    clearButton("No time") { draft.clearDueTime() }
+                }
+                Spacer()
+            }
+
+            Text(draft.dueDate == nil
+                 ? "No due date: nothing is owed, so it never shows as overdue."
+                 : (draft.specificTime == nil
+                    ? "Due by 11:59 PM that day."
+                    : "Due at that time. Overdue after it."))
+                .font(.custom(NudgeTheme.fontBody, size: 12))
+                .foregroundColor(NudgeTheme.textMuted)
+        }
+    }
+
+    private func clearButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: {
+            NudgeHaptics.light()
+            action()
+        }) {
+            Text(title)
+                .font(.custom(NudgeTheme.fontMedium, size: 13))
+                .foregroundColor(NudgeTheme.textPrimary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+        }
+    }
+
     private func quickDateChip(title: String, offset: Int) -> some View {
         Button(action: {
             NudgeHaptics.light()
             let date = Calendar.current.date(byAdding: .day, value: offset, to: Date()) ?? Date()
-            draft.setDate(date)
+            if isEventMode { draft.setDate(date) } else { draft.setScheduledDay(date) }
         }) {
             Text(title)
                 .font(.custom(NudgeTheme.fontMedium, size: 13))
@@ -3409,28 +3536,40 @@ struct TaskEditorSheet: View {
         task.title = draft.title
         task.priority = draft.priority
 
-        let isIntentOnly = !task.isInformationalEvent
-            && task.intendedDate != nil
-            && !task.hasDeadline
-        if isIntentOnly {
-            if let day = draft.specificTime ?? draft.dueDate {
-                task.intendedDate = Calendar.current.startOfDay(for: day)
-                task.skipCount = 0
-                if let time = draft.specificTime {
-                    // A picked clock time is the user scheduling the start
-                    // — a manual placement, same as capture's timed intents.
-                    task.plannedStartDate = time
-                    task.plannedIsAuto = false
-                }
-            } else {
-                // "No date": the intention is released back to a floater.
-                task.intendedDate = nil
-                task.plannedStartDate = nil
-            }
-        } else {
+        if task.isInformationalEvent {
+            // One clock: the event's time.
             task.dueDate = draft.dueDate
             task.dueTime = draft.dueTimeLabel
             task.specificTime = draft.specificTime
+        } else {
+            // Two clocks (Roman, Sep 16 2026). Each is written only when
+            // the user touched it, so opening a row and saving can't
+            // clobber an auto placement or a captured deadline.
+            if draft.scheduleTouched {
+                if let day = draft.intendedDate {
+                    task.intendedDate = Calendar.current.startOfDay(for: day)
+                    task.skipCount = 0
+                    if let time = draft.plannedStart {
+                        // A picked clock time is the user scheduling the
+                        // start: a manual placement, same as a timed intent.
+                        task.plannedStartDate = time
+                        task.plannedIsAuto = false
+                    } else {
+                        task.plannedStartDate = nil
+                        task.plannedIsAuto = false
+                    }
+                } else {
+                    // "No date": released back to a floater.
+                    task.intendedDate = nil
+                    task.plannedStartDate = nil
+                    task.plannedIsAuto = false
+                }
+            }
+            if draft.dueTouched {
+                task.dueDate = draft.dueDate
+                task.dueTime = draft.dueTimeLabel
+                task.specificTime = draft.specificTime
+            }
         }
 
         // Hand-set stakes: write directly + flag as user-set so no later
@@ -3455,15 +3594,6 @@ struct TaskEditorSheet: View {
         }
     }
 
-    /// What the date picker MEANS for this item — "Due" only when the date
-    /// actually is a deadline. Part of the intent-aware editor: the label
-    /// and `apply(_:to:modelContext:)` must agree about which field moves.
-    private var dateFieldLabel: String {
-        guard case .edit(let task) = mode else { return "Due" }
-        if task.isInformationalEvent { return "Time" }
-        if task.intendedDate != nil && !task.hasDeadline { return "Planned" }
-        return "Due"
-    }
 
     private func populateDraftIfNeeded() {
         guard case .edit(let task) = mode else { return }
@@ -3474,12 +3604,11 @@ struct TaskEditorSheet: View {
             specificTime: task.specificTime,
             durationMinutes: task.estimatedMinutes
         )
-        // Intent tasks seed the picker from their intent day + placement so
-        // the current plan shows in the sheet; `apply` routes the edit back
-        // to those same fields.
-        if !task.isInformationalEvent, task.intendedDate != nil, !task.hasDeadline {
-            draft.dueDate = task.intendedDate
-            draft.specificTime = task.plannedStartDate
+        // Tasks seed both clocks: the scheduled day + placement, and the
+        // due date + time. `apply` writes each back only if touched.
+        if !task.isInformationalEvent {
+            draft.intendedDate = task.intendedDate
+            draft.plannedStart = task.plannedStartDate
         }
         // Show the task's current stakes selected, WITHOUT marking it a fresh
         // user choice — only tapping a chip sets stakesUserPicked, so simply
@@ -3721,8 +3850,20 @@ struct TaskDraft {
     /// saving without touching stakes must not lock an automation-set value.
     var stakes: TaskStakes? = nil
     var stakesUserPicked = false
+    /// The DUE clock (the anchor). `dueDate` is the day; `specificTime` is
+    /// the exact moment when a time was given; no time means 11:59 PM.
     var dueDate: Date? = nil
     var specificTime: Date? = nil
+    /// The SCHEDULED clock (Roman, Sep 16 2026): the day the user means to
+    /// work on it (`intendedDate`) and, when a time was picked, the manual
+    /// placement (`plannedStartDate`).
+    var intendedDate: Date? = nil
+    var plannedStart: Date? = nil
+    /// Which clocks the user touched in this sheet; `apply` writes only
+    /// those, so open-and-save can't clobber an auto placement or a
+    /// captured deadline.
+    var scheduleTouched = false
+    var dueTouched = false
     /// Length in minutes — `estimatedMinutes` on the task. Same pattern as
     /// stakes: populated on edit so the current value shows selected, but
     /// only written back when the user actually tapped a chip
@@ -3757,6 +3898,74 @@ struct TaskDraft {
     mutating func clearDueDate() {
         dueDate = nil
         specificTime = nil
+        dueTouched = true
+    }
+
+    // MARK: Due clock (tasks)
+
+    var defaultDueTime: Date {
+        let day = dueDate ?? Calendar.current.startOfDay(for: Date())
+        return Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: day) ?? day
+    }
+
+    mutating func setDueDay(_ date: Date) {
+        let day = Calendar.current.startOfDay(for: date)
+        dueDate = day
+        if let time = specificTime {
+            // Keep the chosen clock time on the new day.
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: time)
+            specificTime = Calendar.current.date(bySettingHour: comps.hour ?? 0, minute: comps.minute ?? 0, second: 0, of: day)
+        }
+        dueTouched = true
+    }
+
+    mutating func setDueTime(_ time: Date) {
+        let day = dueDate ?? Calendar.current.startOfDay(for: time)
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: time)
+        dueDate = day
+        specificTime = Calendar.current.date(bySettingHour: comps.hour ?? 0, minute: comps.minute ?? 0, second: 0, of: day)
+        dueTouched = true
+    }
+
+    mutating func clearDueTime() {
+        specificTime = nil
+        dueTouched = true
+    }
+
+    // MARK: Scheduled clock (tasks)
+
+    var defaultScheduledTime: Date {
+        let day = intendedDate ?? Calendar.current.startOfDay(for: Date())
+        return Calendar.current.date(bySettingHour: 10, minute: 0, second: 0, of: day) ?? day
+    }
+
+    mutating func setScheduledDay(_ date: Date) {
+        let day = Calendar.current.startOfDay(for: date)
+        intendedDate = day
+        if let start = plannedStart {
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: start)
+            plannedStart = Calendar.current.date(bySettingHour: comps.hour ?? 0, minute: comps.minute ?? 0, second: 0, of: day)
+        }
+        scheduleTouched = true
+    }
+
+    mutating func setScheduledTime(_ time: Date) {
+        let day = intendedDate ?? Calendar.current.startOfDay(for: time)
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: time)
+        intendedDate = day
+        plannedStart = Calendar.current.date(bySettingHour: comps.hour ?? 0, minute: comps.minute ?? 0, second: 0, of: day)
+        scheduleTouched = true
+    }
+
+    mutating func clearScheduledTime() {
+        plannedStart = nil
+        scheduleTouched = true
+    }
+
+    mutating func clearScheduled() {
+        intendedDate = nil
+        plannedStart = nil
+        scheduleTouched = true
     }
 
     func cleaned() -> TaskDraft {
