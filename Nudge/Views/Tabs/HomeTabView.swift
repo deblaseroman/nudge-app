@@ -657,6 +657,9 @@ struct HomeTabView: View {
                     // BEFORE the reevaluate, so fresh dailies are in the
                     // store when candidates are built.
                     ExamPrepSweep.shared.run(modelContext: modelContext)
+                    // A dump may have created an anchored item worth a
+                    // plan; the reader judges it (async, proposes only).
+                    PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
                     // Single arbiter call replaces every per-feature scheduler.
                     NudgeArbiter.shared.reevaluate(
                         reason: .taskCreatedOrEdited,

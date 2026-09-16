@@ -1421,6 +1421,139 @@ class ClaudeService {
         )
     }
 
+    // MARK: - Plan proposals (cycle 2026-09-16-01)
+
+    /// One anchored candidate as the reader sees it. Every date is already
+    /// a phrase; the model never does calendar math.
+    struct PlanProposalCandidate {
+        let id: String
+        let title: String
+        /// "task" | "event"
+        let kind: String
+        /// "in 18 days (Oct 4th, 9:00 AM)"
+        let anchorLine: String
+        let daysUntilAnchor: Int
+        let category: String
+        let stakes: String
+        let estimatedMinutes: Int?
+    }
+
+    struct PlanProposalSession: Codable {
+        let title: String
+        let dayOffset: Int
+        let minutes: Int
+    }
+
+    struct PlanProposalResult: Codable {
+        let id: String
+        let worthPlan: Bool
+        let reason: String
+        let sessions: [PlanProposalSession]
+
+        enum CodingKeys: String, CodingKey {
+            case id, reason, sessions
+            case worthPlan = "worth_plan"
+        }
+    }
+
+    /// The reader: judges each due-dated candidate and, when it is worth
+    /// preparing for, proposes the sessions. Proposes only; writes nothing.
+    /// Opus by design (the Tasks-tab box is Opus's surface), effort low,
+    /// one batched request for the whole candidate set.
+    func proposePlans(
+        candidates: [PlanProposalCandidate]
+    ) async throws -> [PlanProposalResult] {
+        guard !apiKey.isEmpty else {
+            throw ClaudeError.missingAPIKey
+        }
+        guard !candidates.isEmpty else { return [] }
+
+        let lines = candidates.map { c -> String in
+            var parts = ["id: \(c.id)", "\(c.kind): \"\(c.title)\"", "when: \(c.anchorLine)",
+                         "days available before it: \(c.daysUntilAnchor) (offsets 0 to \(max(c.daysUntilAnchor - 1, 0)))",
+                         "category: \(c.category)", "stakes: \(c.stakes)"]
+            if let m = c.estimatedMinutes { parts.append("estimated: \(m) min") }
+            return "- " + parts.joined(separator: " | ")
+        }.joined(separator: "\n")
+
+        let prompt = """
+        A task app for students with ADHD is deciding which upcoming due-dated items deserve a PLAN: a few small, dated preparation sessions before the item is due. You judge each item below and, only when it is worth it, propose the sessions. The app shows your one-sentence reason in its message box with a Yes and a No button; the user's Yes adds the sessions. You write nothing yourself.
+
+        ITEMS (offset 0 is today; a session's dayOffset must be less than "days available"):
+        \(lines)
+
+        WHAT IS WORTH A PLAN: something the user has to prepare for or build up to over days, where a few sessions beforehand change how it goes. Exams, midterms, finals, applications, presentations, interviews, trips, a move, a large assignment or project, a big purchase or paperwork with steps. Judge honestly; most everyday items are NOT worth a plan: a dentist appointment, a class, a shift, a birthday dinner, a single errand, a one-sitting homework due tomorrow. For those return worth_plan false with a short reason.
+
+        SESSION RULES when worth_plan is true:
+        - 2 to \(NudgeConfig.planProposalMaxSessions) sessions, each \(NudgeConfig.planSessionMinMinutes) to \(NudgeConfig.planSessionMaxMinutes) minutes.
+        - dayOffset counts days from today; every session lands before the item's day (dayOffset < days available). Spread them; the last one the day before, not the same day.
+        - Titles are short and specific, at most six words, condensed the way a person would ("Masters Application", not "Apply to a Masters program"; "Review chapters 5 and 6", not "Sit down and go through all of the material").
+        - Concrete steps for THIS item. For an exam: what to review, in order. For a trip: confirm bookings, pack, print or download what is needed. For an application: gather documents, draft, revise, submit.
+        - Never invent a date, a time, or a detail the item does not state.
+
+        REASON RULES (the sentence the user sees):
+        - One plain sentence, under 120 characters, stating what is coming and that a plan would help. Facts, not verdicts. No exclamation marks, no emoji.
+        - Never use an em dash. Use commas or periods.
+        - Never promise an outcome. "A few sessions would spread the work out" is fine; "you'll be ready" is not.
+
+        Return ONLY a JSON array, one object per item, no prose, no markdown fences:
+        [{"id": "...", "worth_plan": true, "reason": "...", "sessions": [{"title": "...", "dayOffset": 3, "minutes": 45}]},
+         {"id": "...", "worth_plan": false, "reason": "...", "sessions": []}]
+        """
+
+        let body: [String: Any] = [
+            "model": memoModel,
+            "max_tokens": 4000,
+            "fallbacks": "default",
+            "output_config": ["effort": "low"],
+            "system": "You plan preparation for a task app built for people with ADHD. Return only valid JSON matching the requested schema. No prose, no commentary.",
+            "messages": [["role": "user", "content": prompt]]
+        ]
+
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        #if DEBUG
+        if let usage = anthropicResponse.usage {
+            print("[ClaudeService] USAGE: in=\(usage.inputTokens ?? 0) out=\(usage.outputTokens ?? 0) (out includes thinking) model=\(memoModel) site=planProposal candidates=\(candidates.count)")
+        }
+        #endif
+        guard let text = anthropicResponse.content
+                .first(where: { $0.type == nil || $0.type == "text" })?.text,
+              !text.isEmpty
+        else {
+            throw ClaudeError.emptyResponse
+        }
+
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```json") { cleaned = String(cleaned.dropFirst(7)) }
+        if cleaned.hasPrefix("```")     { cleaned = String(cleaned.dropFirst(3)) }
+        if cleaned.hasSuffix("```")     { cleaned = String(cleaned.dropLast(3)) }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let start = cleaned.firstIndex(of: "["),
+              let end = cleaned.lastIndex(of: "]"),
+              let arrayData = String(cleaned[start...end]).data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([PlanProposalResult].self, from: arrayData)
+        else {
+            #if DEBUG
+            print("[ClaudeService] proposePlans — unparseable response:\n\(text)")
+            #endif
+            throw ClaudeError.parseError
+        }
+        // Only ids we asked about; the model may not invent items.
+        let asked = Set(candidates.map(\.id))
+        return decoded.filter { asked.contains($0.id) }
+    }
+
     // MARK: - Network Layer
 
     private func makeRequest(body: [String: Any]) async throws -> ClaudeResponse {

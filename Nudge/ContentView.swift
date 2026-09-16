@@ -124,6 +124,10 @@ struct ContentView: View {
             // the reevaluate so fresh tasks are in the store when the
             // arbiter builds candidates.
             ExamPrepSweep.shared.run(modelContext: modelContext)
+            // Plan proposals (cycle 2026-09-16-01): the reader judges the
+            // anchored items ahead and stores proposals for the message
+            // box to ask about. Async, proposes only, writes nothing.
+            PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
             // Fold any stored "urgent" priority into "high" (retired value;
             // idempotent, zero rows after the first pass).
             LegacyPriorityNormalizer.sweep(modelContext: modelContext)
@@ -168,6 +172,7 @@ struct ContentView: View {
             // covers cold start; this covers the day changing while the app
             // was backgrounded). Runs before the reevaluate below.
             ExamPrepSweep.shared.run(modelContext: modelContext)
+            PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
 
             // Stamp the foreground and resolve any delivered-but-unanswered
             // nudges. `.onAppear` above covers cold launch; this covers

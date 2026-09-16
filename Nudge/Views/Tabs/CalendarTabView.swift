@@ -983,6 +983,8 @@ struct CalendarTabView: View {
             ) ?? CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [])
 
             try? modelContext.save()
+            // Imported anchored items are plan candidates like dumped ones.
+            PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
             statusMessage = result.errors.isEmpty
                 ? "\(result.summary) Connected to \(profile.connectedAppleCalendarTitle ?? "Apple Calendar")."
                 : result.errors.joined(separator: "\n")
@@ -1027,6 +1029,7 @@ struct CalendarTabView: View {
                 profile.calendarImportURL = trimmedURL
                 profile.connectedAppleCalendarID = nil
                 profile.connectedAppleCalendarTitle = nil
+                PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
             }
             try? modelContext.save()
             statusMessage = result.errors.isEmpty ? result.summary : result.errors.joined(separator: "\n")

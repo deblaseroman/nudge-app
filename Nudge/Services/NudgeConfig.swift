@@ -504,6 +504,31 @@ enum NudgeConfig {
     /// a genuinely imminent deadline.
     static let placementUrgencyFloor: Double = 0.75
 
+    // MARK: - Plan proposals (cycle 2026-09-16-01)
+    //
+    // Drives `PlanProposalSweep`: for a due-dated task or event worth
+    // preparing for, one batched Opus call proposes the sessions, the
+    // message box asks, the user's Yes writes.
+
+    /// How far ahead the reader looks for anchored candidates. Matches the
+    /// calendar import edge the reader has historically had to live with;
+    /// the store may know further out (Item 4), the reader thinks three
+    /// weeks ahead.
+    static let planProposalHorizonDays: Int = 21
+
+    /// Candidates per batched call, and calls per day. Two calls of five
+    /// is the worst case; most days make zero because every candidate
+    /// already carries a decision.
+    static let planProposalBatchSize: Int = 5
+    static let planProposalCallsPerDay: Int = 2
+
+    /// Sessions a proposal may contain, and the length of one session.
+    /// Small on purpose: preparation is a handful of short dated steps,
+    /// not a second task list.
+    static let planProposalMaxSessions: Int = 8
+    static let planSessionMinMinutes: Int = 15
+    static let planSessionMaxMinutes: Int = 120
+
     // MARK: - Exam prep sweep
     //
     // Drives `ExamPrepSweep` — the launch/day-change pass that turns
