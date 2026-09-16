@@ -448,7 +448,16 @@ struct TasksTabView: View {
     private var sortedTasks: [NudgeTask] {
         let comparator = TaskSortComparator()
         return actionableTasks
-            .filter { !$0.isComplete && $0.sequenceIndex == nil }
+            .filter { !$0.isComplete && $0.sequenceIndex == nil && !$0.isSkipped }
+            .sorted { comparator.compare($0, $1) }
+    }
+
+    /// The Skipped section: skipped twice, no due date, not a subtask.
+    /// Comparator order, so the list reads like the others.
+    private var skippedTasks: [NudgeTask] {
+        let comparator = TaskSortComparator()
+        return actionableTasks
+            .filter { $0.isSkipped }
             .sorted { comparator.compare($0, $1) }
     }
 
@@ -1108,6 +1117,9 @@ struct TasksTabView: View {
         case today = "Today"
         case events = "Events"
         case overdue = "Overdue"
+        /// Single no-due-date tasks skipped twice (Roman, Sep 16 2026),
+        /// kept apart from Overdue, which is for owed work only.
+        case skipped = "Skipped"
     }
 
     /// The Events tab's two lenses over the same event data.
@@ -1170,6 +1182,7 @@ struct TasksTabView: View {
             return anyDayTask || !thisWeekEvents.isEmpty
         case .events:      return !thisWeekEvents.isEmpty || !importantEvents.isEmpty
         case .overdue:     return !overdueTasks.isEmpty
+        case .skipped:     return !skippedTasks.isEmpty
         }
     }
 
@@ -1233,6 +1246,7 @@ struct TasksTabView: View {
         case .today:       todayTab
         case .events:      eventsTab
         case .overdue:     overdueTab
+        case .skipped:     skippedTab
         }
     }
 
@@ -1686,6 +1700,22 @@ struct TasksTabView: View {
         }
     }
 
+    /// Skipped (Roman, Sep 16 2026): a task the user put on Today twice
+    /// and did not finish. Dating or placing it again brings it back.
+    @ViewBuilder
+    private var skippedTab: some View {
+        if skippedTasks.isEmpty {
+            tabEmptyLine("Nothing skipped.")
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Put on Today twice and not finished. Date it or place it again to bring it back.")
+                    .font(.custom(NudgeTheme.fontBody, size: 13))
+                    .foregroundColor(NudgeTheme.textMuted)
+                ForEach(skippedTasks, id: \.id) { taskRow($0) }
+            }
+        }
+    }
+
     /// Plan my day, half of the compact 44pt action row beside Start
     /// Session (same treatment on purpose — the pair's visual distinction
     /// is a separate upcoming decision; the compact row is about the task
@@ -1984,6 +2014,7 @@ struct TasksTabView: View {
         withAnimation(NudgeAnimation.standard) {
             task.plannedStartDate = time
             task.plannedIsAuto = false   // user-placed
+            task.skipCount = 0           // a fresh request from the user
         }
         try? modelContext.save()
         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -3356,6 +3387,7 @@ struct TaskEditorSheet: View {
         if isIntentOnly {
             if let day = draft.specificTime ?? draft.dueDate {
                 task.intendedDate = Calendar.current.startOfDay(for: day)
+                task.skipCount = 0
                 if let time = draft.specificTime {
                     // A picked clock time is the user scheduling the start
                     // — a manual placement, same as capture's timed intents.

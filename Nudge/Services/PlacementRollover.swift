@@ -63,6 +63,23 @@ enum PlacementRollover {
             task.plannedStartDate = nil
             task.plannedDurationMinutes = nil
             task.plannedIsAuto = false
+
+            // The Skipped rule (Roman, Sep 16 2026): a single no-due-date
+            // task that sat on a day and was not finished is skipped. The
+            // first skip reschedules it once, as today's floater; the
+            // second moves it to the Skipped section (intent released, so
+            // it leaves the day lists). Subtasks of an anchored thing and
+            // owed work are cleared as before and never counted.
+            guard !task.isComplete, task.isSkipCandidate else { continue }
+            task.skipCount += 1
+            if task.skipCount < NudgeConfig.skipsBeforeSkippedSection {
+                task.intendedDate = startOfToday
+            } else {
+                task.intendedDate = nil
+            }
+            #if DEBUG
+            print("   ↳ \(task.title): skip \(task.skipCount) → \(task.isSkipped ? "Skipped section" : "rescheduled to today, once")")
+            #endif
         }
         try? modelContext.save()
         return stale.count

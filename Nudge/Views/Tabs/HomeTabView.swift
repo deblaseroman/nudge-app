@@ -466,7 +466,16 @@ struct HomeTabView: View {
                         }
                         return true
                     }
-                    if let duplicateOf {
+                    // Roman's rule (Sep 16 2026): a new task identical to one
+                    // sitting in Overdue or Skipped REPLACES it — the old row
+                    // is deleted and the fresh one is created below. The
+                    // user restating the task is the decision.
+                    if let duplicateOf, duplicateOf.isOverdue || duplicateOf.isSkipped {
+                        #if DEBUG
+                        print("[HomeTabView] REPLACE: \"\(duplicateOf.title)\" (\(duplicateOf.isOverdue ? "overdue" : "skipped")) replaced by the new \"\(taskData.title)\"")
+                        #endif
+                        modelContext.delete(duplicateOf)
+                    } else if let duplicateOf {
                         // Which clause suppressed it: both dates present means
                         // the same-day comparison matched; otherwise it was
                         // the nil-date fallthrough (title match alone).

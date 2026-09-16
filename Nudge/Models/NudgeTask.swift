@@ -88,6 +88,26 @@ extension NudgeTask {
         return sortDeadline < Date()
     }
 
+    /// The Skipped rule's subject: a single task with no due date, not a
+    /// subtask of an anchored thing, not a commitment. Only these are ever
+    /// counted or shown as skipped; anything owed is Overdue's business.
+    var isSkipCandidate: Bool {
+        !isInformationalEvent && !hasDeadline && linkedEventId == nil && commitmentShapeRaw == nil
+    }
+
+    /// Skipped twice (Roman, Sep 16 2026): shown in the Skipped section,
+    /// out of Unscheduled and the day lists, until the user dates or places
+    /// it again (which resets the count) or completes it.
+    var isSkipped: Bool {
+        !isComplete && isSkipCandidate && skipCount >= Self.skipsBeforeSkippedSection
+    }
+
+    /// The Skipped threshold lives on the model, not in `NudgeConfig`, only
+    /// because the widget target compiles this file without the config;
+    /// `NudgeConfig.skipsBeforeSkippedSection` forwards here so the tunable
+    /// stays discoverable where every other one lives.
+    static let skipsBeforeSkippedSection: Int = 2
+
     /// True when this task is actually OWED at a moment — the deadline half
     /// of the deadline-vs-intention split (cycle 2026-09-03-01). Read sites
     /// that mean "does time pressure exist here" should ask this, not
@@ -229,6 +249,14 @@ final class NudgeTask {
     /// meaningful), where a stale placement is just clutter and gets swept.
     /// Never set on informational events; an event's time is its time.
     var intendedDate: Date? = nil
+
+    /// How many days this task sat on Today and was not finished (Roman,
+    /// Sep 16 2026). Counted by `PlacementRollover` for single tasks with
+    /// no due date that are not subtasks of an anchored thing; reset to 0
+    /// whenever the user places or dates the task again. At
+    /// `NudgeConfig.skipsBeforeSkippedSection` the task reads as skipped
+    /// (`isSkipped`) and lives in the Skipped section, apart from Overdue.
+    var skipCount: Int = 0
 
     /// How many days ahead of this EXAM EVENT study tasks should start —
     /// the coarse prep-lead band (3, 7, or 14) the capture/import

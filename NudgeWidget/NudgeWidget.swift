@@ -456,7 +456,7 @@ struct NudgeTaskProvider: TimelineProvider {
                 guard let completedAt = task.completedAt else { return false }
                 return now.timeIntervalSince(completedAt) < completionDisplayDuration
             }
-            let visibleTasks = openActionable + recentlyAnimatedDone
+            let visibleTasks = openActionable.filter { !$0.isSkipped } + recentlyAnimatedDone
             let recentlyCompletedTasks = recentlyAnimatedDone
 
             let todayCompletedCount = recentDone.filter { task in
@@ -464,7 +464,7 @@ struct NudgeTaskProvider: TimelineProvider {
                 return completedAt >= startOfToday && completedAt < endOfToday
             }.count
 
-            let incompleteTasks = openActionable
+            let incompleteTasks = openActionable.filter { !$0.isSkipped }
             let totalToday = incompleteTasks.count + todayCompletedCount
 
             let urgentCount = incompleteTasks.filter { task in

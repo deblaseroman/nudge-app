@@ -512,6 +512,18 @@ enum NudgeConfig {
     /// a genuinely imminent deadline.
     static let placementUrgencyFloor: Double = 0.75
 
+    // MARK: - Skipped (Roman, Sep 16 2026)
+    //
+    // A single task with no due date that the user put on Today and did
+    // not finish is SKIPPED. The app reschedules it once (to the next day,
+    // as that day's floater); a second skip moves it to the Skipped
+    // section, kept apart from Overdue, which is for owed work only.
+    // Subtasks of an anchored thing are never counted.
+
+    /// Forwarded from the model (the widget compiles `NudgeTask` without
+    /// this file); change it there.
+    static var skipsBeforeSkippedSection: Int { NudgeTask.skipsBeforeSkippedSection }
+
     // MARK: - Calendar import (cycle 2026-09-16-01 item 4)
 
     /// How far ahead both calendar doors import. Was 21 for Apple
