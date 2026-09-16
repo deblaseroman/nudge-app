@@ -8,12 +8,17 @@
 //  button, no keyboard — Home owns capture, and a second capture path
 //  doubles where a capture bug can live.
 //
-//  Content is DETERMINISTIC — composed from data the app already has, no
-//  ClaudeService call — so the box works offline and with no API key
-//  (DESIGN.md: AI at the edges, deterministic in the core).
+//  Content is composed from data the app already has, so the box works
+//  offline and with no API key (DESIGN.md: AI at the edges, deterministic
+//  in the core). Two AI-written messages ride on top of that deterministic
+//  ladder, both read-only and both with the deterministic copy as their
+//  fallback: the goal-lapse hook (after a bait tap) and, since Sep 2026,
+//  the daily Opus memo (`ClaudeService.generateTasksMemo`), the box's
+//  standing voice whenever no one-time news is pending.
 //
 
 import SwiftUI
+import CryptoKit
 
 // MARK: - Message model
 
@@ -95,6 +100,223 @@ enum GoalLapseHookCache {
         } else {
             defaults.removeObject(forKey: detailKey)
         }
+    }
+}
+
+/// Cache for the daily Opus memo (Sep 2026). Keyed on the day AND a
+/// fingerprint of what the memo was written from (open tasks, deadlines,
+/// completion state, goals), so a brain dump landing at noon earns a fresh
+/// memo while a tab switch never re-spends the call. `countToday` is the
+/// per-day spend cap's counter (`NudgeConfig.tasksMemoMaxPerDay`): past it
+/// the last memo stands for the rest of the day, stale rather than costly.
+enum TasksMemoCache {
+    static let dayKey = "nudge.tasksMemo.day"
+    static let fingerprintKey = "nudge.tasksMemo.fingerprint"
+    static let headlineKey = "nudge.tasksMemo.headline"
+    static let detailKey = "nudge.tasksMemo.detail"
+    static let countKey = "nudge.tasksMemo.countToday"
+
+    static func read(fingerprint: String, now: Date = Date()) -> TasksMessage? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now),
+              defaults.string(forKey: fingerprintKey) == fingerprint,
+              let headline = defaults.string(forKey: headlineKey)
+        else { return nil }
+        return TasksMessage(headline: headline, detail: defaults.string(forKey: detailKey))
+    }
+
+    /// Today's most recent memo regardless of fingerprint — what stands in
+    /// once the day's cap is spent.
+    static func readLatestToday(now: Date = Date()) -> TasksMessage? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now),
+              let headline = defaults.string(forKey: headlineKey)
+        else { return nil }
+        return TasksMessage(headline: headline, detail: defaults.string(forKey: detailKey))
+    }
+
+    static func generatedToday(now: Date = Date()) -> Int {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now) else { return 0 }
+        return defaults.integer(forKey: countKey)
+    }
+
+    static func write(fingerprint: String, message: TasksMessage, now: Date = Date()) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        let count = generatedToday(now: now) + 1
+        defaults.set(NudgeCopyStore.dayStamp(now), forKey: dayKey)
+        defaults.set(fingerprint, forKey: fingerprintKey)
+        defaults.set(message.headline, forKey: headlineKey)
+        defaults.set(count, forKey: countKey)
+        if let detail = message.detail {
+            defaults.set(detail, forKey: detailKey)
+        } else {
+            defaults.removeObject(forKey: detailKey)
+        }
+    }
+}
+
+/// Builds what the memo writer sees (`ClaudeService.TasksMemoContext`) and
+/// the fingerprint the cache is keyed on. Every date becomes a phrase HERE,
+/// deterministically, so the model never does calendar math; every input
+/// is data the Tasks tab already holds. Read-only by construction.
+enum TasksMemoContextBuilder {
+    static func build(
+        tasks: [NudgeTask],
+        goals: [NudgeGoal],
+        completedRecords: [CompletedTaskRecord],
+        userName: String,
+        ignoredNudgeCount: Int,
+        now: Date
+    ) -> ClaudeService.TasksMemoContext {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        let dayAfter = calendar.date(byAdding: .day, value: 2, to: today) ?? today
+
+        // NOW
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "EEEE, MMMM d"
+        let hour = calendar.component(.hour, from: now)
+        let band = hour < 12 ? "morning" : (hour < 17 ? "afternoon" : "evening")
+        let nowLine = "\(dayFmt.string(from: now)), \(band)"
+
+        // TASKS — open, non-event, soonest deadline first, capped.
+        let open = tasks
+            .filter { !$0.isComplete && !$0.isInformationalEvent }
+            .sorted { $0.sortDeadline < $1.sortDeadline }
+            .prefix(NudgeConfig.tasksMemoOpenTaskCap)
+        let goalTitles = Dictionary(uniqueKeysWithValues: goals.map { ($0.id, $0.title) })
+        let taskLines: [String] = open.map { task in
+            var parts = ["\"\(task.title)\""]
+            parts.append(whenPhrase(for: task, today: today, tomorrow: tomorrow, now: now))
+            if task.stakes == .high { parts.append("high stakes") }
+            if task.plannedStartDate.map({ calendar.isDate($0, inSameDayAs: now) }) == true {
+                parts.append("on today's timeline")
+            }
+            if let goalID = task.goalID, let title = goalTitles[goalID] {
+                parts.append("toward \"\(title)\"")
+            }
+            return parts.joined(separator: " | ")
+        }
+
+        // EVENTS — today and tomorrow, time-ordered.
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "h:mm a"
+        let eventLines: [String] = tasks
+            .filter { $0.isInformationalEvent && !$0.isComplete }
+            .compactMap { event -> (Date, String)? in
+                guard let anchor = event.specificTime ?? event.dueDate,
+                      anchor >= today, anchor < dayAfter else { return nil }
+                let dayWord = anchor < tomorrow ? "Today" : "Tomorrow"
+                let clock = event.specificTime != nil ? " \(timeFmt.string(from: anchor))" : ""
+                return (anchor, "\(dayWord)\(clock): \(event.title)")
+            }
+            .sorted { $0.0 < $1.0 }
+            .prefix(8)
+            .map(\.1)
+
+        // GOALS — active ones, with elapsed time and whether anything on the
+        // list points at them.
+        let openGoalIDs = Set(tasks.filter { !$0.isComplete }.compactMap(\.goalID))
+        let goalLines: [String] = goals.filter(\.isActive).map { goal in
+            let elapsed = TasksMessageComposer.goalElapsedPhrase(
+                from: goal.lastActivityAt ?? goal.createdAt, to: now
+            )
+            let worked = goal.lastActivityAt == nil
+                ? "set \(elapsed) ago, never worked on"
+                : "last worked on \(elapsed) ago"
+            let listed = openGoalIDs.contains(goal.id)
+                ? "something on the list is toward it"
+                : "nothing on the list toward it"
+            return "\"\(goal.title)\": \(worked); \(listed)"
+        }
+
+        // HABITS — completions over the last 7 days and when they land.
+        let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+        let recent = completedRecords.filter { $0.completedAt >= weekAgo }
+        var habitLines: [String] = []
+        if recent.isEmpty {
+            habitLines.append("No tasks completed in the last 7 days.")
+        } else {
+            var bands: [String: Int] = [:]
+            for record in recent {
+                let h = calendar.component(.hour, from: record.completedAt)
+                let b = h < 12 ? "morning" : (h < 17 ? "afternoon" : "evening")
+                bands[b, default: 0] += 1
+            }
+            let top = bands.max { $0.value < $1.value }
+            let where_ = top.map { ", mostly in the \($0.key)" } ?? ""
+            habitLines.append("Completed \(recent.count) task\(recent.count == 1 ? "" : "s") in the last 7 days\(where_).")
+        }
+        let placedToday = tasks.filter {
+            !$0.isComplete && !$0.isInformationalEvent
+                && $0.plannedStartDate.map { calendar.isDate($0, inSameDayAs: now) } == true
+        }.count
+        habitLines.append("Tasks placed on today's timeline: \(placedToday).")
+        habitLines.append("Nudges ignored in the last two weeks: \(ignoredNudgeCount).")
+
+        return ClaudeService.TasksMemoContext(
+            userName: userName.trimmingCharacters(in: .whitespaces).isEmpty ? "the user" : userName,
+            nowLine: nowLine,
+            taskLines: taskLines,
+            eventLines: eventLines,
+            goalLines: goalLines,
+            habitLines: habitLines
+        )
+    }
+
+    /// What the memo was written FROM, hashed. Changes when a task is added,
+    /// completed, retitled, re-dated, tips overdue, or moves onto today's
+    /// timeline; when an event today/tomorrow appears; when a goal's
+    /// activity moves. A stable digest, not `hashValue` (per-process salt).
+    static func fingerprint(tasks: [NudgeTask], goals: [NudgeGoal], now: Date) -> String {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let dayAfter = calendar.date(byAdding: .day, value: 2, to: today) ?? today
+        var parts: [String] = []
+        for task in tasks where !task.isComplete {
+            if task.isInformationalEvent {
+                guard let anchor = task.specificTime ?? task.dueDate,
+                      anchor >= today, anchor < dayAfter else { continue }
+                parts.append("e:\(task.id.uuidString):\(task.title):\(Int(anchor.timeIntervalSince1970))")
+            } else {
+                let placedToday = task.plannedStartDate.map { calendar.isDate($0, inSameDayAs: now) } == true
+                parts.append("t:\(task.id.uuidString):\(task.title):\(Int(task.sortDeadline.timeIntervalSince1970)):\(task.isOverdue):\(task.stakesRaw ?? ""):\(placedToday):\(task.goalID?.uuidString ?? "")")
+            }
+        }
+        for goal in goals where goal.isActive {
+            parts.append("g:\(goal.id.uuidString):\(goal.title):\(Int((goal.lastActivityAt ?? goal.createdAt).timeIntervalSince1970))")
+        }
+        parts.sort()
+        let digest = SHA256.hash(data: Data(parts.joined(separator: "\n").utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func whenPhrase(for task: NudgeTask, today: Date, tomorrow: Date, now: Date) -> String {
+        let calendar = Calendar.current
+        if task.hasDeadline {
+            if task.isOverdue {
+                let ago = CountdownState.remainingLine(dueDate: task.sortDeadline, now: now) ?? "earlier"
+                return "was due \(ago)"
+            }
+            let dueLine = CountdownState.dueDateLine(dueDate: task.dueDate, specificTime: task.specificTime) ?? ""
+            let days = calendar.dateComponents([.day], from: today, to: calendar.startOfDay(for: task.sortDeadline)).day ?? 0
+            let rel: String
+            switch days {
+            case ...0: rel = "due today"
+            case 1: rel = "due tomorrow"
+            default: rel = "due in \(days) days"
+            }
+            return dueLine.isEmpty ? rel : "\(rel) (\(dueLine))"
+        }
+        if let day = task.scheduledDay {
+            if day == today { return "planned for today" }
+            if day == tomorrow { return "planned for tomorrow" }
+            let days = calendar.dateComponents([.day], from: today, to: day).day ?? 0
+            return days < 0 ? "was planned for \(-days) day\(days == -1 ? "" : "s") ago" : "planned in \(days) days"
+        }
+        return "no date"
     }
 }
 
@@ -247,6 +469,7 @@ enum TasksMessageComposer {
         prepAnnouncement: PrepAnnouncementContext? = nil,
         commitmentAnnouncement: CommitmentAnnouncementContext? = nil,
         planOutcome: PlanOutcomeContext? = nil,
+        memo: TasksMessage? = nil,
         now: Date
     ) -> TasksMessage {
         // ── AI SEAM (armed for goal-lapse, cycle 2026-08-04-03) ─────────
@@ -266,6 +489,23 @@ enum TasksMessageComposer {
         // 1 — a nudge was just tapped.
         if let context = tappedNudge {
             return nudgeExplanation(context: context, tasks: tasks, goals: goals, now: now)
+        }
+
+        // 1.5 — the Opus memo (Sep 2026): the box's standing voice. It is
+        // written FROM the same facts the states below narrate (what was
+        // missed, what's coming, what to prepare for, a neglected goal), so
+        // it replaces them, not stacks on them. It yields to any pending
+        // one-time news (prep note, the two announcements, today's planner
+        // outcome): those are consumed on first render, and a memo that
+        // always won would mean they never rendered. With no memo (no key,
+        // offline, not yet landed, cap reached) the ladder below is exactly
+        // what it was — byte-identical deterministic fallback.
+        let oneTimeNewsPending = prepNote != nil
+            || prepAnnouncement != nil
+            || commitmentAnnouncement != nil
+            || planOutcome.flatMap(planOutcomeMessage) != nil
+        if let memo, !oneTimeNewsPending {
+            return memo
         }
 
         // 2 — something is overdue.
@@ -863,18 +1103,22 @@ struct TasksMessageBox: View {
     /// today only the goal-lapse hook produces one (owner fetches it
     /// async; deterministic states cover every moment it's absent).
     var aiMessage: TasksMessage? = nil
+    /// The daily Opus memo (Sep 2026), once its async fetch (or cache read)
+    /// lands. Nil shows the deterministic ladder, so the box is never blank
+    /// or waiting on the network.
+    var memo: TasksMessage? = nil
     /// Opens with the detail visible — the goal-lapse hook's requirement:
     /// the full message is the point of the tap, not a teaser behind a
     /// second tap.
     var startsExpanded: Bool = false
-    /// Opens the interactive shell (cycle 2026-08-03-04; one surface, TWO
+    /// Opens the read-only shell (cycle 2026-08-03-04; one surface, TWO
     /// ways in since -05: the character AND the row/chevron both land
-    /// here). The composed message rides along so the shell can seed its
-    /// dialogue with what the box was actually saying — the in-place
-    /// detail expansion is superseded by the shell when this is set, so
-    /// the detail must stay reachable through it. Nil (the default) keeps
-    /// the legacy in-place expand/collapse — callers that never opted in
-    /// behave exactly as before.
+    /// here). The composed message rides along so the shell shows what the
+    /// box was actually saying in full — the in-place detail expansion is
+    /// superseded by the shell when this is set, so the detail must stay
+    /// reachable through it. Nil (the default) keeps the legacy in-place
+    /// expand/collapse — callers that never opted in behave exactly as
+    /// before.
     var onOpenShell: ((TasksMessage) -> Void)? = nil
     var rationale: String? = nil
     /// One-time "still want study time for X?" note (tombstone-backed).
@@ -921,6 +1165,7 @@ struct TasksMessageBox: View {
             prepAnnouncement: prepAnnouncement,
             commitmentAnnouncement: commitmentAnnouncement,
             planOutcome: planOutcome,
+            memo: memo,
             now: clock.now
         )
         let expandable = message.detail != nil
@@ -1000,29 +1245,10 @@ struct TasksMessageBox: View {
             RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
                 .stroke(NudgeTheme.border, lineWidth: 1)
         )
-        // The chat affordance: a filled circle OVERTOP of the box's
-        // bottom-right corner (design feedback after cycle 2026-08-03-08's
-        // in-box chip) — it straddles the border like a badge, so it costs
-        // the box no height and the content row stays untouched. Only
-        // rendered when a shell is wired; opens the same shell as every
-        // other tap target.
-        .overlay(alignment: .bottomTrailing) {
-            if onOpenShell != nil {
-                Button {
-                    NudgeHaptics.light()
-                    onOpenShell?(message)
-                } label: {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                        .frame(width: 36, height: 36)
-                        .background(NudgeTheme.primary)
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .offset(x: 10, y: 10)
-            }
-        }
+        // The corner chat bubble that used to straddle the bottom-right
+        // border is gone (Roman, Sep 2026): the box takes no input, so a
+        // "reply" affordance promised something it doesn't do. The row,
+        // character, and chevron still open the read-only shell.
         .contentShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
         .onTapGesture {
             // One surface, two ways in (cycle 2026-08-03-05): with a shell
@@ -1083,47 +1309,28 @@ struct TasksMessageBox: View {
     }
 }
 
-// MARK: - Interactive shell (cycles 2026-08-03-04/-05 — VISUAL PROTOTYPE)
+// MARK: - Read-only shell (cycles 2026-08-03-04/-05, made talk-only Sep 2026)
 
-/// One line of the shell's stub conversation.
-private struct MessageBoxChatLine: Identifiable {
-    let id = UUID()
-    let text: String
-    let isUser: Bool
-}
-
-/// The expanded surface behind the box's tap targets — roughly iOS's
-/// swipe-down-reply shape: a dimmed backdrop (tap to collapse) with a card
-/// holding the conversation, tappable options, and a free-text field.
-/// (The -05 framed-dialogue styling was reverted in cycle 2026-08-03-06
-/// after a device look — this is the -04 plain card again. What survived
-/// -05: the expression enum driving the header portrait, and the seeding
-/// below.)
-///
-/// ── EVERYTHING BEHIND IT IS A STUB ──────────────────────────────────────
-/// The dialogue seeds from the box's real composed message (so the detail
-/// the old in-place expansion showed stays reachable — the shell replaced
-/// it as where the row's tap leads), then a fake question with two
-/// options and canned replies. No persistence, no `ClaudeService`,
-/// nothing written anywhere. Home chat untouched.
+/// The expanded surface behind the box's tap targets: a dimmed backdrop
+/// (tap to collapse) with a card holding the message in full. It TALKS
+/// ONLY. Roman's ruling for this surface (Sep 14 2026): it reads and
+/// interprets data, never writes, takes no input, so there are no reply
+/// options and no text field here. Home owns capture. The prototype's fake
+/// question, canned replies, and free-text field were removed with that
+/// ruling; what survived: the expression enum driving the header portrait
+/// and the seeding from the box's real composed message.
 struct MessageBoxChatShell: View {
-    /// What the collapsed box was saying when opened — seeds the dialogue.
+    /// What the collapsed box was saying when opened — shown in full.
     var seed: TasksMessage? = nil
     let onDismiss: () -> Void
 
-    @State private var lines: [MessageBoxChatLine] = []
-    /// The fake question's options; nil once answered (or after free text).
-    @State private var options: [String]? = ["Start today", "Start tomorrow"]
-    @State private var answered = false
-    @State private var draft = ""
-    @FocusState private var inputFocused: Bool
-
-    /// The portrait tracks the conversation state — the whole point of
-    /// the expression enum: asking while the question is open, pleased
-    /// right after an answer, neutral otherwise.
-    private var expression: MessageBoxExpression {
-        if options != nil { return .asking }
-        return answered ? .pleased : .neutral
+    private var lines: [String] {
+        guard let seed else { return [] }
+        var result = [seed.headline]
+        if let detail = seed.detail, !detail.isEmpty {
+            result.append(detail)
+        }
+        return result
     }
 
     var body: some View {
@@ -1131,18 +1338,13 @@ struct MessageBoxChatShell: View {
             // Backdrop — tapping outside collapses.
             Color.black.opacity(0.25)
                 .ignoresSafeArea()
-                .onTapGesture {
-                    inputFocused = false
-                    onDismiss()
-                }
+                .onTapGesture { onDismiss() }
 
-            // The surface. Anchored near the top (where the collapsed box
-            // lives) so the keyboard never covers it. The portrait keeps
-            // its expression (kept from -05) — asking while the question
-            // is open, pleased after an answer.
+            // The surface. Anchored near the top, where the collapsed box
+            // lives, so opening reads as the box unfolding.
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 14) {
-                    MessageBoxCharacterSlot(expression: expression)
+                    MessageBoxCharacterSlot(expression: .neutral)
                     Text("Nudge")
                         .font(.custom(NudgeTheme.fontSemiBold, size: 16))
                         .foregroundColor(NudgeTheme.textPrimary)
@@ -1151,55 +1353,12 @@ struct MessageBoxChatShell: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(lines) { line in
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                             chatBubble(line)
                         }
                     }
                 }
-                .frame(maxHeight: 300)
-
-                if let options {
-                    HStack(spacing: 8) {
-                        ForEach(options, id: \.self) { option in
-                            Button {
-                                answer(option)
-                            } label: {
-                                Text(option)
-                                    .font(.custom(NudgeTheme.fontMedium, size: 14))
-                                    .foregroundColor(NudgeTheme.primary)
-                                    .padding(.horizontal, 14)
-                                    .frame(height: 34)
-                                    .overlay(
-                                        Capsule().stroke(NudgeTheme.primary, lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    TextField("Or say it your way…", text: $draft, axis: .vertical)
-                        .font(.custom(NudgeTheme.fontBody, size: 15))
-                        .foregroundColor(NudgeTheme.textPrimary)
-                        .lineLimit(1...3)
-                        .focused($inputFocused)
-                        .onSubmit(sendDraft)
-                    Button(action: sendDraft) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 26))
-                            .foregroundColor(
-                                draft.trimmingCharacters(in: .whitespaces).isEmpty
-                                    ? NudgeTheme.textPlaceholder
-                                    : NudgeTheme.primary
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(NudgeTheme.surfaceAlt)
-                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                .frame(maxHeight: 360)
             }
             .padding(16)
             .background(NudgeTheme.background)
@@ -1211,75 +1370,21 @@ struct MessageBoxChatShell: View {
             .padding(.horizontal, 20)
             .padding(.top, 8)
         }
-        .onAppear { seedLines() }
-    }
-
-    private func chatBubble(_ line: MessageBoxChatLine) -> some View {
-        HStack {
-            if line.isUser { Spacer(minLength: 40) }
-            Text(line.text)
-                .font(.custom(NudgeTheme.fontBody, size: 15))
-                .foregroundColor(line.isUser ? .white : NudgeTheme.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(line.isUser ? NudgeTheme.primary : NudgeTheme.surfaceAlt)
-                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
-            if !line.isUser { Spacer(minLength: 40) }
-        }
-        .frame(maxWidth: .infinity, alignment: line.isUser ? .trailing : .leading)
     }
 
     /// Text appears immediately — deliberately NO typewriter reveal.
-    private func seedLines() {
-        guard lines.isEmpty else { return }
-        var seeded: [MessageBoxChatLine] = []
-        if let seed {
-            seeded.append(MessageBoxChatLine(text: seed.headline, isUser: false))
-            if let detail = seed.detail {
-                seeded.append(MessageBoxChatLine(text: detail, isUser: false))
-            }
-        } else {
-            seeded.append(MessageBoxChatLine(
-                text: "“Problem set 4” is due Friday, it's the biggest thing on your list.",
-                isUser: false
-            ))
+    private func chatBubble(_ text: String) -> some View {
+        HStack {
+            Text(text)
+                .font(.custom(NudgeTheme.fontBody, size: 15))
+                .foregroundColor(NudgeTheme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            Spacer(minLength: 40)
         }
-        seeded.append(MessageBoxChatLine(
-            text: "Should the first session go today or tomorrow?",
-            isUser: false
-        ))
-        lines = seeded
-    }
-
-    /// Option tap: the answer becomes a user line, the options retire, and
-    /// a canned acknowledgment lands. Stub — nothing is saved.
-    private func answer(_ option: String) {
-        NudgeHaptics.light()
-        withAnimation(NudgeAnimation.standard) {
-            lines.append(MessageBoxChatLine(text: option, isUser: true))
-            options = nil
-            answered = true
-            lines.append(MessageBoxChatLine(
-                text: "Noted. (Prototype, nothing is saved yet.)",
-                isUser: false
-            ))
-        }
-    }
-
-    /// Free text: same shape as an option answer. Stub — nothing is saved.
-    private func sendDraft() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        NudgeHaptics.light()
-        withAnimation(NudgeAnimation.standard) {
-            lines.append(MessageBoxChatLine(text: text, isUser: true))
-            options = nil
-            answered = true
-            lines.append(MessageBoxChatLine(
-                text: "Noted. (Prototype, nothing is saved yet.)",
-                isUser: false
-            ))
-            draft = ""
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

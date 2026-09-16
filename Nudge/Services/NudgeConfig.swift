@@ -78,6 +78,17 @@ enum NudgeConfig {
     /// but not *approaching*, and the resting state reads better.
     static let messageBoxHighStakesHorizonDays: Int = 7
 
+    /// The daily Opus memo (Sep 2026) regenerates when the facts it was
+    /// written from change (a dump lands, a task tips overdue), at most
+    /// this many times per day. Past the cap the last memo stands until
+    /// tomorrow: stale beats a runaway bill on a day of heavy editing.
+    static let tasksMemoMaxPerDay: Int = 4
+
+    /// How many open tasks the memo writer gets to see (soonest deadline
+    /// first). Enough for a full picture, small enough that input tokens
+    /// stay a rounding error next to output.
+    static let tasksMemoOpenTaskCap: Int = 15
+
     // MARK: - Quiet hours
     /// No discretionary nudges before this many minutes after wake.
     /// (Lets the user actually wake up before being pestered.)

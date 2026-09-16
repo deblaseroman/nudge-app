@@ -49,6 +49,11 @@ class ClaudeService {
     /// launch (Pro gets the big model, free tier Haiku — the DayPlanRefiner
     /// gating pattern).
     private let captureModel = "claude-opus-5"
+    /// The daily Tasks-tab memo (Sep 2026). Opus by Roman's design: the
+    /// Tasks-tab box is Opus's only user-facing surface, personalized memos
+    /// written from the user's real data. Effort low, short output, at most
+    /// `NudgeConfig.tasksMemoMaxPerDay` calls a day.
+    private let memoModel = "claude-opus-5"
     private let baseURL = "https://api.anthropic.com/v1/messages"
 
     // MARK: - System Prompts
@@ -1266,6 +1271,147 @@ class ClaudeService {
         else {
             #if DEBUG
             print("[ClaudeService] generateGoalLapseHook — unparseable response:\n\(text)")
+            #endif
+            throw ClaudeError.parseError
+        }
+        return (
+            decoded.headline.trimmingCharacters(in: .whitespacesAndNewlines),
+            decoded.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    // MARK: - Tasks-tab memo (Sep 2026)
+
+    /// What the memo writer gets to see. READ-ONLY, assembled by the Tasks
+    /// tab from data the app already has, every date already turned into a
+    /// phrase so the model never does calendar math. Nothing here feeds
+    /// back into any decision the app makes.
+    struct TasksMemoContext {
+        let userName: String
+        /// "Wednesday, September 16, morning"
+        let nowLine: String
+        /// One line per open task, soonest deadline first, preformatted:
+        /// `"Problem set 4" | due today at 3 PM | high stakes | toward "Pass chem"`.
+        let taskLines: [String]
+        /// `Today 2:00 PM: Chemistry lecture`, today and tomorrow only.
+        let eventLines: [String]
+        /// `"Read more": last worked on about 3 weeks ago; nothing on the list toward it`.
+        let goalLines: [String]
+        /// Habit facts, preformatted sentences.
+        let habitLines: [String]
+    }
+
+    /// The daily memo shown in the Tasks tab's message box: the app's
+    /// standing voice, a personal read of the day written from the facts
+    /// above. Talk only: it explains, never asks, never changes anything.
+    /// The Tasks tab shows the deterministic ladder until this lands and
+    /// whenever it can't (no key, offline, parse failure, daily cap).
+    func generateTasksMemo(
+        context: TasksMemoContext
+    ) async throws -> (headline: String, detail: String) {
+        guard !apiKey.isEmpty else {
+            throw ClaudeError.missingAPIKey
+        }
+
+        func block(_ lines: [String]) -> String {
+            lines.isEmpty ? "(none)" : lines.map { "- \($0)" }.joined(separator: "\n")
+        }
+
+        let prompt = """
+        Write today's memo for the message box at the top of the user's Tasks tab. It is the one place the app speaks: a short, personal read of their day, written from the facts below. It takes no input and changes nothing; it explains.
+
+        USER: \(context.userName)
+        NOW: \(context.nowLine)
+
+        OPEN TASKS (soonest deadline first):
+        \(block(context.taskLines))
+
+        EVENTS TODAY AND TOMORROW:
+        \(block(context.eventLines))
+
+        GOALS:
+        \(block(context.goalLines))
+
+        HABITS:
+        \(block(context.habitLines))
+
+        WHAT THE MEMO COVERS, in priority order:
+        1. What they missed: anything past due, stated plainly with how long ago.
+        2. What's coming up: the next deadline or event that matters, and the shape of today.
+        3. What to prepare for: a high-stakes deadline inside the next week, and what a small first step could be today.
+        4. A neglected goal, if one has had nothing toward it for weeks: name it once, lightly.
+        Cover only what the facts support. Skip anything with nothing behind it. If everything is quiet, say so in one line.
+
+        HARD RULES:
+        - Facts, never verdicts. "Problem set 4 was due yesterday" is a fact; "you keep putting this off" is a judgment, never that.
+        - Never shame: no "again", no streak language, no guilt framed as motivation.
+        - Never promise an outcome. The app helps; it does not guarantee.
+        - Never invent a task, event, date, or time. Use only the phrases given. Never compute dates or durations yourself.
+        - Warm and plain, not peppy. No exclamation marks, no emoji.
+        - Never use an em dash. Use commas or periods.
+        - Speak to the user as "you". Name tasks by their titles in quotes.
+        - "headline": one sentence, the single most useful thing right now, under 90 characters.
+        - "detail": two to four short sentences covering the rest, under 420 characters.
+
+        Return ONLY a JSON object, no prose, no markdown fences:
+        {"headline": "...", "detail": "..."}
+        """
+
+        // Opus 5 thinks by default; effort low keeps that shallow (the
+        // memo is a rewrite of given facts, not a puzzle) and max_tokens
+        // leaves room for the thinking block ahead of the JSON. Refusal
+        // fallbacks ride along as they do for capture.
+        let body: [String: Any] = [
+            "model": memoModel,
+            "max_tokens": 3000,
+            "fallbacks": "default",
+            "output_config": ["effort": "low"],
+            "system": "You write honest, warm in-app messages for a task app built for people with ADHD. Return only valid JSON matching the requested schema. No prose, no commentary.",
+            "messages": [["role": "user", "content": prompt]]
+        ]
+
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        #if DEBUG
+        if let usage = anthropicResponse.usage {
+            print("[ClaudeService] USAGE: in=\(usage.inputTokens ?? 0) out=\(usage.outputTokens ?? 0) (out includes thinking) model=\(memoModel) site=tasksMemo")
+        }
+        #endif
+        // First TEXT block: the thinking block leads the array.
+        guard let text = anthropicResponse.content
+                .first(where: { $0.type == nil || $0.type == "text" })?.text,
+              !text.isEmpty
+        else {
+            throw ClaudeError.emptyResponse
+        }
+
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```json") { cleaned = String(cleaned.dropFirst(7)) }
+        if cleaned.hasPrefix("```")     { cleaned = String(cleaned.dropFirst(3)) }
+        if cleaned.hasSuffix("```")     { cleaned = String(cleaned.dropLast(3)) }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        struct MemoJSON: Codable {
+            let headline: String
+            let detail: String
+        }
+        guard let start = cleaned.firstIndex(of: "{"),
+              let end = cleaned.lastIndex(of: "}"),
+              let objectData = String(cleaned[start...end]).data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(MemoJSON.self, from: objectData),
+              !decoded.headline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            #if DEBUG
+            print("[ClaudeService] generateTasksMemo — unparseable response:\n\(text)")
             #endif
             throw ClaudeError.parseError
         }

@@ -40,10 +40,16 @@ your tasks; writes nothing; redirects real work to a fresh message.
 
 **Model:** Haiku today — should be: [KEEP / OTHER]
 
-## 3 · Tasks-tab chat box — NOT BUILT YET
+## 3 · Tasks-tab memo box — Opus 5 (low) · ~1–2¢ · up to 4×/day
 
-**Today:** the shell exists; replies are stubs. It opens seeded with the
-message you tapped (an overdue task, a goal lapse, plan news).
+**Today (built Sep 16 2026):** the box's standing message is an Opus memo
+written from your open tasks, today/tomorrow events, goals, and 7-day
+completion habits: what you missed, what's coming, what to prepare for,
+a neglected goal. Regenerates when those facts change (a dump lands, a
+task tips overdue), capped at 4 a day. Talk only: no reply options, no
+text field, no corner bubble; tapping the row opens the message in full.
+One-time news (study-time notes, planner outcomes) still shows first.
+Offline or no key: the deterministic message, exactly as before.
 
 **How it should act** (started from your Sep 14 answers):
 - Talk only, for now — a more detailed reminder about important tasks
@@ -56,8 +62,8 @@ message you tapped (an overdue task, a goal lapse, plan news).
 - [WHAT QUESTIONS SHOULD IT BE GOOD AT ANSWERING?]
 - [WHEN SHOULD IT STAY QUIET?]
 
-**Model:** undecided (your Q3) — test after this spec:
-[HAIKU / SONNET / OPUS]
+**Model:** Opus 5 at effort low (your call, Sep 16 2026: "the text box
+for opus"). Sonnet 5 is the cost lever if the memo ever needs one.
 
 ## 4 · Advice questions — UNROUTED TODAY (leaks to Opus at ~6¢)
 

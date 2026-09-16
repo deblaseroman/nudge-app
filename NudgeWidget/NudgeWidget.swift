@@ -2,8 +2,8 @@
 //  NudgeWidget.swift
 //  NudgeWidget
 //
-//  Widget 1 — Main task widget. Shows today's tasks with interactive
-//  checkboxes, active goals, and a 7-day streak bar.
+//  Widget 1 — Main task widget (large family only, Sep 2026). Shows today's
+//  tasks with interactive checkboxes, today's events, and a 7-day streak bar.
 //  Background: glassy light surface with green accents and grey outlines.
 //  Refreshes every 15 minutes.
 //
@@ -44,12 +44,6 @@ struct TaskSnapshot: Identifiable, Hashable {
     var slot: Int? = nil
 }
 
-struct GoalSnapshot: Identifiable, Hashable {
-    let id: UUID
-    let title: String
-    let emoji: String
-}
-
 /// Lightweight read-model for an informational event (class, work shift,
 /// appointment) shown in the widget alongside the task list.
 struct EventSnapshot: Identifiable, Hashable {
@@ -86,7 +80,6 @@ struct NudgeTaskEntry: TimelineEntry {
     let date: Date
     let tasks: [TaskSnapshot]
     let events: [EventSnapshot]
-    let goals: [GoalSnapshot]
     let currentStreak: Int
     let weekActivity: [Bool]   // last 7 days — index 0 = 6 days ago, 6 = today
     let urgentCount: Int
@@ -111,7 +104,6 @@ struct NudgeTaskEntry: TimelineEntry {
             date: Date(),
             tasks: mockTasks,
             events: mockEvents,
-            goals: mockGoals,
             currentStreak: 3,
             weekActivity: [false, true, true, false, true, true, true],
             urgentCount: 1,
@@ -130,7 +122,6 @@ struct NudgeTaskEntry: TimelineEntry {
             date: Date(),
             tasks: [],
             events: [],
-            goals: [],
             currentStreak: 0,
             weekActivity: Array(repeating: false, count: 7),
             urgentCount: 0,
@@ -149,7 +140,6 @@ struct NudgeTaskEntry: TimelineEntry {
             date: Date(),
             tasks: mockTasks,
             events: mockEvents,
-            goals: mockGoals,
             currentStreak: 3,
             weekActivity: [false, true, true, false, true, true, true],
             urgentCount: 1,
@@ -216,14 +206,6 @@ struct NudgeTaskEntry: TimelineEntry {
             isGoalFallback: false
         ),
     ]
-
-    private static var mockGoals: [GoalSnapshot] {
-        [
-            GoalSnapshot(id: UUID(), title: "Read more", emoji: "\u{1F4DA}"),
-            GoalSnapshot(id: UUID(), title: "Work out", emoji: "\u{1F4AA}"),
-            GoalSnapshot(id: UUID(), title: "Journal", emoji: "\u{270D}\u{FE0F}"),
-        ]
-    }
 }
 
 // MARK: - Widget Colors (light theme)
@@ -503,9 +485,6 @@ struct NudgeTaskProvider: TimelineProvider {
             )
             goalDescriptor.fetchLimit = 10
             let activeGoals = try context.fetch(goalDescriptor)
-            let goalSnapshots = activeGoals.prefix(3).map { goal in
-                GoalSnapshot(id: goal.id, title: goal.title, emoji: goal.emoji)
-            }
 
             // Day-slot assignment, from the SHARED `DaySlotPalette` the app
             // uses — that's what makes a task the same color in both places,
@@ -655,7 +634,6 @@ struct NudgeTaskProvider: TimelineProvider {
                 date: Date(),
                 tasks: displayTasks,
                 events: Array(eventSnapshots),
-                goals: Array(goalSnapshots),
                 currentStreak: streak,
                 weekActivity: weekActivity,
                 urgentCount: urgentCount,
@@ -790,17 +768,9 @@ enum WidgetCountdownFormatter {
 
 struct NudgeTaskWidgetView: View {
     var entry: NudgeTaskEntry
-    @Environment(\.widgetFamily) var family
 
     var body: some View {
-        Group {
-            switch family {
-            case .systemLarge:
-                largeLayout
-            default:
-                mediumLayout
-            }
-        }
+        largeLayout
         // Expand so content stretches to the widget frame instead of hugging
         // its intrinsic size. The background itself is now the edge-to-edge
         // containerBackground (see NudgeTaskWidget below), NOT a .background()
@@ -808,39 +778,6 @@ struct NudgeTaskWidgetView: View {
         // and left an inset ring of the container color around it.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentTransition(.interpolate)
-    }
-
-    // MARK: - Medium Layout
-
-    private var mediumLayout: some View {
-        VStack(spacing: 0) {
-            compactHeader
-
-            Rectangle()
-                .fill(WidgetColors.divider)
-                .frame(height: 1)
-
-            if entry.tasks.isEmpty {
-                emptyStateView
-            } else {
-                mediumTaskList
-            }
-
-            if !entry.events.isEmpty {
-                Rectangle()
-                    .fill(WidgetColors.divider)
-                    .frame(height: 1)
-                eventsRow
-            }
-
-            Spacer(minLength: 0)
-
-            Rectangle()
-                .fill(WidgetColors.divider)
-                .frame(height: 1)
-
-            mediumFooter
-        }
     }
 
     // MARK: - Large Layout
@@ -859,21 +796,12 @@ struct NudgeTaskWidgetView: View {
                 largeTaskList
             }
 
-            if !entry.events.isEmpty {
-                Rectangle()
-                    .fill(WidgetColors.divider)
-                    .frame(height: 1)
-                eventsRow
-            }
+            Rectangle()
+                .fill(WidgetColors.divider)
+                .frame(height: 1)
+            eventsRow
 
             Spacer(minLength: 0)
-
-            if !entry.goals.isEmpty {
-                Rectangle()
-                    .fill(WidgetColors.divider)
-                    .frame(height: 1)
-                largeGoalSection
-            }
 
             Rectangle()
                 .fill(WidgetColors.divider)
@@ -885,44 +813,6 @@ struct NudgeTaskWidgetView: View {
 
     // MARK: - Headers
 
-    private var compactHeader: some View {
-        HStack(spacing: 8) {
-            Image("mascot-default")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 24, height: 24)
-                .clipShape(Circle())
-
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 3) {
-                    Text("nudge")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(WidgetColors.textPrimary)
-                    Text("tasks")
-                        .font(.system(size: 11))
-                        .foregroundStyle(WidgetColors.textSecondary)
-                }
-
-                Text(compactStatusText)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(entry.urgentCount > 0 ? WidgetColors.accent : WidgetColors.textMuted)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Text("\(entry.completedToday)/\(max(entry.totalToday, 1))")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(WidgetColors.textPrimary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(WidgetColors.pillBackground)
-                .clipShape(Capsule())
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-    }
-
     private var spaciousHeader: some View {
         HStack(alignment: .top, spacing: 10) {
             Image("mascot-default")
@@ -933,7 +823,7 @@ struct NudgeTaskWidgetView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
-                    Text("nudge")
+                    Text("Nudge")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(WidgetColors.textPrimary)
                     Text("\u{00B7}")
@@ -942,10 +832,6 @@ struct NudgeTaskWidgetView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(WidgetColors.textSecondary)
                 }
-
-                Text(largeStatusText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(entry.urgentCount > 0 ? WidgetColors.accent : WidgetColors.textMuted)
             }
 
             Spacer()
@@ -974,35 +860,11 @@ struct NudgeTaskWidgetView: View {
 
     // MARK: - Task Lists
 
-    private var mediumTaskList: some View {
+    private var largeTaskList: some View {
         // Spacing 2 (was 0) so a tinted row reads as its own block. The
         // divider is drawn only between two UNtinted rows — where a tint is
         // present its edge already separates them, and a hairline running
         // across two color blocks just adds noise.
-        let rows = Array(entry.tasks.prefix(3))
-        return VStack(spacing: 2) {
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, task in
-                WidgetTaskRow(
-                    task: task,
-                    family: .systemMedium,
-                    isActiveSessionTask: entry.isSessionActive && entry.activeTaskID == task.id,
-                    isSessionPaused: entry.isSessionPaused,
-                    sessionTimerEndDate: entry.sessionTimerEndDate,
-                    sessionPausedRemaining: entry.sessionPausedRemaining
-                )
-
-                if index < rows.count - 1, task.slot == nil, rows[index + 1].slot == nil {
-                    Rectangle()
-                        .fill(WidgetColors.divider)
-                        .frame(height: 1)
-                        .padding(.leading, 30)
-                }
-            }
-        }
-    }
-
-    private var largeTaskList: some View {
-        // Same rule as `mediumTaskList` — see the note there.
         let rows = Array(entry.tasks.prefix(3))
         return VStack(spacing: 2) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, task in
@@ -1025,24 +887,33 @@ struct NudgeTaskWidgetView: View {
         }
     }
 
-    // MARK: - Events Row (shared between layouts)
+    // MARK: - Events Row
 
     /// Compact horizontal strip showing up to 2 upcoming events for today.
-    /// Hidden when there are no events so the layout stays balanced.
-    @ViewBuilder
+    /// Always rendered so the layout height stays fixed; shows
+    /// "No events today" when there is nothing to list.
     private var eventsRow: some View {
-        if !entry.events.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(WidgetColors.textMuted)
-                    Text("Today")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(WidgetColors.textMuted)
-                        .tracking(0.5)
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(WidgetColors.textMuted)
+                Text("Today")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(WidgetColors.textMuted)
+                    .tracking(0.5)
+            }
 
+            if entry.events.isEmpty {
+                Text("No events today")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(WidgetColors.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(WidgetColors.chipBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
                 HStack(spacing: 8) {
                     ForEach(entry.events) { event in
                         VStack(alignment: .leading, spacing: 1) {
@@ -1063,92 +934,12 @@ struct NudgeTaskWidgetView: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Footers
-
-    private var mediumFooter: some View {
-        HStack(spacing: 0) {
-            if entry.isSessionActive {
-                // Session controls — icon-only buttons to fit medium width
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(WidgetColors.accent)
-
-                    sessionTimerText
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(entry.isSessionPaused ? Color(red: 0.95, green: 0.6, blue: 0.2) : WidgetColors.accent)
-                        .monospacedDigit()
-
-                    if entry.isSessionPaused {
-                        Text("Paused")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(Color(red: 0.95, green: 0.6, blue: 0.2))
-                    }
-
-                    Spacer()
-
-                    // Pause / Resume — tapping opens the app to the
-                    // tasks tab where the user controls the session.
-                    Link(destination: URL(string: "nudge://focus-session")!) {
-                        Image(systemName: entry.isSessionPaused ? "play.fill" : "pause.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 26, height: 22)
-                            .background(Color(red: 0.95, green: 0.6, blue: 0.2))
-                            .clipShape(Capsule())
-                    }
-
-                    // End — also opens the app rather than acting in-widget.
-                    Link(destination: URL(string: "nudge://focus-session")!) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 26, height: 22)
-                            .background(Color(red: 0.85, green: 0.25, blue: 0.25))
-                            .clipShape(Capsule())
-                    }
-                }
-            } else {
-                // Goals summary on the left
-                HStack(spacing: 4) {
-                    Image(systemName: "flag.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(WidgetColors.accent)
-
-                    Text(entry.goals.prefix(2).map(\.title).joined(separator: " \u{2022} ").isEmpty ? "No goals yet" : entry.goals.prefix(2).map(\.title).joined(separator: " \u{2022} "))
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(WidgetColors.textSecondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                // Session start — opens the app to the tasks tab where
-                // the user picks a task and starts the session manually.
-                // No auto-start; the widget is just a launcher.
-                Link(destination: URL(string: "nudge://focus-session")!) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 8, weight: .bold))
-                        Text("Start")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(WidgetColors.accent)
-                    .clipShape(Capsule())
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-    }
 
     private var sessionStartFooter: some View {
         VStack(spacing: 6) {
@@ -1243,36 +1034,7 @@ struct NudgeTaskWidgetView: View {
         }
     }
 
-    // MARK: - Goals & Empty State
-
-    private var largeGoalSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Goals in motion")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(WidgetColors.textMuted)
-                .textCase(.uppercase)
-
-            HStack(spacing: 8) {
-                ForEach(entry.goals.prefix(3)) { goal in
-                    HStack(spacing: 4) {
-                        Text(goal.emoji)
-                            .font(.system(size: 11))
-                        Text(goal.title)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(WidgetColors.textSecondary)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(WidgetColors.chipBackground)
-                    .clipShape(Capsule())
-                }
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
+    // MARK: - Empty State
 
     private var emptyStateView: some View {
         VStack(spacing: 6) {
@@ -1288,31 +1050,6 @@ struct NudgeTaskWidgetView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Status Text
-
-    private var compactStatusText: String {
-        if entry.urgentCount > 0 {
-            return "\(entry.urgentCount) urgent"
-        }
-
-        if entry.totalToday > 0 {
-            return "\(entry.totalToday) tasks in list"
-        }
-
-        return "light day"
-    }
-
-    private var largeStatusText: String {
-        if entry.urgentCount > 0 {
-            return "\(entry.urgentCount) urgent, sort the top ones first"
-        }
-
-        if entry.totalToday > 0 {
-            return "\(entry.totalToday) tasks in your list"
-        }
-
-        return "Nothing pressing yet"
-    }
 }
 
 // MARK: - Task Row
@@ -1677,18 +1414,12 @@ struct NudgeTaskWidget: Widget {
                 }
         }
         .configurationDisplayName("Nudge Tasks")
-        .description("Your tasks, goals, and streak at a glance.")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        .description("Your tasks, events, and streak at a glance.")
+        .supportedFamilies([.systemLarge])
     }
 }
 
 // MARK: - Preview
-
-#Preview(as: .systemMedium) {
-    NudgeTaskWidget()
-} timeline: {
-    NudgeTaskEntry.placeholder
-}
 
 #Preview(as: .systemLarge) {
     NudgeTaskWidget()

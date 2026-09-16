@@ -4,9 +4,8 @@
 //
 //  Horizontal day timeline shown at the top of the Tasks tab. Spans from
 //  (wake − 30 min) to bedtime at ~100pt/hour. Events and placed tasks render
-//  as blocks above a horizontal axis; pending notification markers render
-//  below it (read-only). Tapping a block opens the editor; tapping empty
-//  axis space asks the caller to place a task at that (15-min-rounded) time.
+//  as blocks above a horizontal axis. Tapping a block opens the editor;
+//  tapping empty axis space asks the caller to place a task at that (15-min-rounded) time.
 //
 //  No AI, no network. Pure layout + SwiftData reads. All mutation is done by
 //  the caller through the `onTapEmpty` / `onOpenTask` callbacks so placement
@@ -33,12 +32,12 @@ struct TodayTimelineView: View {
 
     // Bounded fetches. This view is ALWAYS mounted in the Tasks tab and
     // re-reads on every 60s clock tick, so unbounded @Query here fetches the
-    // full task/outcome history into the main context on a hot path. Scope
-    // and cap them:
-    //   • outcomes → only pending markers (what the strip draws), capped
-    //   • tasks    → capped; the day chart only needs today's handful
+    // full task history into the main context on a hot path. Scope and
+    // cap it: tasks are capped; the day chart only needs today's handful.
+    // (Pending-notification markers used to draw below the axis from a
+    // second bounded query; removed Sep 2026, the timeline shows the day's
+    // shape, not when the app will speak.)
     @Query private var allTasks: [NudgeTask]
-    @Query private var outcomes: [NudgeOutcome]
     @Query private var eventDurations: [EventDurationStats]
 
     /// Shared 60-second tick drives the "now" indicator.
@@ -61,13 +60,6 @@ struct TodayTimelineView: View {
         tasksDescriptor.fetchLimit = 300
         _allTasks = Query(tasksDescriptor)
 
-        // Notification markers are the pending outcomes only.
-        var outcomesDescriptor = FetchDescriptor<NudgeOutcome>(
-            predicate: #Predicate<NudgeOutcome> { $0.resultRaw == "pending" }
-        )
-        outcomesDescriptor.fetchLimit = 60
-        _outcomes = Query(outcomesDescriptor)
-
         _eventDurations = Query()
     }
 
@@ -78,8 +70,10 @@ struct TodayTimelineView: View {
     private let blockHeight: CGFloat = 58
     private let axisY: CGFloat = 82
     private let tickLabelY: CGFloat = 88
-    private let markerTop: CGFloat = 112
-    private let totalHeight: CGFloat = 156
+    /// Axis + tick labels and a little breathing room below them. Was 156
+    /// when notification markers drew under the axis; the strip is shorter
+    /// now, which is what moves Start Session up.
+    private let totalHeight: CGFloat = 108
     private let defaultTaskMinutes = 30
     /// Completed blocks used to sit at 0.3, which was doing the whole job of
     /// "this is done". The fill now carries that itself (a slot tint mixed
@@ -187,12 +181,6 @@ struct TodayTimelineView: View {
         }
     }
 
-    private var todaysMarkers: [NudgeOutcome] {
-        outcomes.filter { o in
-            o.resultRaw == "pending" && Calendar.current.isDateInToday(o.scheduledFor)
-        }
-    }
-
     /// Event duration — the shared `NudgeTask.eventDurationMinutes`
     /// resolution (explicit → learned `EventDurationStats` → fallback),
     /// against this view's bounded `@Query` rather than a per-event fetch,
@@ -235,7 +223,6 @@ struct TodayTimelineView: View {
                     ForEach(hourTicks, id: \.self) { tickView(at: $0) }
                     ForEach(todaysEvents, id: \.id) { eventBlock($0) }
                     ForEach(placedTasks, id: \.id) { taskBlock($0) }
-                    ForEach(todaysMarkers, id: \.id) { markerView($0) }
                     nowIndicator
                     // Invisible scroll anchor whose FRAME ORIGIN is genuinely
                     // at "now". Neither .offset nor .padding work here — both
@@ -385,23 +372,6 @@ struct TodayTimelineView: View {
         .offset(x: x(for: start), y: blockTop)
     }
 
-    private func markerView(_ outcome: NudgeOutcome) -> some View {
-        VStack(spacing: 2) {
-            Circle()
-                .fill(NudgeTheme.primary)
-                .frame(width: 6, height: 6)
-            Text(clockLabel(outcome.scheduledFor))
-                .font(.custom(NudgeTheme.fontMedium, size: 9))
-                .foregroundColor(NudgeTheme.textSecondary)
-            Text(markerLabel(outcome.kind))
-                .font(.custom(NudgeTheme.fontBody, size: 9))
-                .foregroundColor(NudgeTheme.textMuted)
-                .lineLimit(1)
-        }
-        .frame(width: 72)
-        .offset(x: x(for: outcome.scheduledFor) - 36, y: markerTop)
-    }
-
     @ViewBuilder
     private var nowIndicator: some View {
         let now = clock.now
@@ -431,23 +401,5 @@ struct TodayTimelineView: View {
         let f = DateFormatter()
         f.dateFormat = minute == 0 ? "h a" : "h:mm a"
         return f.string(from: date)
-    }
-
-    private func markerLabel(_ kind: NudgeOutcomeKind) -> String {
-        switch kind {
-        case .eventBlock:    return "event reminder"
-        case .idle:          return "check-in"
-        // Legacy rows only — no builder emits `.getAhead` since the Aug
-        // 2026 split into `.prep` / `.dueSoon`.
-        case .getAhead:      return "get ahead"
-        case .prep:          return "start early"
-        case .dueSoon:       return "due soon"
-        case .morningPrompt: return "morning check-in"
-        case .floater:       return "open work check-in"
-        case .comeBack:      return "looking ahead"
-        case .placementLead:   return "plan heads-up"
-        case .placementMissed: return "plan follow-up"
-        case .goalLapse:       return "goal check-in"
-        }
     }
 }

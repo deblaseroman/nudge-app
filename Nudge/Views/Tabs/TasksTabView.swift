@@ -92,6 +92,14 @@ struct TasksTabView: View {
     /// fallback (`nudgeExplanation`'s `.goalLapse` branch), so the box is
     /// never blank or waiting.
     @State private var goalLapseHookMessage: TasksMessage?
+    /// The daily Opus memo (Sep 2026) once its cache read or fetch lands.
+    /// Nil shows the deterministic ladder, so the box never waits on the
+    /// network. Composer rule: it yields to tapped-nudge context and to any
+    /// pending one-time news, and replaces the standing states.
+    @State private var tasksMemo: TasksMessage?
+    /// Single-flight guard for the memo fetch — the tab re-appears and the
+    /// fingerprint can change while a call is in the air.
+    @State private var memoFetchInFlight = false
 
     private var coordinator: SessionCoordinator { SessionCoordinator.shared }
 
@@ -207,6 +215,66 @@ struct TasksTabView: View {
             GoalLapseHookCache.write(goalID: goalID, message: message)
             withAnimation(NudgeAnimation.standard) {
                 goalLapseHookMessage = message
+            }
+        }
+    }
+
+    /// What the memo would be written from right now, hashed. Recomputed
+    /// each render; cheap (a few hundred rows at most, one SHA-256).
+    private var memoFingerprint: String {
+        TasksMemoContextBuilder.fingerprint(tasks: tasks, goals: allGoals, now: Date())
+    }
+
+    /// The daily Opus memo (Sep 2026): reads the cache for today's facts,
+    /// else asks `ClaudeService` once, within `tasksMemoMaxPerDay`. Every
+    /// failure path (no key, offline, parse, cap) is silent: the composer's
+    /// deterministic ladder IS the message then, or today's last memo
+    /// stands once the cap is spent. Read-only: nothing here writes to any
+    /// model row.
+    private func fetchTasksMemoIfNeeded() {
+        let now = Date()
+        let fingerprint = memoFingerprint
+
+        if let cached = TasksMemoCache.read(fingerprint: fingerprint, now: now) {
+            if tasksMemo != cached { tasksMemo = cached }
+            return
+        }
+        guard !memoFetchInFlight else { return }
+        if TasksMemoCache.generatedToday(now: now) >= NudgeConfig.tasksMemoMaxPerDay {
+            // Cap spent: today's latest memo stands, stale rather than costly.
+            if let latest = TasksMemoCache.readLatestToday(now: now), tasksMemo != latest {
+                tasksMemo = latest
+            }
+            return
+        }
+
+        let ignoredRaw = NudgeOutcomeResult.ignored.rawValue
+        let windowStart = Calendar.current.date(byAdding: .day, value: -14, to: now) ?? now
+        var ignoredDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> {
+                $0.resultRaw == ignoredRaw && $0.scheduledFor > windowStart
+            }
+        )
+        ignoredDescriptor.fetchLimit = 50
+        let ignoredCount = (try? modelContext.fetchCount(ignoredDescriptor)) ?? 0
+
+        let context = TasksMemoContextBuilder.build(
+            tasks: tasks,
+            goals: allGoals,
+            completedRecords: completedRecords,
+            userName: profile.name,
+            ignoredNudgeCount: ignoredCount,
+            now: now
+        )
+        memoFetchInFlight = true
+        Task {
+            defer { memoFetchInFlight = false }
+            guard let (headline, detail) = try? await ClaudeService.shared
+                .generateTasksMemo(context: context) else { return }
+            let message = TasksMessage(headline: headline, detail: detail.isEmpty ? nil : detail)
+            TasksMemoCache.write(fingerprint: fingerprint, message: message, now: now)
+            withAnimation(NudgeAnimation.standard) {
+                tasksMemo = message
             }
         }
     }
@@ -543,6 +611,7 @@ struct TasksTabView: View {
                     goals: allGoals.filter { $0.isActive },
                     goalInvite: goalInvite,
                     aiMessage: goalLapseHookMessage,
+                    memo: tasksMemo,
                     // The hook is the point of the bait's tap — it opens
                     // read-in-full, not as a teaser behind a second tap.
                     startsExpanded: tappedNudgeContext?.kind == .goalLapse,
@@ -660,6 +729,13 @@ struct TasksTabView: View {
             tappedNudgeContext = TappedNudgeContext.read()
             planOutcome = PlanOutcomeContext.read()
             fetchGoalLapseHookIfNeeded()
+            fetchTasksMemoIfNeeded()
+        }
+        .onChange(of: memoFingerprint) { _, _ in
+            // The facts the memo was written from changed (a dump landed,
+            // a task tipped overdue, a completion) — cache miss, refetch
+            // within the daily cap.
+            fetchTasksMemoIfNeeded()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Also consume when returning to the foreground while the Tasks
@@ -669,6 +745,7 @@ struct TasksTabView: View {
                 tappedNudgeContext = TappedNudgeContext.read()
                 planOutcome = PlanOutcomeContext.read()
                 fetchGoalLapseHookIfNeeded()
+                fetchTasksMemoIfNeeded()
             }
         }
         .sheet(item: $placement) { ctx in
