@@ -470,6 +470,7 @@ enum TasksMessageComposer {
         commitmentAnnouncement: CommitmentAnnouncementContext? = nil,
         planOutcome: PlanOutcomeContext? = nil,
         memo: TasksMessage? = nil,
+        planProposal: PlanProposalContext? = nil,
         now: Date
     ) -> TasksMessage {
         // ── AI SEAM (armed for goal-lapse, cycle 2026-08-04-03) ─────────
@@ -491,19 +492,29 @@ enum TasksMessageComposer {
             return nudgeExplanation(context: context, tasks: tasks, goals: goals, now: now)
         }
 
-        // 1.5 — the Opus memo (Sep 2026): the box's standing voice. It is
-        // written FROM the same facts the states below narrate (what was
-        // missed, what's coming, what to prepare for, a neglected goal), so
-        // it replaces them, not stacks on them. It yields to any pending
-        // one-time news (prep note, the two announcements, today's planner
-        // outcome): those are consumed on first render, and a memo that
-        // always won would mean they never rendered. With no memo (no key,
-        // offline, not yet landed, cap reached) the ladder below is exactly
-        // what it was — byte-identical deterministic fallback.
+        // One-time news (prep note, the two announcements, today's planner
+        // outcome) is consumed on first render, so anything that would
+        // always win must yield to it or it never renders.
         let oneTimeNewsPending = prepNote != nil
             || prepAnnouncement != nil
             || commitmentAnnouncement != nil
             || planOutcome.flatMap(planOutcomeMessage) != nil
+
+        // 1.2 — a plan proposal (cycle 2026-09-16-01): the app built the
+        // steps for something due; Opus's sentence is the headline and the
+        // box renders Yes / No under it. Above the memo because it is a
+        // question waiting on the user; below the tapped nudge and the
+        // one-time news for the same reason those outrank the memo.
+        if let planProposal, !oneTimeNewsPending {
+            return planProposalMessage(planProposal)
+        }
+
+        // 1.5 — the Opus memo (Sep 2026): the box's standing voice. It is
+        // written FROM the same facts the states below narrate (what was
+        // missed, what's coming, what to prepare for, a neglected goal), so
+        // it replaces them, not stacks on them. With no memo (no key,
+        // offline, not yet landed, cap reached) the ladder below is exactly
+        // what it was — byte-identical deterministic fallback.
         if let memo, !oneTimeNewsPending {
             return memo
         }
@@ -642,6 +653,33 @@ enum TasksMessageComposer {
     /// The gentle invite. A question and an offer — never a verdict; built
     /// as a standalone static (same reason as the prep states) so the view
     /// can equality-check that it actually rendered.
+    /// The plan proposal as the box renders it: Opus's one sentence as the
+    /// headline, a deterministic summary of the sessions as the detail.
+    /// Equality against this builder is how the view knows to draw Yes / No.
+    static func planProposalMessage(_ proposal: PlanProposalContext) -> TasksMessage {
+        let fmtIn = DateFormatter()
+        fmtIn.dateFormat = "yyyyMMdd"
+        fmtIn.locale = Locale(identifier: "en_US_POSIX")
+        let fmtOut = DateFormatter()
+        fmtOut.dateFormat = "MMM d"
+        let days = proposal.sessions.compactMap { fmtIn.date(from: $0.dayStamp) }.sorted()
+        let count = proposal.sessions.count
+        let avg = count == 0 ? 0 : proposal.sessions.map(\.minutes).reduce(0, +) / count
+        var detail = "\(count) session\(count == 1 ? "" : "s")"
+        if let first = days.first, let last = days.last {
+            detail += first == last
+                ? " on \(fmtOut.string(from: first))"
+                : ", \(fmtOut.string(from: first)) to \(fmtOut.string(from: last))"
+        }
+        if avg > 0 { detail += ", about \(avg) minutes each" }
+        if let firstTitle = proposal.sessions.first?.title {
+            detail += ". First one: \(firstTitle)."
+        } else {
+            detail += "."
+        }
+        return TasksMessage(headline: proposal.reason, detail: detail)
+    }
+
     static func goalInviteMessage(goal: NudgeGoal) -> TasksMessage {
         TasksMessage(
             headline: "Nothing on the list points at “\(goal.title)” right now.",
@@ -1107,6 +1145,10 @@ struct TasksMessageBox: View {
     /// lands. Nil shows the deterministic ladder, so the box is never blank
     /// or waiting on the network.
     var memo: TasksMessage? = nil
+    /// A plan proposal awaiting the user's answer (cycle 2026-09-16-01).
+    /// Rendered with Yes / No; the owner writes on Yes and records a No.
+    var planProposal: PlanProposalContext? = nil
+    var onAnswerPlanProposal: ((PlanProposalContext, Bool) -> Void)? = nil
     /// Opens with the detail visible — the goal-lapse hook's requirement:
     /// the full message is the point of the tap, not a teaser behind a
     /// second tap.
@@ -1166,9 +1208,15 @@ struct TasksMessageBox: View {
             commitmentAnnouncement: commitmentAnnouncement,
             planOutcome: planOutcome,
             memo: memo,
+            planProposal: planProposal,
             now: clock.now
         )
         let expandable = message.detail != nil
+        // The proposal on offer, when the rendered message IS the proposal
+        // (equality against its builder, the goal-invite pattern).
+        let offeredProposal: PlanProposalContext? = planProposal.flatMap { proposal in
+            message == TasksMessageComposer.planProposalMessage(proposal) ? proposal : nil
+        }
         // The goal on offer, when the rendered message is one of the two
         // goal states: the lapse hook (identified by the tap context, so
         // both the deterministic and AI forms qualify) or the invite
@@ -1224,6 +1272,43 @@ struct TasksMessageBox: View {
                     .buttonStyle(.plain)
                     .padding(.top, 4)
                     .accessibilityHint("Adds a \(NudgeConfig.goalStepMinutes)-minute task toward this goal. No form.")
+                }
+
+                // The plan's Yes / No (cycle 2026-09-16-01). Always visible
+                // while the proposal is showing; the explicit gestures keep
+                // the buttons from also opening the shell.
+                if let proposal = offeredProposal {
+                    HStack(spacing: 8) {
+                        Button {
+                            NudgeHaptics.medium()
+                            onAnswerPlanProposal?(proposal, true)
+                        } label: {
+                            Text("Yes")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(NudgeTheme.primary)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Adds the sessions to your list and timeline.")
+                        Button {
+                            NudgeHaptics.light()
+                            onAnswerPlanProposal?(proposal, false)
+                        } label: {
+                            Text("No")
+                                .font(.custom(NudgeTheme.fontMedium, size: 13))
+                                .foregroundColor(NudgeTheme.textSecondary)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(NudgeTheme.surfaceAlt)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Nothing changes.")
+                    }
+                    .padding(.top, 4)
                 }
             }
 

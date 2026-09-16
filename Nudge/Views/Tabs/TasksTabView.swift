@@ -97,6 +97,10 @@ struct TasksTabView: View {
     /// network. Composer rule: it yields to tapped-nudge context and to any
     /// pending one-time news, and replaces the standing states.
     @State private var tasksMemo: TasksMessage?
+    /// The plan proposal awaiting an answer (cycle 2026-09-16-01), read
+    /// from `PlanProposalSweep` on appear, on foreground, and whenever the
+    /// sweep posts that its store changed.
+    @State private var planProposal: PlanProposalContext?
     /// Single-flight guard for the memo fetch — the tab re-appears and the
     /// fingerprint can change while a call is in the air.
     @State private var memoFetchInFlight = false
@@ -216,6 +220,24 @@ struct TasksTabView: View {
             withAnimation(NudgeAnimation.standard) {
                 goalLapseHookMessage = message
             }
+        }
+    }
+
+    /// The user's answer to a plan proposal. Yes writes the sessions
+    /// (scheduled, never due) through the sweep's writer and reevaluates;
+    /// No records the decision. Either way the box moves on.
+    private func answerPlanProposal(_ proposal: PlanProposalContext, accepted: Bool) {
+        if accepted {
+            let written = PlanProposalSweep.shared.accept(proposal, modelContext: modelContext)
+            if written > 0 {
+                WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                refreshNotifications()
+            }
+        } else {
+            PlanProposalSweep.shared.decline(proposal)
+        }
+        withAnimation(NudgeAnimation.standard) {
+            planProposal = PlanProposalSweep.shared.currentProposal(modelContext: modelContext)
         }
     }
 
@@ -612,6 +634,10 @@ struct TasksTabView: View {
                     goalInvite: goalInvite,
                     aiMessage: goalLapseHookMessage,
                     memo: tasksMemo,
+                    planProposal: planProposal,
+                    onAnswerPlanProposal: { proposal, accepted in
+                        answerPlanProposal(proposal, accepted: accepted)
+                    },
                     // The hook is the point of the bait's tap — it opens
                     // read-in-full, not as a teaser behind a second tap.
                     startsExpanded: tappedNudgeContext?.kind == .goalLapse,
@@ -730,6 +756,12 @@ struct TasksTabView: View {
             planOutcome = PlanOutcomeContext.read()
             fetchGoalLapseHookIfNeeded()
             fetchTasksMemoIfNeeded()
+            planProposal = PlanProposalSweep.shared.currentProposal(modelContext: modelContext)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nudgePlanProposalsChanged)) { _ in
+            withAnimation(NudgeAnimation.standard) {
+                planProposal = PlanProposalSweep.shared.currentProposal(modelContext: modelContext)
+            }
         }
         .onChange(of: memoFingerprint) { _, _ in
             // The facts the memo was written from changed (a dump landed,
@@ -746,6 +778,7 @@ struct TasksTabView: View {
                 planOutcome = PlanOutcomeContext.read()
                 fetchGoalLapseHookIfNeeded()
                 fetchTasksMemoIfNeeded()
+                planProposal = PlanProposalSweep.shared.currentProposal(modelContext: modelContext)
             }
         }
         .sheet(item: $placement) { ctx in

@@ -943,8 +943,11 @@ final class ExamPrepSweep {
     static func recordDeletionIfGenerated(_ task: NudgeTask, modelContext: ModelContext) {
         guard task.source == "prep" || task.source == "commitment",
               let examID = task.linkedEventId,
-              let dueDate = task.dueDate else { return }
-        let dayStamp = stamp(Calendar.current.startOfDay(for: dueDate))
+              // Sweep-made rows carry a per-day due date; plan sessions
+              // (cycle 2026-09-16-01) are scheduled, not due, so their day
+              // is the intended day. Either way, the day is the stamp.
+              let day = task.dueDate ?? task.intendedDate else { return }
+        let dayStamp = stamp(Calendar.current.startOfDay(for: day))
 
         let existing = (try? modelContext.fetch(FetchDescriptor<PrepTombstone>(
             predicate: #Predicate<PrepTombstone> { $0.examEventId == examID }
