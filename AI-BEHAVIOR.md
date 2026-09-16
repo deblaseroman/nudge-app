@@ -51,6 +51,16 @@ text field, no corner bubble; tapping the row opens the message in full.
 One-time news (study-time notes, planner outcomes) still shows first.
 Offline or no key: the deterministic message, exactly as before.
 
+**Plans (built Sep 16 2026, your "go"):** for a task or event with a due
+date that is worth preparing for, Opus reads it and proposes 2 to 8 short
+dated sessions. The box shows Opus's one sentence with **Yes** and **No**.
+Yes adds the sessions to the list and timeline as scheduled work before
+the due date, never as due-dated tasks of their own. No changes nothing
+and is final for that due date. A dumped exam gets one question in the
+chat instead ("Want me to build a study plan for X?"); a Yes there writes
+the plan at once. Your own study task always wins. At most two reader
+calls a day, about 3¢ each, most days zero.
+
 **How it should act** (started from your Sep 14 answers):
 - Talk only, for now — a more detailed reminder about important tasks
   and events. *(your Q1)*

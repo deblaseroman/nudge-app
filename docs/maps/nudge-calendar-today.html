@@ -102,7 +102,7 @@
   <div class="titleblock">
     <div class="name">
       <h1>How the Calendar Reaches Nudge</h1>
-      <p class="sub">Three doors in, one store, and every reader that looks ahead from it, measured in the app's own days. The state of the working tree on September 16, 2026.</p>
+      <p class="sub">Three doors in, one store, and every reader that looks ahead from it, measured in the app's own days. The state of the working tree on the morning of September 16, 2026; section 4 records what the afternoon's cycle changed.</p>
       <p class="byline">Roman DeBlase · Nudge</p>
     </div>
     <div class="meta">
@@ -373,10 +373,10 @@
     <h2><span class="n">4.0</span>What this shape cannot do</h2>
     <p class="lede">Each entry names the seam, so the companion map can be read as a set of answers rather than a wish list.</p>
     <ul class="gaps">
-      <li><strong>Nothing reads ahead as a span.</strong> <span class="tag open">OPEN</span><br><span class="why">Seam: FIG 2. Every reader has a fixed reach measured from today, and no reader looks at three weeks of calendar together to decide what needs preparing. "Plan ahead" is a per-day tap.</span></li>
-      <li><strong>Preparation is keyword-gated to exams.</strong> <span class="tag open">OPEN</span><br><span class="why">Seam: FIG 3. A trip, an interview, a presentation, or a move gets no lead-up tasks. The high-priority keyword list exists but nothing calls it, and the Haiku prep-plan endpoint it was meant to feed has no production caller.</span></li>
-      <li><strong>The iCal link does not roll.</strong> <span class="tag open">OPEN</span><br><span class="why">Seam: FIG 1, door 2. Apple Calendar refreshes daily; the Canvas or Google feed is a 30-day snapshot taken on the tap. A student whose whole term is in Canvas silently loses sight of week five unless they re-import.</span></li>
-      <li><strong>The import edge caps the horizon at 21 or 30 days.</strong> <span class="tag open">OPEN</span><br><span class="why">Seam: FIG 1. A final exam six weeks out does not exist in the store, so a 14-day lead band can never fire early for it, and no reader could plan for it even if one existed.</span></li>
+      <li class="fixed"><strong>A reader now looks three weeks ahead as a batch.</strong> <span class="tag done">BUILT — Sep 16 (cycle 2026-09-16-01)</span><br><span class="why">Seam: FIG 2. The plan reader reads every due-dated item inside 21 days in one Opus call and proposes preparation; the user's Yes writes it. The rolling week-by-week advance from SYS-HRZ-09 is not built; the reader re-runs when its candidates change.</span></li>
+      <li class="fixed"><strong>Preparation is no longer keyword-gated to exams.</strong> <span class="tag done">BUILT — same cycle</span><br><span class="why">Seam: FIG 3. Trips, interviews, applications, and the rest are judged by the reader; exams go through the same door and the silent study-task sweep is gone. The dead prep-plan endpoint and the uncalled keyword detector were removed with it.</span></li>
+      <li class="fixed"><strong>The iCal link refreshes daily.</strong> <span class="tag done">FIXED — same cycle</span><br><span class="why">Seam: FIG 1, door 2. The persisted feed re-fetches once a day on the same cadence as Apple Calendar, through the same duplicate check.</span></li>
+      <li class="fixed"><strong>The import edge is 180 days for both doors.</strong> <span class="tag done">FIXED — same cycle</span><br><span class="why">Seam: FIG 1. A final six weeks out now exists in the store. One config constant; raising it to a whole calendar is a number change.</span></li>
       <li class="pending"><strong>Imported rows get deterministic stakes, not the AI pass.</strong> <span class="tag appr">BY DESIGN</span><br><span class="why">Seam: FIG 1, classify step 4. Keyword and category stakes land at import time. The once-per-install Haiku backfill runs at first launch, before any import, so calendar rows never get the AI upgrade. Correct and cheap; worth knowing when the message box calls something high stakes.</span></li>
       <li class="fixed"><strong>A large import costs no tokens.</strong> <span class="tag done">TRUE TODAY</span><br><span class="why">Seam: FIG 1. Apple Calendar and iCal never touch the API. Per-task intelligence fires only on manual edits, notification copy excludes events, the memo sees at most 8 events and 15 tasks regardless of store size.</span></li>
     </ul>
