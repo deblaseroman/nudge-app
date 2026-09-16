@@ -83,7 +83,7 @@ Both targets read and write one SwiftData store (`Nudge.store`) and one `UserDef
 ### AI vs deterministic split
 
 - All Anthropic calls live in `ClaudeService` (Haiku). `NudgeIntelligence` caches per-task AI signals in `TaskIntelligence` (7-day TTL, single-flight).
-- **Plan-my-day has two implementations.** The deterministic one is `planMyDay()` inside `Nudge/Views/Tabs/TasksTabView.swift` — not a service, and *not* `DayPlanner.swift`, which is dead code. `DayPlanRefiner` is the AI layer over it (Pro/trial gated, cached once per day). Both write only `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto`.
+- **Plan-my-day has two implementations.** The deterministic one is `DayPlanEngine` (entered from `planMyDay()` in `Nudge/Views/Tabs/TasksTabView.swift`). `DayPlanRefiner` is the AI layer over it (Pro/trial gated, cached once per day). Both write only `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto`.
 - The notification path is fully deterministic: `EisenhowerScorer` (urgency×importance → quadrant), `DurationModel` (category priors + learned `CategoryDurationStats`), `StartByPlanner`, `BusyWindowResolver`. No LLM calls in the arbiter.
 
 ### Conventions
@@ -91,4 +91,3 @@ Both targets read and write one SwiftData store (`Nudge.store`) and one `UserDef
 - **Every tunable constant lives in `NudgeConfig`** (thresholds, budgets, priors, buffers) — change behavior there, not inline. The file is deliberately kept thin and readable.
 - Stateful services expose a `.shared` singleton; scoring/planning helpers are stateless.
 - Colors/fonts come from `NudgeTheme` (Lexend font family); haptics and animation constants from `NudgeFeedback`.
-- `TaskScheduler`, `SmartNotificationEngine`, `NotificationMessageGenerator`, and `FocusSessionManager` are cleared legacy stubs — don't add code to them.
