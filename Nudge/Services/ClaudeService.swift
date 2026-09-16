@@ -222,6 +222,8 @@ class ClaudeService {
     {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "deadline", "sequenceIndex": null, "prepLeadDays": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
     The "isEvent" boolean is REQUIRED on every new item. "prepLeadDays" is 3, 7, or 14 on exam-category EVENTS only; null everywhere else.
 
+    TITLES (the list, the timeline, and the widget have one line each): a short noun phrase, at most five words where the scope allows, condensed the way a person would write it on a sticky note — "Apply to a Masters program" → "Masters Application"; "go pick up the package from the mail room" → "Pick up package"; "I need to finish the reading for bio" → "Bio reading". Drop lead-in verbs and filler ("go", "try to", "I need to", "make sure I") unless the verb IS the task. Keep every identifying number or name (module 4, Chem 101, Portland), and keep an EVENT's own name as the calendar would show it. Never abbreviate into something the user would not recognize.
+
     DUE vs START — "dueKind" is REQUIRED on every TASK that has a dueDate (null on events, null when dueDate is null):
     - "deadline": the date is when the work is OWED. Signals: "due", "deadline", "submit", "turn in", "closes", "by [date] or I'm in trouble", assignments, essays, applications with cutoff dates, anything graded or externally enforced.
     - "start": the date is when the user MEANS TO DO IT. Signals: "I'll", "I want to", "I'm going to", "study at 7", "work on X tomorrow", chores given a day, plan items given times, self-scheduled anything.
