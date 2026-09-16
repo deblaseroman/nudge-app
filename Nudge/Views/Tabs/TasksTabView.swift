@@ -719,6 +719,10 @@ struct TasksTabView: View {
                     onTapEmpty: { placement = PlacementContext(time: $0) },
                     onCompleteTask: { toggleCompletion(for: $0) }
                 )
+                // Full-bleed (Roman, Sep 16 2026): a horizontal scroller
+                // clipped at the page gutter reads as "cut off at the
+                // sides". It escapes the gutter and runs edge to edge.
+                .padding(.horizontal, -20)
                 // Control order: box (chat circle on its corner) →
                 // Today row (label + Plan my day + Clear plan) → timeline →
                 // Start Session full-width and thin (Roman, Sep 2026 —
@@ -1169,6 +1173,11 @@ struct TasksTabView: View {
             // bottom hairlines.
             .padding(.vertical, 1)
         }
+        // Full-bleed with the gutter as scroll margin, so a chip past the
+        // edge scrolls under the screen edge instead of being sliced at
+        // the page's 20pt gutter.
+        .contentMargins(.horizontal, 20, for: .scrollContent)
+        .padding(.horizontal, -20)
     }
 
     /// Whether a tab has anything behind it — drives the unselected chip's

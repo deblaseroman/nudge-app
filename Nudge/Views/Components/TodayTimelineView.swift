@@ -249,9 +249,13 @@ struct TodayTimelineView: View {
                         }
                 )
             }
+            // The strip is full-bleed inside the Tasks tab (it escapes the
+            // page gutter), so it is a band, not a card: no rounded clip,
+            // and the gutter becomes scroll margin so the first label sits
+            // off the screen edge.
+            .contentMargins(.horizontal, 20, for: .scrollContent)
             .frame(height: totalHeight)
             .background(NudgeTheme.surfaceAlt.opacity(0.4))
-            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
             .onAppear {
                 // Open with "now" near the LEFT edge (small lead-in of the
                 // past for padding) rather than centered — so the strip

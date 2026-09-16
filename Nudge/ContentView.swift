@@ -318,6 +318,29 @@ struct ContentView: View {
             let profile = UserProfile()
             modelContext.insert(profile)
         }
+        #if DEBUG
+        // Simulator-only launch arguments so a build can be looked at
+        // without typing through onboarding:
+        //   -nudge-skip-onboarding      marks the profile complete
+        //   -nudge-tab tasks|home|calendar   lands on that tab
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-nudge-skip-onboarding"),
+           let profile = profiles.first ?? (try? modelContext.fetch(FetchDescriptor<UserProfile>()))?.first {
+            profile.onboardingComplete = true
+            if profile.name.isEmpty { profile.name = "Test" }
+            try? modelContext.save()
+        }
+        if let i = args.firstIndex(of: "-nudge-tab"), i + 1 < args.count {
+            let wanted: AppTab? = switch args[i + 1] {
+                case "tasks": .tasks
+                case "home": .home
+                case "calendar": .calendar
+                default: nil
+            }
+            // After the tab bar exists: MainTabView consumes this on change.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { deepLinkTab = wanted }
+        }
+        #endif
     }
 
 }
