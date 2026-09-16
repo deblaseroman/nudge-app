@@ -1,0 +1,464 @@
+<title>Nudge as Roman Describes It</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444; --danger-soft: #F3DCDC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B; --danger-soft: #3A2626;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B; --danger-soft: #3A2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .byline { margin:12px 0 0; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  @media (max-width: 640px) {
+    .titleblock { grid-template-columns:1fr; }
+    .titleblock .meta { border-left:0; border-top:1.5px solid var(--ink); grid-template-rows:none; grid-template-columns:repeat(3,1fr); }
+    .titleblock .meta > div + div { border-top:0; border-left:1px solid var(--line); }
+  }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+  .thesis { border:1.5px solid var(--ink); padding:22px 26px; display:grid; gap:14px; }
+  .thesis p { margin:0; }
+  .thesis .big { font-size:21px; font-weight:500; line-height:1.4; text-wrap:balance; }
+  .thesis .row { display:grid; grid-template-columns:120px 1fr; gap:14px; align-items:baseline; border-top:1px solid var(--line); padding-top:12px; }
+  @media (max-width: 560px) { .thesis .row { grid-template-columns:1fr; gap:4px; } }
+  figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px 18px 14px; overflow-x:auto; }
+  figure svg { display:block; min-width:680px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption { font-size:13px; color:var(--muted); border-top:1px solid var(--line); margin-top:16px; padding-top:12px; max-width:74ch; }
+  figcaption .fig { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); margin-right:6px; }
+  svg { color: var(--ink); }
+  svg text { font-family:"Lexend",sans-serif; font-size:12.5px; fill:var(--ink); }
+  svg text.m { font-family:"IBM Plex Mono",monospace; font-size:11px; }
+  svg text.s { font-size:10.5px; fill:var(--muted); }
+  svg text.acct { fill:var(--accent); }
+  svg text.warnt { fill:var(--warn); }
+  svg text.goodt { fill:var(--good); }
+  svg text.dngt { fill:var(--danger); }
+  svg .wire { stroke:currentColor; stroke-width:1.2; fill:none; }
+  svg .wire.acc { stroke:var(--accent); }
+  svg .wire.warn { stroke:var(--warn); }
+  svg .wire.dng { stroke:var(--danger); }
+  svg .wire.good { stroke:var(--good); }
+  svg .wire.dash { stroke-dasharray:5 4; }
+  svg .box { fill:var(--panel-2); stroke:currentColor; stroke-width:1.2; }
+  svg .soft { fill:var(--panel); stroke:var(--line); stroke-width:1; }
+  svg .accb { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.2; }
+  svg .warnb { fill:var(--warn-soft); stroke:var(--warn); stroke-width:1.2; }
+  svg .goodb { fill:var(--good-soft); stroke:var(--good); stroke-width:1.2; }
+  svg .dngb { fill:var(--danger-soft); stroke:var(--danger); stroke-width:1.2; }
+  svg .ghost { fill:none; stroke:var(--faint); stroke-width:1; stroke-dasharray:4 4; }
+  .tablewrap { overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 14px; }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; margin:0; }
+  th { text-align:left; font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); font-weight:600; padding:10px 10px 6px; border-bottom:1px solid var(--line); }
+  td { padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td { border-bottom:0; }
+  td .st { font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:600; letter-spacing:0.08em; padding:1px 8px; border-radius:99px; border:1px solid; white-space:nowrap; }
+  .st.true { color:var(--good); border-color:var(--good); }
+  .st.diff { color:var(--warn); border-color:var(--warn); }
+  .st.none { color:var(--danger); border-color:var(--danger); }
+  .qs { list-style:none; margin:0; padding:0; display:grid; gap:10px; counter-reset:q; }
+  .qs li { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:4px; padding:12px 16px; font-size:14px; }
+  .qs li strong { font-weight:500; }
+  .qs li .why { color:var(--muted); }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+  <div class="titleblock">
+    <div class="name">
+      <h1>Nudge as Roman Describes It</h1>
+      <p class="sub">My read of the vision statement from the realignment session, drawn back so we can check it against each other before anything changes. Section 6 is the only place the current code appears, and it is a list of candidates, not decisions.</p>
+      <p class="byline">Roman DeBlase · Nudge</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-VIS-10</span></div>
+      <div><span class="k">Phase</span><span class="v">1 · understanding</span></div>
+      <div><span class="k">Written</span><span class="v">Sep 16 2026</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 THESIS ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>The sentence</h2>
+    <div class="thesis">
+      <p class="big">Nudge is a personal assistant for a student with ADHD. It structures what they dumped, plans their day, builds the steps for what matters, reminds them at the right moment, and prepares them for what is ahead.</p>
+      <div class="row"><span class="k">For</span><p>Anyone, designed for students with ADHD.</p></div>
+      <div class="row"><span class="k">Against</span><p>Executive dysfunction, task paralysis, forgetfulness, and planning. The app does the parts those make hard: it decides what to do next, when to be reminded, and what preparing for a big thing actually consists of.</p></div>
+      <div class="row"><span class="k">How</span><p>Three verbs. <strong>Nudge</strong>: the right notification for the user's tasks and events. <strong>Plan the day</strong>: put today's work on the timeline in a sensible order. <strong>Plan the thing</strong>: for an important due-dated task or event, propose the subtasks that prepare for or complete it, and add them only when the user says yes.</p></div>
+      <div class="row"><span class="k">Ceiling</span><p>Under $10 of API per user per month. Simplicity wins ties. No conversation that is not about tasks, events, settings, or plans.</p></div>
+    </div>
+  </section>
+
+  <!-- ════════ 2.0 TWO CLOCKS ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>A task has two clocks, and they mean different things</h2>
+    <p class="lede">This is where you said the mix-up lived, and I agree it is the center of everything else. A <strong>due date is an anchor</strong>: the moment the task is owed, set by the user or by the calendar, never moved by the app. A <strong>scheduled time is an intention</strong>: when the user, or Plan my day, decided to work on it. Passing a scheduled time is not being late. Passing the due date is.</p>
+    <figure>
+      <svg viewBox="0 0 920 360" role="img" aria-label="A time axis for one task, Calculus homework, due Friday at 11:59 PM. Two scheduled sessions sit on Tuesday and Thursday before the anchor. Passing a session's time is labeled not overdue, reschedule once; passing the anchor is labeled overdue. Below, an importance ladder: no due date is normal, a due date is medium from creation, and the due day itself is high.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <text class="m" x="20" y="34" font-weight="600">ONE TASK · "Calculus homework" · due Friday, no time given → 11:59 PM</text>
+
+        <!-- axis -->
+        <line class="wire" x1="60" y1="120" x2="880" y2="120" marker-end="url(#arr)"/>
+        <g class="s">
+          <text x="120" y="142" text-anchor="middle">Mon</text>
+          <text x="260" y="142" text-anchor="middle">Tue</text>
+          <text x="400" y="142" text-anchor="middle">Wed</text>
+          <text x="540" y="142" text-anchor="middle">Thu</text>
+          <text x="680" y="142" text-anchor="middle">Fri</text>
+          <text x="820" y="142" text-anchor="middle">Sat</text>
+        </g>
+        <line class="ghost" x1="120" y1="60" x2="120" y2="126"/>
+        <line class="ghost" x1="400" y1="60" x2="400" y2="126"/>
+        <line class="ghost" x1="820" y1="60" x2="820" y2="126"/>
+
+        <!-- sessions -->
+        <rect class="accb" x="232" y="78" width="56" height="34" rx="4"/>
+        <text class="s acct" x="260" y="92" text-anchor="middle">session</text>
+        <text class="s acct" x="260" y="106" text-anchor="middle">Tue 4 PM</text>
+        <rect class="accb" x="512" y="78" width="56" height="34" rx="4"/>
+        <text class="s acct" x="540" y="92" text-anchor="middle">session</text>
+        <text class="s acct" x="540" y="106" text-anchor="middle">Thu 7 PM</text>
+
+        <!-- anchor -->
+        <line class="wire dng" x1="740" y1="56" x2="740" y2="126" stroke-width="2"/>
+        <polygon points="740,126 734,136 746,136" fill="var(--danger)"/>
+        <text class="m dngt" x="740" y="48" text-anchor="middle" font-weight="600">DUE · Fri 11:59 PM · the anchor</text>
+
+        <!-- what passing means -->
+        <path class="wire acc dash" d="M288,95 L330,95" marker-end="url(#arr)"/>
+        <text class="s" x="334" y="88">scheduled time passes:</text>
+        <text class="s acct" x="334" y="102">not overdue. Reschedule once.</text>
+
+        <path class="wire dng dash" d="M746,95 L790,95" marker-end="url(#arr)"/>
+        <text class="s dngt" x="794" y="88">due passes:</text>
+        <text class="s dngt" x="794" y="102">overdue, now.</text>
+
+        <!-- importance ladder -->
+        <text class="m" x="20" y="196" font-weight="600">IMPORTANCE FOLLOWS THE ANCHOR</text>
+        <rect class="soft" x="20" y="208" width="270" height="52" rx="4"/>
+        <text class="s" x="34" y="228">no due date</text>
+        <text x="34" y="248" font-weight="500">normal</text>
+        <rect class="warnb" x="310" y="208" width="270" height="52" rx="4"/>
+        <text class="s" x="324" y="228">has a due date, from the day it is created</text>
+        <text class="warnt" x="324" y="248" font-weight="500">medium</text>
+        <rect class="dngb" x="600" y="208" width="290" height="52" rx="4"/>
+        <text class="s" x="614" y="228">the due day itself</text>
+        <text class="dngt" x="614" y="248" font-weight="500">high</text>
+        <line class="wire" x1="290" y1="234" x2="306" y2="234" marker-end="url(#arr)"/>
+        <line class="wire" x1="580" y1="234" x2="596" y2="234" marker-end="url(#arr)"/>
+
+        <text class="s" x="20" y="296">Where each lives in the editor: the due date and time sit under Reschedule, each with its own "no date" / "no time" button.</text>
+        <text class="s" x="20" y="314">A date without a time means 11:59 PM that day. The scheduled time is the timeline slot, set by the user or by Plan my day.</text>
+        <text class="s" x="20" y="332">Only a task with a due date can get a plan (section 5). A scheduled time alone never earns one.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>One task, two clocks. The sessions are where the user intends to work; the anchor is when the work is owed. A session the user did not get to is rescheduled once, not marked late. Importance is read off the anchor: medium the moment a due date exists, high on the day it lands. A single-session task with no due date has only the left-hand clock, and that is fine.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 3.0 FOUR SHAPES ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>The shapes a task can take, and where each one lives</h2>
+    <p class="lede">Crossing the two clocks gives four shapes. Each has a home, a way it reaches the timeline, and a rule for what happens when it is not done. Events are the anchored shape with no work attached: they are attended, not completed, and the app never moves them.</p>
+    <figure>
+      <svg viewBox="0 0 920 470" role="img" aria-label="A two-by-two grid: rows are has a due date and no due date; columns are has a specific time and no specific time. Anchored: date and time, drawn on the timeline at exactly that time; imported events live here and are never altered. Due by day: a due date with no time, treated as 11:59 PM, scheduled before it by the user or Plan my day. Floater: a day but no time, appears that day and is auto-placed by Plan my day; skipped twice it moves to Overdue. Loose: neither, lives in the task list until placed. Below, the Overdue rules: dated-and-timed above undated, a duplicate replaces the overdue original, and one reschedule only.">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <!-- headers -->
+        <text class="m" x="330" y="30" text-anchor="middle" font-weight="600">HAS A SPECIFIC TIME</text>
+        <text class="m" x="700" y="30" text-anchor="middle" font-weight="600">NO SPECIFIC TIME</text>
+        <text class="m" x="20" y="120" font-weight="600">HAS A</text>
+        <text class="m" x="20" y="136" font-weight="600">DUE DATE</text>
+        <text class="m" x="20" y="270" font-weight="600">NO DUE</text>
+        <text class="m" x="20" y="286" font-weight="600">DATE</text>
+
+        <!-- cell 1: anchored -->
+        <rect class="dngb" x="150" y="44" width="360" height="160" rx="4"/>
+        <text x="164" y="68" font-weight="500">Anchored</text>
+        <text class="s" x="164" y="90">"Chem midterm, Oct 4 at 9 AM" · "Pay rent, the 1st at noon"</text>
+        <text class="s" x="164" y="112">lives: on the timeline at exactly that date and time</text>
+        <text class="s" x="164" y="128">reaches the timeline: by itself, the moment it exists</text>
+        <text class="s" x="164" y="144">imported events live here and are never altered by the app</text>
+        <text class="s" x="164" y="166">not done by the anchor → Overdue, ranked first</text>
+        <text class="s" x="164" y="182">work sessions before it are the blue kind, not this one</text>
+
+        <!-- cell 2: due by day -->
+        <rect class="warnb" x="520" y="44" width="360" height="160" rx="4"/>
+        <text x="534" y="68" font-weight="500">Due by day</text>
+        <text class="s" x="534" y="90">"Calculus homework, due Friday" → owed Friday 11:59 PM</text>
+        <text class="s" x="534" y="112">lives: the task list, ranked by how close the anchor is</text>
+        <text class="s" x="534" y="128">reaches the timeline: the user schedules sessions, or</text>
+        <text class="s" x="534" y="144">Plan my day places it in a gap before the anchor</text>
+        <text class="s" x="534" y="166">not done by 11:59 PM → Overdue, ranked with the anchored</text>
+        <text class="s" x="534" y="182">the only shape that can receive a plan (section 5)</text>
+
+        <!-- cell 3: floater -->
+        <rect class="accb" x="150" y="214" width="360" height="160" rx="4"/>
+        <text x="164" y="238" font-weight="500">Floater · a filler</text>
+        <text class="s" x="164" y="260">"Laundry", "dishes", "pick up the package": little penalty</text>
+        <text class="s" x="164" y="276">if it slips; often dumped as "I want to do that tomorrow"</text>
+        <text class="s" x="164" y="298">lives: the task list; fills spare time, or a day that has</text>
+        <text class="s" x="164" y="314">already been productive; placed by Plan my day or its day</text>
+        <text class="s" x="164" y="336">skipped → rescheduled to the next day, once</text>
+        <text class="s warnt" x="164" y="352">skipped a second day → the Skipped section, not Overdue</text>
+
+        <!-- cell 4: single session, no time -->
+        <rect class="soft" x="520" y="214" width="360" height="160" rx="4"/>
+        <text x="534" y="238" font-weight="500">Loose</text>
+        <text class="s" x="534" y="260">"Email professor" · a one-session task with no when</text>
+        <text class="s" x="534" y="282">lives: the task list, ranked by importance and age</text>
+        <text class="s" x="534" y="298">reaches the timeline: Plan my day, or the user drags it</text>
+        <text class="s" x="534" y="314">once placed it behaves as a floater for that day</text>
+        <text class="s" x="534" y="336">the Today tab shows these when the timeline is empty:</text>
+        <text class="s" x="534" y="352">things that could be done now or early</text>
+
+        <!-- overdue rules -->
+        <rect class="box" x="150" y="390" width="730" height="66" rx="4"/>
+        <text class="m" x="164" y="410" font-weight="600">OVERDUE AND SKIPPED, KEPT APART</text>
+        <text class="s" x="164" y="428">Overdue: anchored things past their due date. Skipped: single tasks with no due date, placed on Today by the user, not done after two days.</text>
+        <text class="s" x="164" y="444">A subtask of an anchored thing can be skipped but goes to neither section · a new task identical to an overdue one replaces it · one reschedule, never two</text>
+      </svg>
+      <figcaption><span class="fig">FIG 2</span>Four shapes from two clocks. Anchored and due-by-day items carry an anchor and become overdue when it passes. Floaters and loose tasks have no anchor, so "late" is defined by being skipped: one reschedule is the app's allowance, the second miss is the user's signal, and it lands in a separate Skipped section so Overdue stays for owed work only. A subtask of an anchored thing that slips goes nowhere; the parent still holds the anchor. The Today tab lists events alongside tasks, and when the timeline is empty it still offers the floaters and early-possible work.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 4.0 THE LOOP ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>The core loop</h2>
+    <p class="lede">Two doors in, one path after. A brain dump and a calendar import land in the same place and are treated the same way from there: <strong>listed, organized, ranked</strong> in the Tasks tab, placed by Plan my day, worked through Start Session. Order and color are one truth shared by the list, the widget, and the timeline.</p>
+    <figure>
+      <svg viewBox="0 0 920 330" role="img" aria-label="Left to right: a brain dump and a calendar import both flow into one reading step, then into the Tasks tab where tasks and events are listed, organized and ranked with long titles condensed, then Plan my day places them on the timeline by logic, then Start Session recommends the task under the blue needle or the next one, with the rest listed beneath in timeline order, then the session runs and the task is done or skipped. Below the flow, the widget mirrors the list in the same colors and order.">
+        <defs>
+          <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <!-- doors -->
+        <rect class="soft" x="20" y="40" width="130" height="54" rx="4"/>
+        <text x="34" y="62" font-weight="500">Brain dump</text>
+        <text class="s" x="34" y="80">free text, Opus reads it</text>
+        <rect class="soft" x="20" y="120" width="130" height="54" rx="4"/>
+        <text x="34" y="142" font-weight="500">Calendar import</text>
+        <text class="s" x="34" y="160">all of it, dates exact</text>
+        <line class="wire" x1="150" y1="67" x2="196" y2="100" marker-end="url(#arr3)"/>
+        <line class="wire" x1="150" y1="147" x2="196" y2="114" marker-end="url(#arr3)"/>
+
+        <!-- read -->
+        <rect class="box" x="200" y="80" width="120" height="54" rx="4"/>
+        <text x="214" y="102" font-weight="500">One reading</text>
+        <text class="s" x="214" y="120">same rules, both doors</text>
+        <line class="wire" x1="320" y1="107" x2="366" y2="107" marker-end="url(#arr3)"/>
+
+        <!-- tasks tab -->
+        <rect class="box" x="370" y="66" width="150" height="82" rx="4"/>
+        <text x="384" y="88" font-weight="500">Tasks tab</text>
+        <text class="s" x="384" y="106">listed · organized · ranked</text>
+        <text class="s" x="384" y="122">tasks and events together</text>
+        <text class="s" x="384" y="138">long titles condensed</text>
+        <line class="wire" x1="520" y1="107" x2="566" y2="107" marker-end="url(#arr3)"/>
+
+        <!-- plan my day -->
+        <rect class="accb" x="570" y="66" width="140" height="82" rx="4"/>
+        <text x="584" y="88" font-weight="500">Plan my day</text>
+        <text class="s" x="584" y="106">logic picks each slot;</text>
+        <text class="s" x="584" y="122">anchored items stay put;</text>
+        <text class="s" x="584" y="138">nothing past bedtime</text>
+        <line class="wire" x1="710" y1="107" x2="756" y2="107" marker-end="url(#arr3)"/>
+
+        <!-- start session -->
+        <rect class="goodb" x="760" y="52" width="140" height="110" rx="4"/>
+        <text x="774" y="74" font-weight="500">Start Session</text>
+        <text class="s" x="774" y="92">needle on a task → that one</text>
+        <text class="s" x="774" y="108">needle on a gap → the next</text>
+        <text class="s" x="774" y="124">confirm, or pick from the</text>
+        <text class="s" x="774" y="140">list beneath, which is in</text>
+        <text class="s" x="774" y="156">timeline order</text>
+
+        <!-- timeline strip -->
+        <text class="m" x="370" y="196" font-weight="600">TIMELINE · one order, one color per task</text>
+        <line class="wire" x1="370" y1="236" x2="900" y2="236"/>
+        <rect class="accb" x="400" y="212" width="70" height="24" rx="3"/>
+        <rect class="goodb" x="490" y="212" width="90" height="24" rx="3"/>
+        <rect class="warnb" x="610" y="212" width="60" height="24" rx="3"/>
+        <rect class="dngb" x="700" y="212" width="110" height="24" rx="3"/>
+        <line class="wire acc" x1="545" y1="200" x2="545" y2="246" stroke-width="2"/>
+        <circle cx="545" cy="200" r="4" fill="var(--accent)"/>
+        <text class="s acct" x="551" y="256">needle: on the green task → Start Session recommends it</text>
+
+        <!-- widget mirror -->
+        <rect class="soft" x="20" y="200" width="320" height="100" rx="4"/>
+        <text class="m" x="34" y="220" font-weight="600">WIDGET AND TASK LIST</text>
+        <rect class="accb" x="34" y="232" width="12" height="12" rx="2"/><text class="s" x="52" y="242">1 · the blue task</text>
+        <rect class="goodb" x="34" y="250" width="12" height="12" rx="2"/><text class="s" x="52" y="260">2 · the green task</text>
+        <rect class="warnb" x="34" y="268" width="12" height="12" rx="2"/><text class="s" x="52" y="278">3 · the amber task</text>
+        <text class="s" x="180" y="242">same colors,</text>
+        <text class="s" x="180" y="260">same order as</text>
+        <text class="s" x="180" y="278">the timeline</text>
+        <line class="wire dash" x1="340" y1="250" x2="366" y2="236" marker-end="url(#arr3)"/>
+
+        <text class="s" x="370" y="292">Nudges ride this loop: the right notification for the tasks and events on it, and nothing conversational.</text>
+        <text class="s" x="370" y="310">When the app needs one more detail from the user, Haiku asks the one question; Opus is not spent on it.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 3</span>The loop as you described it. Both doors feed one reading, so an imported calendar is organized and ranked exactly as a dump would be. Plan my day places by logic and never touches an anchored item. Start Session's recommendation is a fact about the needle, not a judgment: the task under it, or the next one. The list beneath keeps timeline order, and the widget mirrors both.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 5.0 THE PLAN ════════ -->
+  <section>
+    <h2><span class="n">5.0</span>The plan: prepare the user, but ask first</h2>
+    <p class="lede">A plan is the app building the subtasks that prepare for or complete something important and necessary. It exists <strong>only for a task or event with a due date</strong>. Opus explains it in the message box; a Yes adds the subtasks to the list and the timeline; a No changes nothing. This is the "prepare the user for what is ahead" verb, and it is the same shape whether the thing is an exam, a trip, or an application.</p>
+    <figure>
+      <svg viewBox="0 0 920 300" role="img" aria-label="Left: a due-dated important task or event. Arrow to the reader, which drafts subtasks. Arrow to the message box, where Opus explains the plan with a Yes and a No button. Yes leads to the subtasks being added to the task list and the timeline as scheduled sessions before the anchor. No leads to nothing changed. A note marks that the subtasks are scheduled, not due; only the parent carries the anchor.">
+        <defs>
+          <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <rect class="warnb" x="20" y="60" width="170" height="80" rx="4"/>
+        <text x="34" y="82" font-weight="500">Due-dated thing</text>
+        <text class="s" x="34" y="100">"Chem midterm, Oct 4"</text>
+        <text class="s" x="34" y="116">"Masters Application,</text>
+        <text class="s" x="34" y="132">due Nov 1"</text>
+        <line class="wire" x1="190" y1="100" x2="236" y2="100" marker-end="url(#arr4)"/>
+
+        <rect class="box" x="240" y="60" width="170" height="80" rx="4"/>
+        <text x="254" y="82" font-weight="500">Build the steps</text>
+        <text class="s" x="254" y="100">what would prepare for</text>
+        <text class="s" x="254" y="116">or complete it, as small</text>
+        <text class="s" x="254" y="132">dated sessions</text>
+        <line class="wire" x1="410" y1="100" x2="456" y2="100" marker-end="url(#arr4)"/>
+
+        <rect class="accb" x="460" y="40" width="220" height="120" rx="4"/>
+        <text class="acct" x="474" y="62" font-weight="500">Message box · Opus explains</text>
+        <text class="s" x="474" y="82">"Your midterm is in 18 days. Here is</text>
+        <text class="s" x="474" y="98">the plan: six study sessions, one an</text>
+        <text class="s" x="474" y="114">evening, starting the 28th."</text>
+        <rect class="goodb" x="474" y="126" width="90" height="24" rx="12"/>
+        <text class="goodt" x="519" y="142" text-anchor="middle" font-weight="500">Yes</text>
+        <rect class="soft" x="574" y="126" width="90" height="24" rx="12"/>
+        <text x="619" y="142" text-anchor="middle" font-weight="500">No</text>
+
+        <path class="wire good" d="M519,160 L519,200 L560,200" marker-end="url(#arr4)"/>
+        <path class="wire" d="M619,160 L619,200 L660,200" marker-end="url(#arr4)"/>
+
+        <rect class="goodb" x="564" y="180" width="80" height="40" rx="4"/>
+        <text class="s goodt" x="604" y="196" text-anchor="middle">added to list</text>
+        <text class="s goodt" x="604" y="210" text-anchor="middle">and timeline</text>
+        <rect class="soft" x="664" y="180" width="80" height="40" rx="4"/>
+        <text class="s" x="704" y="196" text-anchor="middle">nothing</text>
+        <text class="s" x="704" y="210" text-anchor="middle">changes</text>
+
+        <!-- sessions vs anchor -->
+        <rect class="soft" x="700" y="40" width="200" height="120" rx="4"/>
+        <text class="m" x="714" y="60" font-weight="600">WHAT GETS ADDED</text>
+        <text class="s" x="714" y="80">subtasks are scheduled, not due:</text>
+        <text class="s" x="714" y="96">each is a session on a day before</text>
+        <text class="s" x="714" y="112">the anchor. Only the parent is</text>
+        <text class="s" x="714" y="128">owed. A missed session is</text>
+        <text class="s" x="714" y="144">rescheduled once, not overdue.</text>
+
+        <text class="s" x="20" y="250">Trigger: a due-dated task or event that is important and necessary. Reach: as far ahead as the app reads (the three-week read, SYS-HRZ-09).</text>
+        <text class="s" x="20" y="268">Cost shape: one Opus explanation per proposed plan, never per session. Under the $10 monthly ceiling by construction, because plans are rare and asked once.</text>
+        <text class="s" x="20" y="286">Never for a task that only has a scheduled time. Never silently. Never twice for the same thing.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 4</span>The plan is a proposal, not an action. The app builds the steps, Opus explains them once in the message box, and the user's Yes is the only thing that writes. What gets written is sessions before the anchor, which is exactly why the two-clock rule in section 2 matters: a study session that slipped is not "overdue calculus", it is one session to move once.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 6.0 CONSTRAINTS VS CODE ════════ -->
+  <section>
+    <h2><span class="n">6.0</span>Your constraints against the code as it stands</h2>
+    <p class="lede">Read-only findings, so you can see where the mismatch is before deciding anything. <span class="st true">TRUE</span> already behaves as you described. <span class="st diff">DIFFERS</span> exists but does something else. <span class="st none">NOT BUILT</span> has no code behind it. These are Phase 2 candidates only.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>You said</th><th>Status</th><th>What the code does today</th></tr></thead>
+        <tbody>
+          <tr><td>Due date and scheduled time are two different things.</td><td><span class="st diff">DIFFERS</span></td><td>The data model already has both: a deadline (<code>dueDate</code>, <code>specificTime</code>) and an intention (<code>intendedDate</code>, <code>plannedStartDate</code>). But the task editor shows one date picker whose meaning switches by task kind, so a user cannot set both a due date and a scheduled time on the same task.</td></tr>
+          <tr><td>A missed scheduled time is not overdue; a missed due date is.</td><td><span class="st diff">DIFFERS</span></td><td>Overdue is computed from the deadline only, which is right. But every generated study session is created with its own due date of 11:59 PM on its day, so a slipped session reads as overdue. This is the exact symptom you described.</td></tr>
+          <tr><td>Reschedule a task once, then Overdue after the second skip.</td><td><span class="st none">NOT BUILT</span></td><td>A placement whose day passed is cleared back to Unscheduled every day, forever. Nothing counts skips, nothing rolls once, and an undated task never reaches Overdue.</td></tr>
+          <tr><td>Overdue orders dated-and-timed above undated.</td><td><span class="st diff">DIFFERS</span></td><td>Overdue holds only deadline tasks with stakes above low, sorted by the shared comparator. Undated tasks never enter it, so the ordering rule has nothing to order yet.</td></tr>
+          <tr><td>A new task identical to an overdue one replaces it.</td><td><span class="st diff">DIFFERS</span></td><td>Capture dedupe does the reverse: the new task is dropped and the existing one kept.</td></tr>
+          <tr><td>Importance: existing ranking for undated things; due-dated ones are medium, then high on the due day.</td><td><span class="st diff">DIFFERS</span></td><td>Importance is one weighted mix (priority, category, an AI-read urgency signal) for every task, dated or not. The due-date ladder does not exist. Under your rule it becomes one branch ahead of that mix: has a due date → medium, or high if due today; else the mix as it is.</td></tr>
+          <tr><td>Plans only for due-dated things, explained by Opus, Yes or No.</td><td><span class="st diff">DIFFERS</span></td><td>Only exams get plans, chosen by a keyword at import. The study tasks are created silently and announced afterward; there is no ask. Non-exam events get nothing.</td></tr>
+          <tr><td>Due date option in task details under Reschedule, with no-date / no-time buttons.</td><td><span class="st none">NOT BUILT</span></td><td>No due-date section exists as a distinct control; see row one.</td></tr>
+          <tr><td>A date with no time is due 11:59 PM.</td><td><span class="st true">TRUE</span></td><td>A bare due date is treated as the end of that day for ordering, countdowns, and overdue.</td></tr>
+          <tr><td>Calendar import brings in everything, dates exact.</td><td><span class="st diff">DIFFERS</span></td><td>Dates and times are kept exact. But Apple Calendar imports 21 days and refreshes daily; an iCal link imports 30 days once and never refreshes. See SYS-CAL-08.</td></tr>
+          <tr><td>An import is then treated exactly like a brain dump.</td><td><span class="st diff">DIFFERS</span></td><td>Imports skip the dump's reading: category and stakes come from keywords, and nothing plans ahead from them except the exam keyword.</td></tr>
+          <tr><td>Tasks tab and widget match the timeline's colors and order.</td><td><span class="st true">TRUE</span></td><td>One shared comparator and one shared color palette drive the list, the widget rows, and the timeline blocks.</td></tr>
+          <tr><td>Today tab shows events too.</td><td><span class="st true">TRUE</span></td><td>Each day lens lists that day's events between the plan rows and the task rows.</td></tr>
+          <tr><td>Empty timeline: Today still offers floaters and early-possible work.</td><td><span class="st none">NOT BUILT</span></td><td>The empty state is a Plan my day button and nothing else.</td></tr>
+          <tr><td>Anchored date-and-time items sit on the timeline exactly there.</td><td><span class="st true">TRUE</span></td><td>Events and timed tasks draw at their real time; the timeline stretches to show them even outside the wake-to-bed window.</td></tr>
+          <tr><td>A date with no time appears that day as a floater and gets placed.</td><td><span class="st diff">DIFFERS</span></td><td>The code calls an undated task a floater. A task with an intended day is shown under that day and placed by Plan my day, but not automatically when the day arrives.</td></tr>
+          <tr><td>Never schedule past bedtime unless the user says so.</td><td><span class="st true">TRUE</span></td><td>The planning window ends at bedtime minus a buffer; a manual placement can go later.</td></tr>
+          <tr><td>Condense long titles so they do not clutter or overlap.</td><td><span class="st none">NOT BUILT</span></td><td>Long titles are cut off with an ellipsis. Nothing produces "Masters Application" from "Apply to a Masters program".</td></tr>
+          <tr><td>Haiku asks when a detail is missing; no small fixes spent on Opus.</td><td><span class="st diff">DIFFERS</span></td><td>Follow-up questions come from Opus inside the capture call. A Haiku small-talk lane exists for non-work chat, which also matches your "no excessive conversation" rule.</td></tr>
+          <tr><td>API under $10 per user per month.</td><td><span class="st diff">DIFFERS</span></td><td>Unmeasured. Today's spend is dominated by dumps at about 6¢ each plus the daily memo at about 1¢; a user who dumps five times a day lands near the ceiling. Nothing enforces it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ════════ 7.0 QUESTIONS ════════ -->
+  <section>
+    <h2><span class="n">7.0</span>Rulings, and what is still open</h2>
+    <p class="lede">Roman answered the same day. Every entry is now a rule.</p>
+    <ul class="qs">
+      <li style="border-left-color:var(--good)"><strong>A floater is a filler.</strong><br><span class="why">Everyday tasks with little penalty if they slip: laundry, dishes, cleaning, picking up a package. Usually dumped as "I want to do that tomorrow". Less important than a project or an application, still worth listing. Placed when the user has spare time or has already been productive.</span></li>
+      <li style="border-left-color:var(--good)"><strong>Skipped means: on Today at the user's request, not completed.</strong><br><span class="why">After two days a single task with no due date, and not a subtask of an anchored thing, goes to a new <em>Skipped</em> section, separate from Overdue. A subtask of an anchored thing can be skipped but is neither rescheduled nor sent to either section.</span></li>
+      <li style="border-left-color:var(--good)"><strong>Exams: the user's own study task wins; otherwise the app asks.</strong><br><span class="why">If the user made a study task for an exam, the app follows what they said. Otherwise the AI in the chat asks whether to build a study plan; a No means the app adds only what the user asked for.</span></li>
+      <li style="border-left-color:var(--good)"><strong>The Opus memo stays, and grows the plan.</strong><br><span class="why">Fixing the memo's copy is a later process. Now: it gains the ability to propose subtasks for anchored tasks and events, and the AI must read each one and judge whether it is worth a plan at all.</span></li>
+      <li style="border-left-color:var(--good)"><strong>The arbiter and its ten builders stay as they are.</strong></li>
+      <li style="border-left-color:var(--good)"><strong>Importance: the existing ranking stays for anything without a due date.</strong><br><span class="why">Only things with a Due Date use the ladder: medium from the day they are created, high on the day they are due. Among due-dated items the soonest anchor comes first, as the shared order already does. Nothing else about the ranking changes.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    Phase 1 of the realignment session &nbsp;·&nbsp; companions: SYS-CAL-08 · SYS-HRZ-09 · SYS-TIME-04 · SYS-NTF-07 &nbsp;·&nbsp; the vision statement is the source of truth; the code is not
+  </footer>
+</div>

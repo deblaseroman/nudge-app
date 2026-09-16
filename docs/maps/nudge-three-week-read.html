@@ -1,0 +1,406 @@
+<title>The Three-Week Read</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444; --danger-soft: #F3DCDC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B; --danger-soft: #3A2626;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B; --danger-soft: #3A2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .byline { margin:12px 0 0; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  @media (max-width: 640px) {
+    .titleblock { grid-template-columns:1fr; }
+    .titleblock .meta { border-left:0; border-top:1.5px solid var(--ink); grid-template-rows:none; grid-template-columns:repeat(3,1fr); }
+    .titleblock .meta > div + div { border-top:0; border-left:1px solid var(--line); }
+  }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+  figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px 18px 14px; overflow-x:auto; }
+  figure svg { display:block; min-width:680px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption { font-size:13px; color:var(--muted); border-top:1px solid var(--line); margin-top:16px; padding-top:12px; max-width:74ch; }
+  figcaption .fig { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); margin-right:6px; }
+  svg { color: var(--ink); }
+  svg text { font-family:"Lexend",sans-serif; font-size:12.5px; fill:var(--ink); }
+  svg text.m { font-family:"IBM Plex Mono",monospace; font-size:11px; }
+  svg text.s { font-size:10.5px; fill:var(--muted); }
+  svg text.acct { fill:var(--accent); }
+  svg text.warnt { fill:var(--warn); }
+  svg text.goodt { fill:var(--good); }
+  svg text.dngt { fill:var(--danger); }
+  svg .wire { stroke:currentColor; stroke-width:1.2; fill:none; }
+  svg .wire.acc { stroke:var(--accent); }
+  svg .wire.warn { stroke:var(--warn); }
+  svg .wire.dng { stroke:var(--danger); }
+  svg .wire.dash { stroke-dasharray:5 4; }
+  svg .box { fill:var(--panel-2); stroke:currentColor; stroke-width:1.2; }
+  svg .soft { fill:var(--panel); stroke:var(--line); stroke-width:1; }
+  svg .accb { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.2; }
+  svg .warnb { fill:var(--warn-soft); stroke:var(--warn); stroke-width:1.2; }
+  svg .goodb { fill:var(--good-soft); stroke:var(--good); stroke-width:1.2; }
+  svg .dngb { fill:var(--danger-soft); stroke:var(--danger); stroke-width:1.2; }
+  svg .ghost { fill:none; stroke:var(--faint); stroke-width:1; stroke-dasharray:4 4; }
+  svg .day { fill:var(--panel); stroke:var(--line); stroke-width:1; }
+  svg .day.today { fill:var(--accent-soft); stroke:var(--accent); }
+  svg .day.read { fill:var(--accent-soft); stroke:var(--accent); fill-opacity:0.55; }
+  svg .day.done { fill:var(--panel-2); stroke:var(--line); }
+  .decide { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .decide li { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--warn);
+    border-radius:4px; padding:12px 16px; font-size:14px; }
+  .decide li.set { border-left-color:var(--good); }
+  .decide li strong { font-weight:500; }
+  .decide li .why { color:var(--muted); }
+  .decide .tag { font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:600; letter-spacing:0.08em;
+    padding:1px 8px; border-radius:99px; border:1px solid; margin-left:6px; white-space:nowrap; }
+  .tag.ask { color:var(--warn); border-color:var(--warn); }
+  .tag.rec { color:var(--accent); border-color:var(--accent); }
+  .tag.fixed { color:var(--good); border-color:var(--good); }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; margin:0; }
+  .tablewrap { overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 14px; }
+  th { text-align:left; font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); font-weight:600; padding:10px 10px 6px; border-bottom:1px solid var(--line); }
+  td { padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td { border-bottom:0; }
+  td.num { font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+  <div class="titleblock">
+    <div class="name">
+      <h1>The Three-Week Read</h1>
+      <p class="sub">Roman's proposal, drawn as a mechanism: the store holds the whole calendar, an AI reader looks three weeks ahead, and the window rolls a week at a time so the app prepares the user for what is coming. Nothing here is built.</p>
+      <p class="byline">Roman DeBlase · Nudge</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-HRZ-09</span></div>
+      <div><span class="k">Status</span><span class="v">PROPOSED · not built</span></div>
+      <div><span class="k">Baseline</span><span class="v">SYS-CAL-08 · Sep 16 2026</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 TWO WINDOWS ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>Two windows where there was one</h2>
+    <p class="lede">Today one number, 21, does two jobs: it is how far the import fetches and, by accident, how far anything can see. The proposal <strong>separates them</strong>. The import window becomes the whole calendar, or a long cap, so the store knows about the final exam in week six. The reading window is a separate three-week span the AI reader looks at, and it is the only part that spends tokens.</p>
+    <figure>
+      <svg viewBox="0 0 920 430" role="img" aria-label="Left, the same three import doors as today, now importing the whole calendar or a long cap into the store; the iCal link joins the daily refresh cadence. Right, a separate three-week reading window sits over the store, feeding an AI reader whose output goes to the deterministic prep sweep, which remains the only writer. The arbiter and the rest of the app read the store as before.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- Doors -->
+        <rect class="goodb" x="20" y="40" width="210" height="70" rx="4"/>
+        <text class="m" x="34" y="62" font-weight="600">APPLE CALENDAR</text>
+        <text class="s" x="34" y="82">window: today → cap (proposed)</text>
+        <text class="s" x="34" y="98">refresh: daily, as now</text>
+
+        <rect class="goodb" x="20" y="126" width="210" height="70" rx="4"/>
+        <text class="m" x="34" y="148" font-weight="600">iCAL LINK</text>
+        <text class="s" x="34" y="168">window: whole feed → cap (proposed)</text>
+        <text class="s goodt" x="34" y="184">refresh: joins the daily cadence (new)</text>
+
+        <rect class="accb" x="20" y="212" width="210" height="70" rx="4"/>
+        <text class="m" x="34" y="234" font-weight="600">SCREENSHOT</text>
+        <text class="s" x="34" y="254">unchanged: what the image shows,</text>
+        <text class="s" x="34" y="270">one Haiku read per image</text>
+
+        <line class="wire" x1="230" y1="75" x2="292" y2="140" marker-end="url(#arr)"/>
+        <line class="wire" x1="230" y1="161" x2="292" y2="161" marker-end="url(#arr)"/>
+        <line class="wire" x1="230" y1="247" x2="292" y2="182" marker-end="url(#arr)"/>
+
+        <!-- Classify (unchanged) -->
+        <rect class="box" x="296" y="120" width="150" height="82" rx="4"/>
+        <text class="m" x="308" y="142" font-weight="600">CLASSIFY</text>
+        <text class="s" x="308" y="162">unchanged: dedupe,</text>
+        <text class="s" x="308" y="178">event/task, category,</text>
+        <text class="s" x="308" y="194">stakes, duration</text>
+        <line class="wire" x1="446" y1="161" x2="506" y2="161" marker-end="url(#arr)"/>
+
+        <!-- Store, tall -->
+        <rect class="box" x="510" y="40" width="150" height="250" rx="4"/>
+        <text class="m" x="522" y="62" font-weight="600">NUDGE.STORE</text>
+        <text class="s" x="522" y="82">the whole calendar,</text>
+        <text class="s" x="522" y="98">purged of the past</text>
+        <text class="s" x="522" y="114">as now</text>
+        <!-- weeks inside store -->
+        <rect class="day" x="522" y="130" width="126" height="22" rx="2"/><text class="s" x="528" y="145">week 1 · Sep 16–22</text>
+        <rect class="day" x="522" y="156" width="126" height="22" rx="2"/><text class="s" x="528" y="171">week 2 · Sep 23–29</text>
+        <rect class="day" x="522" y="182" width="126" height="22" rx="2"/><text class="s" x="528" y="197">week 3 · Sep 30–Oct 6</text>
+        <rect class="day" x="522" y="208" width="126" height="22" rx="2"/><text class="s" x="528" y="223">week 4 · Oct 7–13</text>
+        <rect class="day" x="522" y="234" width="126" height="22" rx="2"/><text class="s" x="528" y="249">week 5 · Oct 14–20</text>
+        <text class="s" x="522" y="274">… through the cap</text>
+
+        <!-- Reading window bracket -->
+        <rect class="ghost" x="516" y="126" width="138" height="82" rx="3"/>
+        <path class="wire acc" d="M654,130 L672,130 L672,204 L654,204"/>
+        <text class="s acct" x="678" y="150">reading window</text>
+        <text class="s acct" x="678" y="166">3 weeks · read as one</text>
+        <line class="wire acc" x1="672" y1="167" x2="740" y2="167" marker-end="url(#arra)"/>
+
+        <!-- Reader -->
+        <rect class="accb" x="744" y="120" width="156" height="94" rx="4"/>
+        <text class="m acct" x="756" y="142" font-weight="600">THE READER · AI</text>
+        <text class="s" x="756" y="162">reads: window events +</text>
+        <text class="s" x="756" y="178">tasks, existing prep,</text>
+        <text class="s" x="756" y="194">tombstones, profile</text>
+        <text class="s" x="756" y="208">writes: NOTHING</text>
+
+        <!-- Proposal down to sweep -->
+        <line class="wire acc" x1="822" y1="214" x2="822" y2="270" marker-end="url(#arra)"/>
+        <text class="s acct" x="830" y="246">proposals</text>
+
+        <rect class="goodb" x="690" y="274" width="210" height="82" rx="4"/>
+        <text class="m goodt" x="702" y="296" font-weight="600">PREP SWEEP · the only writer</text>
+        <text class="s" x="702" y="316">unchanged rules: idempotent per</text>
+        <text class="s" x="702" y="332">(event, day), tombstones honored,</text>
+        <text class="s" x="702" y="348">announced in the message box</text>
+        <line class="wire" x1="690" y1="315" x2="662" y2="315" marker-end="url(#arr)"/>
+        <text class="s" x="560" y="308" text-anchor="middle">writes source =</text>
+        <text class="s" x="560" y="324" text-anchor="middle">"prep" tasks</text>
+
+        <!-- Everything else reads store -->
+        <rect class="soft" x="296" y="240" width="150" height="50" rx="4"/>
+        <text class="s" x="308" y="260">arbiter, planner, lists,</text>
+        <text class="s" x="308" y="276">widget, memo: as now</text>
+        <line class="wire" x1="510" y1="265" x2="450" y2="265" marker-end="url(#arr)"/>
+
+        <text class="s" x="20" y="392">Import window: how far the store KNOWS. Reading window: how far the app THINKS. The reader runs where the exam sweep runs today, in the</text>
+        <text class="s" x="20" y="408">day-change chain before the arbiter, so no API call sits in the arbiter's path (DESIGN.md). With no key or offline, the sweep is exactly today's.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>The import edge moves out to a cap and the iCal feed joins the daily refresh, so the store knows the whole term. A separate three-week reading window feeds one AI reader, which proposes preparation and writes nothing. The existing prep sweep stays the single writer, keeping every safety rule the exam path already has. Everything downstream of the store is untouched.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 2.0 WHAT THE READER DOES ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>What the reader sees, and what it is allowed to say</h2>
+    <p class="lede">The reader generalizes what the exam sweep already does. Today "exam" is the one word that earns lead-up tasks. The reader decides <strong>prep-worthiness by judgment</strong> across the window, then hands back a shape the sweep already knows how to write: one parent event, a lead in days, and a list of small titled tasks placed on days before it.</p>
+    <figure>
+      <svg viewBox="0 0 920 400" role="img" aria-label="A three-week day grid with four events marked: a Chem midterm in week 3, a Portland trip in week 3, a job interview in week 2, and a dentist appointment in week 1. The reader's output lists what it proposes for each: study days for the exam, pack and confirm-flight tasks before the trip, research and practice tasks before the interview, and nothing for the dentist. Each proposal flows to the sweep, which writes the tasks on the marked days.">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <!-- 21-day grid, 7 per row, cells 38 wide, x0=40, y rows 50/90/130 -->
+        <text class="m" x="40" y="34">READING WINDOW · Sep 16 – Oct 6</text>
+        <g>
+          <!-- week 1 -->
+          <rect class="day today" x="40" y="44" width="34" height="30" rx="3"/><text class="s" x="57" y="63" text-anchor="middle">16</text>
+          <rect class="day" x="78" y="44" width="34" height="30" rx="3"/><text class="s" x="95" y="63" text-anchor="middle">17</text>
+          <rect class="day" x="116" y="44" width="34" height="30" rx="3"/><text class="s" x="133" y="63" text-anchor="middle">18</text>
+          <rect class="day" x="154" y="44" width="34" height="30" rx="3"/><text class="s" x="171" y="63" text-anchor="middle">19</text>
+          <rect class="warnb" x="192" y="44" width="34" height="30" rx="3"/><text class="s" x="209" y="63" text-anchor="middle">20</text>
+          <rect class="day" x="230" y="44" width="34" height="30" rx="3"/><text class="s" x="247" y="63" text-anchor="middle">21</text>
+          <rect class="day" x="268" y="44" width="34" height="30" rx="3"/><text class="s" x="285" y="63" text-anchor="middle">22</text>
+          <!-- week 2 -->
+          <rect class="goodb" x="40" y="84" width="34" height="30" rx="3"/><text class="s" x="57" y="103" text-anchor="middle">23</text>
+          <rect class="goodb" x="78" y="84" width="34" height="30" rx="3"/><text class="s" x="95" y="103" text-anchor="middle">24</text>
+          <rect class="warnb" x="116" y="84" width="34" height="30" rx="3"/><text class="s" x="133" y="103" text-anchor="middle">25</text>
+          <rect class="day" x="154" y="84" width="34" height="30" rx="3"/><text class="s" x="171" y="103" text-anchor="middle">26</text>
+          <rect class="day" x="192" y="84" width="34" height="30" rx="3"/><text class="s" x="209" y="103" text-anchor="middle">27</text>
+          <rect class="goodb" x="230" y="84" width="34" height="30" rx="3"/><text class="s" x="247" y="103" text-anchor="middle">28</text>
+          <rect class="goodb" x="268" y="84" width="34" height="30" rx="3"/><text class="s" x="285" y="103" text-anchor="middle">29</text>
+          <!-- week 3 -->
+          <rect class="goodb" x="40" y="124" width="34" height="30" rx="3"/><text class="s" x="57" y="143" text-anchor="middle">30</text>
+          <rect class="goodb" x="78" y="124" width="34" height="30" rx="3"/><text class="s" x="95" y="143" text-anchor="middle">1</text>
+          <rect class="warnb" x="116" y="124" width="34" height="30" rx="3"/><text class="s" x="133" y="143" text-anchor="middle">2</text>
+          <rect class="goodb" x="154" y="124" width="34" height="30" rx="3"/><text class="s" x="171" y="143" text-anchor="middle">3</text>
+          <rect class="warnb" x="192" y="124" width="34" height="30" rx="3"/><text class="s" x="209" y="143" text-anchor="middle">4</text>
+          <rect class="day" x="230" y="124" width="34" height="30" rx="3"/><text class="s" x="247" y="143" text-anchor="middle">5</text>
+          <rect class="day" x="268" y="124" width="34" height="30" rx="3"/><text class="s" x="285" y="143" text-anchor="middle">6</text>
+        </g>
+        <rect class="warnb" x="40" y="170" width="12" height="12" rx="2"/><text class="s" x="58" y="180">event in the window</text>
+        <rect class="goodb" x="180" y="170" width="12" height="12" rx="2"/><text class="s" x="198" y="180">day the sweep writes a prep task</text>
+
+        <!-- Reader output table (right) -->
+        <line class="wire acc" x1="316" y1="100" x2="356" y2="100" marker-end="url(#arr2)"/>
+        <text class="s acct" x="318" y="92">reads</text>
+
+        <rect class="accb" x="360" y="30" width="540" height="160" rx="4"/>
+        <text class="m acct" x="374" y="52" font-weight="600">READER OUTPUT · one entry per event it judges prep-worthy</text>
+        <g class="s">
+          <text x="374" y="76"><tspan font-weight="500" fill="var(--ink)">Sep 20 · Dentist</tspan>  →  nothing. Routine, no lead-up work. Silence is a valid answer.</text>
+          <text x="374" y="98"><tspan font-weight="500" fill="var(--ink)">Sep 25 · Job interview</tspan>  →  lead 2 d: "Research the company" (23rd), "Practice answers" (24th)</text>
+          <text x="374" y="120"><tspan font-weight="500" fill="var(--ink)">Oct 2 · Portland trip</tspan>  →  lead 4 d: "Confirm the flight" (28th), "Pack" (1st); returns Oct 6</text>
+          <text x="374" y="142"><tspan font-weight="500" fill="var(--ink)">Oct 4 · Chem midterm</tspan>  →  lead 7 d: study each day Sep 28 – Oct 3, as the sweep does today</text>
+          <text x="374" y="170">Each entry: parent event id · lead days · [ {title, day, minutes} ] · one-line reason shown in the message box</text>
+        </g>
+
+        <!-- Rules -->
+        <rect class="soft" x="360" y="206" width="540" height="150" rx="4"/>
+        <text class="m" x="374" y="228" font-weight="600">HARD RULES THE READER INHERITS</text>
+        <g class="s">
+          <text x="374" y="250">· proposes only; the sweep writes, with today's idempotence, tombstones, and user-task dedupe</text>
+          <text x="374" y="268">· never invents an event or a date: it places tasks on days the app hands it, by offset</text>
+          <text x="374" y="286">· small tasks, 15–120 min; a lead is at most the window (21 d) and never before today</text>
+          <text x="374" y="304">· facts, not verdicts; the reason line follows the message-box tone rules, no em dash</text>
+          <text x="374" y="322">· an event the user already made tasks for gets nothing (title match, as the exam sweep does)</text>
+          <text x="374" y="340">· deterministic fallback: no key or offline, the exam sweep runs exactly as today</text>
+        </g>
+
+        <line class="wire" x1="630" y1="356" x2="630" y2="380" marker-end="url(#arr2)"/>
+        <text class="s goodt" x="640" y="376">to the prep sweep, which marks the green days on the grid</text>
+      </svg>
+      <figcaption><span class="fig">FIG 2</span>The reader's whole job is the right-hand list: for each event in the window, decide whether it deserves lead-up work and, if so, propose a small set of dated tasks. The answer "nothing" is expected for most events. The proposal is the exam sweep's own input shape, so the writer, the announcement, and every safety rule stay the code that already exists.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 3.0 HOW THE WINDOW ROLLS ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>How the window rolls, and when the reader runs</h2>
+    <p class="lede">Roman's cadence: read three weeks, and when a week completes, read one more week ahead. Drawn out, that is a window that <strong>slides one week at a time</strong>, so every event is read at least twice before it arrives (once entering week three, once more as it moves in), and a change inside the window is caught within a day.</p>
+    <figure>
+      <svg viewBox="0 0 920 420" role="img" aria-label="Five rows, one per week starting September 16, each showing a six-week strip. In each row the three-week reading window is shaded and shifted one week further right than the row above, and a Chem midterm in week 3 is shown being read in rows 1, 2 and 3 as it moves from the far edge of the window to the near edge. Below, the three triggers for a read are listed: the weekly slide, a new event entering the window, and an event changing.">
+        <!-- 6 weeks, cells 110 wide from x=170 -->
+        <g class="m">
+          <text x="225" y="30" text-anchor="middle">wk 1</text>
+          <text x="335" y="30" text-anchor="middle">wk 2</text>
+          <text x="445" y="30" text-anchor="middle">wk 3</text>
+          <text x="555" y="30" text-anchor="middle">wk 4</text>
+          <text x="665" y="30" text-anchor="middle">wk 5</text>
+          <text x="775" y="30" text-anchor="middle">wk 6</text>
+        </g>
+        <g class="s">
+          <text x="225" y="46" text-anchor="middle">Sep 16</text>
+          <text x="335" y="46" text-anchor="middle">Sep 23</text>
+          <text x="445" y="46" text-anchor="middle">Sep 30</text>
+          <text x="555" y="46" text-anchor="middle">Oct 7</text>
+          <text x="665" y="46" text-anchor="middle">Oct 14</text>
+          <text x="775" y="46" text-anchor="middle">Oct 21</text>
+        </g>
+
+        <!-- Row 1: today Sep 16, window wk1-3 -->
+        <text class="m" x="20" y="80">READ on Sep 16</text>
+        <rect class="day" x="170" y="62" width="660" height="28" rx="3"/>
+        <rect class="day read" x="170" y="62" width="330" height="28" rx="3"/>
+        <rect class="dngb" x="470" y="66" width="18" height="20" rx="2"/>
+        <text class="s" x="510" y="80">midterm enters at the far edge: first read, 18 days out</text>
+
+        <!-- Row 2: Sep 23, window wk2-4 -->
+        <text class="m" x="20" y="130">READ on Sep 23</text>
+        <rect class="day" x="170" y="112" width="660" height="28" rx="3"/>
+        <rect class="day done" x="170" y="112" width="110" height="28" rx="3"/>
+        <rect class="day read" x="280" y="112" width="330" height="28" rx="3"/>
+        <rect class="dngb" x="470" y="116" width="18" height="20" rx="2"/>
+        <text class="s" x="620" y="130">second read: 11 days out, study days now inside</text>
+
+        <!-- Row 3: Sep 30, window wk3-5 -->
+        <text class="m" x="20" y="180">READ on Sep 30</text>
+        <rect class="day" x="170" y="162" width="660" height="28" rx="3"/>
+        <rect class="day done" x="170" y="162" width="220" height="28" rx="3"/>
+        <rect class="day read" x="390" y="162" width="330" height="28" rx="3"/>
+        <rect class="dngb" x="470" y="166" width="18" height="20" rx="2"/>
+        <text class="s" x="730" y="180">third read: 4 days out</text>
+
+        <!-- Row 4: Oct 7 -->
+        <text class="m" x="20" y="230">READ on Oct 7</text>
+        <rect class="day" x="170" y="212" width="660" height="28" rx="3"/>
+        <rect class="day done" x="170" y="212" width="330" height="28" rx="3"/>
+        <rect class="day read" x="500" y="212" width="330" height="28" rx="3"/>
+        <text class="s" x="180" y="230">midterm passed, purged</text>
+
+        <!-- Row 5: Oct 14 -->
+        <text class="m" x="20" y="280">READ on Oct 14</text>
+        <rect class="day" x="170" y="262" width="660" height="28" rx="3"/>
+        <rect class="day done" x="170" y="262" width="440" height="28" rx="3"/>
+        <rect class="day read" x="610" y="262" width="220" height="28" rx="3"/>
+        <text class="s" x="840" y="280">…</text>
+
+        <rect class="day read" x="170" y="306" width="12" height="12" rx="2"/><text class="s" x="188" y="316">reading window (3 weeks)</text>
+        <rect class="day done" x="360" y="306" width="12" height="12" rx="2"/><text class="s" x="378" y="316">completed, purged as it passes</text>
+        <rect class="dngb" x="580" y="306" width="12" height="12" rx="2"/><text class="s" x="598" y="316">the same event, read three times</text>
+
+        <!-- Triggers -->
+        <rect class="soft" x="20" y="334" width="880" height="72" rx="4"/>
+        <text class="m" x="34" y="356" font-weight="600">WHEN A READ RUNS · all three inside the day-change chain, never on a timer of its own</text>
+        <text class="s" x="34" y="378">1 · the weekly slide (a week completed) · 2 · a new event entered the window (import, capture, or the calendar tab) · 3 · an event in the window</text>
+        <text class="s" x="34" y="396">moved or was deleted. Idempotent: an unchanged window re-reads nothing; the sweep's stamps make a repeated proposal a no-op.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 3</span>The window slides a week at a time. An event is read when it enters at the far edge and again on each slide, so a proposal made at 18 days out gets revised at 11 and 4. Reads are triggered by change, not by a clock, and a repeated proposal is absorbed by the sweep's existing per-day stamps.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 4.0 COST ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>What a read costs</h2>
+    <p class="lede">One call per read. The input is the window's events and open tasks, pre-phrased the way the memo's context is, so the model never does date math. A busy student calendar is the sizing case: roughly <strong>60 events and 20 tasks in three weeks</strong>. The model is Roman's decision (5.0); the table shows the same read on each candidate.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Model</th><th>Input (about)</th><th>Output (about)</th><th>Per read</th><th>Per week, 3 reads</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>Haiku 4.5</td><td class="num">3,000 tok</td><td class="num">600 tok</td><td class="num">0.6¢</td><td class="num">1.8¢</td><td>Cheapest; judgment on "prep-worthy" is the weak spot.</td></tr>
+          <tr><td>Sonnet 5</td><td class="num">3,000 tok</td><td class="num">600 tok</td><td class="num">1.2¢</td><td class="num">3.6¢</td><td>Near-parity on structured judgment in the Sep 14 bake-off.</td></tr>
+          <tr><td>Opus 5, effort low</td><td class="num">3,000 tok</td><td class="num">600 + thinking</td><td class="num">3–4¢</td><td class="num">9–12¢</td><td>Same tier as capture and the memo; best judgment, most cost.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lede" style="margin-top:14px">For scale: one brain dump costs about 6¢ today. A weekly slide on Sonnet is less than one dump a week; on Opus it is about two. The whole-calendar import that feeds it stays free.</p>
+  </section>
+
+  <!-- ════════ 5.0 DECISIONS ════════ -->
+  <section>
+    <h2><span class="n">5.0</span>Decisions this needs before it is a plan</h2>
+    <p class="lede">Amber entries are Roman's to make. Blue is a recommendation offered with the reasoning, to accept or overrule. Green is already settled by DESIGN.md or existing code.</p>
+    <ul class="decide">
+      <li><strong>Import cap.</strong> <span class="tag ask">ROMAN</span><br><span class="why">Whole calendar, or a cap such as 180 days? A recurring class imports one row per occurrence, so a year of a 3×/week class is ~150 rows. Nothing downstream is unbounded (every reader has a fetch limit), so the cost of "everything" is store size and the purge, not tokens.</span></li>
+      <li><strong>Which model reads.</strong> <span class="tag ask">ROMAN</span><br><span class="why">Section 4.0. Per the cost-discipline rule this is a per-call-site choice; the Sep 14 bake-off suggests Sonnet holds on structured judgment. Opus keeps one tier for every "thinks about the user's data" call.</span></li>
+      <li><strong>What counts as prep-worthy, and who decides.</strong> <span class="tag ask">ROMAN</span><br><span class="why">Pure model judgment, or a keyword floor (exam, interview, flight, presentation, move) the model may extend? A floor keeps the exam path exactly deterministic and lets the reader add kinds; pure judgment is simpler and can miss or over-reach.</span></li>
+      <li><strong>Lead per kind.</strong> <span class="tag ask">ROMAN</span><br><span class="why">Exams use 3 / 7 / 14 today. Trips, interviews, and the rest need their own coarse bands, or the reader picks within a cap. Coarse bands only, as the capture rule already says: no invented precision.</span></li>
+      <li><strong>The reader proposes; the sweep writes.</strong> <span class="tag rec">RECOMMENDED</span><br><span class="why">Keeps the AI out of the write path and reuses idempotence, tombstones, the user-task dedupe, and the message-box announcement. The alternative, letting the reader write tasks directly, duplicates all four and puts a second capture bug surface in the app.</span></li>
+      <li><strong>Exams stay deterministic; the reader adds the other kinds.</strong> <span class="tag rec">RECOMMENDED</span><br><span class="why">The exam sweep is the defining feature and works offline. Let the reader cover everything except exam-category events, or let it propose for exams too and have the sweep ignore proposals for events it already handles. Either way the offline fallback is today's behavior, unchanged.</span></li>
+      <li><strong>What the user sees.</strong> <span class="tag rec">RECOMMENDED</span><br><span class="why">The message-box announcement, as the exam sweep does today ("Your trip is in 4 days, I've added two small tasks"). The memo already narrates upcoming events and can name the prep. No new surface, no new notification kind.</span></li>
+      <li class="set"><strong>No API call in the arbiter's path.</strong> <span class="tag fixed">SETTLED</span><br><span class="why">DESIGN.md. The reader runs in the day-change chain where the exam sweep runs, before the arbiter, and writes only through the sweep. Notification timing stays reproducible from local data.</span></li>
+      <li class="set"><strong>The iCal feed joins the daily refresh.</strong> <span class="tag fixed">FOLLOWS</span><br><span class="why">A whole-calendar store is meaningless if the Canvas feed is a one-time snapshot. The persisted feed URL already exists; the refresh only needs to re-fetch it on the cadence Apple Calendar already uses. Deterministic, free.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    Baseline: SYS-CAL-08 (how the calendar reaches Nudge today) &nbsp;·&nbsp; related: SYS-AI-05 · SYS-TIME-04 &nbsp;·&nbsp; would touch: CalendarService.swift · ExamPrepSweep.swift · ClaudeService.swift · NudgeConfig.swift · ContentView.swift
+  </footer>
+</div>
