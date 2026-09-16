@@ -817,6 +817,7 @@ struct TasksTabView: View {
                         // Enrich the new task's signals once, explicitly, at
                         // creation — not on every arbiter read.
                         NudgeIntelligence.shared.refreshSoon(for: newTask)
+                        PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
                         refreshNotifications()
                     }
                 )
@@ -834,6 +835,7 @@ struct TasksTabView: View {
                             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
                             // Title may have changed — re-enrich once.
                             NudgeIntelligence.shared.refreshSoon(for: task)
+                            PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
                             refreshNotifications()
                         },
                         onDelete: {

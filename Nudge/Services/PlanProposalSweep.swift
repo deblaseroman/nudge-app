@@ -68,6 +68,11 @@ extension Notification.Name {
 enum PlanProposalStore {
     enum Status: String, Codable {
         case proposed, accepted, declined, notWorth
+        /// The user made their own plan for this anchor (Roman, Sep 16:
+        /// the app's subtasks are overwritten only when the user says so
+        /// and makes their own). App-made sessions were removed; never
+        /// re-proposed for this anchor.
+        case userOwned
     }
 
     struct Decision: Codable {
@@ -166,10 +171,84 @@ final class PlanProposalSweep {
         return task.hasDeadline ? task.sortDeadline : nil
     }
 
+    /// Does one of the user's own tasks read as THEIR plan for this
+    /// anchored item? The exam sweep's title match, generalized past
+    /// studying: a course phrase ("chem 101") anywhere in the title, or a
+    /// shared subject token plus a preparing verb ("study", "pack",
+    /// "confirm", ...). Deterministic; the user's plan always wins.
+    static func userPlanMatch(parentTitle: String, taskTitles: [String]) -> String? {
+        let subject = ExamPrepSweep.subjectTokens(parentTitle)
+        let phrases = ExamPrepSweep.coursePhrases(parentTitle)
+        let prepWords = ["study", "review", "prep", "practice", "revise", "cram",
+                         "pack", "book", "confirm", "draft", "outline", "research",
+                         "rehearse", "gather", "apply", "prepare", "plan"]
+        for title in taskTitles {
+            let lower = title.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            if phrases.contains(where: { lower.contains($0) }) { return title }
+            let tokens = Set(lower.components(separatedBy: " ").filter { $0.count >= 2 })
+            let hasPrepWord = prepWords.contains { lower.contains($0) }
+            if hasPrepWord && !subject.isDisjoint(with: tokens) { return title }
+        }
+        return nil
+    }
+
+    /// The user's own plan overrides the app's (Roman, Sep 16). For every
+    /// anchored parent that has app-made sessions, if one of the user's
+    /// own open tasks now reads as their plan for it, the app's sessions
+    /// are deleted and the anchor is marked `userOwned` so it is never
+    /// proposed again. Deterministic, no tokens; runs ahead of every
+    /// reader pass and after task edits. Returns rows removed.
+    @discardableResult
+    static func applyUserPlanOverrides(modelContext: ModelContext, now: Date = Date()) -> Int {
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete }
+        )
+        descriptor.fetchLimit = 300
+        let open = (try? modelContext.fetch(descriptor)) ?? []
+        let sessionsByParent = Dictionary(grouping: open.filter { $0.source == "prep" && $0.linkedEventId != nil }) { $0.linkedEventId! }
+        guard !sessionsByParent.isEmpty else { return 0 }
+        let userTasks = open.filter { !$0.isInformationalEvent && $0.source != "prep" && $0.source != "commitment" && $0.linkedEventId == nil }
+
+        var removed = 0
+        var decisions = PlanProposalStore.all()
+        for (parentIDString, sessions) in sessionsByParent {
+            guard let parentID = UUID(uuidString: parentIDString),
+                  let parent = open.first(where: { $0.id == parentID })
+            else { continue }
+            let others = userTasks.filter { $0.id != parent.id }.map(\.title)
+            guard let hit = userPlanMatch(parentTitle: parent.title, taskTitles: others) else { continue }
+            for session in sessions {
+                modelContext.delete(session)
+                removed += 1
+            }
+            let stamp = anchor(of: parent).map { ExamPrepSweep.stamp(Calendar.current.startOfDay(for: $0)) } ?? ""
+            var decision = decisions[parentIDString] ?? PlanProposalStore.Decision(
+                status: .userOwned, anchorStamp: stamp, parentTitle: parent.title,
+                reason: "", sessions: [], decidedAt: now
+            )
+            decision.status = .userOwned
+            decision.anchorStamp = stamp
+            decision.decidedAt = now
+            decisions[parentIDString] = decision
+            #if DEBUG
+            print("[PlanProposalSweep] \"\(parent.title)\": user's own plan \"\(hit)\" wins — \(sessions.count) app session(s) removed")
+            #endif
+        }
+        if removed > 0 {
+            try? modelContext.save()
+            PlanProposalStore.write(decisions)
+            NotificationCenter.default.post(name: .nudgePlanProposalsChanged, object: nil)
+        }
+        return removed
+    }
+
     /// Open, anchored inside the horizon, not generated work, not a
     /// commitment (those expand on their own), not already decided for
     /// this anchor, and with nothing already pointing at it — neither a
-    /// user-made study task (title match) nor existing sessions.
+    /// user-made plan (title match) nor existing sessions.
     static func candidates(in tasks: [NudgeTask], now: Date = Date()) -> [NudgeTask] {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
@@ -201,7 +280,7 @@ final class PlanProposalSweep {
                 // The chat is already asking about this one.
                 if PlanQuestionStore.outstandingParentID(now: now) == task.id { return false }
                 let othersTitles = userTitles.filter { $0 != task.title }
-                if ExamPrepSweep.userStudyTaskMatch(examTitle: task.title, taskTitles: othersTitles) != nil {
+                if userPlanMatch(parentTitle: task.title, taskTitles: othersTitles) != nil {
                     return false
                 }
                 return true
@@ -215,6 +294,8 @@ final class PlanProposalSweep {
     /// happen off the launch path. Safe to call on every chain run: the
     /// per-day call cap and the decision store make repeats free.
     func runIfNeeded(modelContext: ModelContext, now: Date = Date()) {
+        // The user's own plan wins first, every time, before any call.
+        Self.applyUserPlanOverrides(modelContext: modelContext, now: now)
         guard !inFlight else { return }
         guard PlanProposalStore.callsToday(now: now) < NudgeConfig.planProposalCallsPerDay else { return }
 
