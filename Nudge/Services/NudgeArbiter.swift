@@ -761,7 +761,10 @@ final class NudgeArbiter: NudgeArbitering {
         fmt.dateFormat = "h:mm a"
         guard let first = block.first else { return "" }
         let firstTime = fmt.string(from: first.1)
-        let noun = eventNoun(for: first.0)
+        // The event's own name (Roman, Sep 17 2026): "Interview in 1 hour",
+        // not "Work shift in 1 hour". The category noun is only the
+        // fallback for a nameless row.
+        let noun = eventName(for: first.0)
 
         switch block.count {
         case 1:
@@ -776,9 +779,19 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
-    /// Picks the noun for an event-block notification based on the first
-    /// event's category. Without this the body always said "Class" — wrong
-    /// when the event was a work shift or appointment.
+    /// What the event-block notification calls the event: its title,
+    /// trimmed, capitalized at the start. Falls back to the category noun
+    /// only when the title is empty, so the body never reads "in 1 hour"
+    /// with nothing in front of it.
+    private static func eventName(for task: NudgeTask) -> String {
+        let title = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstChar = title.first else { return eventNoun(for: task) }
+        return firstChar.uppercased() + title.dropFirst()
+    }
+
+    /// Category noun, the fallback for a nameless event. Before Sep 2026
+    /// this was the whole body's subject, so an "Interview" filed under
+    /// work announced itself as a work shift.
     private static func eventNoun(for task: NudgeTask) -> String {
         switch task.taskCategory {
         case .school: return "Class"
