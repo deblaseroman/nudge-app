@@ -206,7 +206,11 @@ enum DayPlanEngine {
             guard !task.isComplete, !task.isInformationalEvent,
                   task.plannedStartDate == nil else { return false }
             if task.source == "prep" || task.source == "commitment" {
-                guard let due = task.dueDate, cal.isDate(due, inSameDayAs: day) else { return false }
+                // The generated row's own day: a commitment daily (and any
+                // study task from before Sep 16) is due that day; a plan
+                // session is scheduled for it (intendedDate, no due date).
+                guard let own = task.dueDate ?? task.intendedDate,
+                      cal.isDate(own, inSameDayAs: day) else { return false }
             }
             return true
         }

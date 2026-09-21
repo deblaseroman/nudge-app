@@ -97,9 +97,14 @@ extension NudgeTask {
 
     /// Skipped twice (Roman, Sep 16 2026): shown in the Skipped section,
     /// out of Unscheduled and the day lists, until the user dates or places
-    /// it again (which resets the count) or completes it.
+    /// it again (which resets the count) or completes it. While Plan my
+    /// day has it on today's timeline it is NOT skipped for display (the
+    /// list, widget and timeline must agree), but the count is untouched
+    /// (Roman, Sep 21): if the day passes again it returns here.
     var isSkipped: Bool {
-        !isComplete && isSkipCandidate && skipCount >= Self.skipsBeforeSkippedSection
+        !isComplete && isSkipCandidate
+            && skipCount >= Self.skipsBeforeSkippedSection
+            && plannedStartDate == nil
     }
 
     /// The Skipped threshold lives on the model, not in `NudgeConfig`, only
