@@ -35,10 +35,6 @@ struct AccountTabView: View {
                             .foregroundColor(NudgeTheme.textSecondary)
                     }
 
-                    Text(profile.isPro || profile.isInTrial ? "Pro access active" : "Free plan")
-                        .font(.custom(NudgeTheme.fontMedium, size: 14))
-                        .foregroundColor(NudgeTheme.primary)
-
                     Button(action: {
                         editName = profile.name
                         editEmail = profile.email
@@ -80,11 +76,6 @@ struct AccountTabView: View {
                     infoRow(label: "Connected calendar", value: profile.connectedAppleCalendarTitle ?? "All calendars")
                 }
                 infoRow(label: "Widget style", value: profile.widgetStyle.capitalized)
-
-                // Subscription section
-                sectionLabel("Subscription")
-                infoRow(label: "Plan", value: profile.isPro ? "Pro" : (profile.isInTrial ? "Trial" : "Free"))
-                infoRow(label: "Daily messages used", value: "\(profile.dailyMessageCount)")
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)

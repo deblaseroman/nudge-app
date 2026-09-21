@@ -88,7 +88,7 @@ lane exists for opinions about your work.
 
 **Model:** [ ]
 
-## 5 · Day-plan refine — Haiku · <1¢ · once/day · Pro-gated
+## 5 · Day-plan refine — Haiku · <1¢ · once/day
 
 **Today:** AI pass over the deterministic day plan; writes placements
 only; runs from Home chat's plan intent.

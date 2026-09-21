@@ -26,6 +26,9 @@ final class UserProfile {
     var calendarImportURL: String?
     var connectedAppleCalendarID: String?
     var connectedAppleCalendarTitle: String?
+    /// DEPRECATED tombstone columns (Sep 21 2026, Roman: one version, no
+    /// free/pro tiers). Nothing reads or writes them; kept so existing
+    /// stores open without a migration.
     var isPro: Bool
     var trialStartDate: Date?
     var dailyMessageCount: Int
@@ -202,10 +205,6 @@ final class UserProfile {
         calendarImportURL: String? = nil,
         connectedAppleCalendarID: String? = nil,
         connectedAppleCalendarTitle: String? = nil,
-        isPro: Bool = false,
-        trialStartDate: Date? = nil,
-        dailyMessageCount: Int = 0,
-        dailyMessageResetDate: Date? = nil,
         onboardingComplete: Bool = false,
         widgetAdded: Bool = false,
         notificationsEnabled: Bool = true,
@@ -246,10 +245,11 @@ final class UserProfile {
         self.calendarImportURL = calendarImportURL
         self.connectedAppleCalendarID = connectedAppleCalendarID
         self.connectedAppleCalendarTitle = connectedAppleCalendarTitle
-        self.isPro = isPro
-        self.trialStartDate = trialStartDate
-        self.dailyMessageCount = dailyMessageCount
-        self.dailyMessageResetDate = dailyMessageResetDate
+        // Tombstones (one version, no tiers): fixed values, never read.
+        self.isPro = false
+        self.trialStartDate = nil
+        self.dailyMessageCount = 0
+        self.dailyMessageResetDate = nil
         self.onboardingComplete = onboardingComplete
         self.widgetAdded = widgetAdded
         self.notificationsEnabled = notificationsEnabled
@@ -275,9 +275,4 @@ final class UserProfile {
         self.milestoneNotificationsEnabled = milestoneNotificationsEnabled
     }
 
-    /// Whether the user is currently in their 14-day trial period
-    var isInTrial: Bool {
-        guard let start = trialStartDate else { return false }
-        return Date().timeIntervalSince(start) < 14 * 24 * 60 * 60
-    }
 }
