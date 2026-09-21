@@ -139,6 +139,18 @@ struct StatsTabView: View {
                         suffix: "%"
                     )
                 }
+                // Study sessions the app built that went undone (Roman,
+                // Sep 21 2026): counted here, never rescheduled or skipped.
+                HStack(spacing: 12) {
+                    countCard(
+                        title: "Sessions missed",
+                        count: MissedSessionLog.count(since: startOfWeek),
+                        total: nil,
+                        icon: "calendar.badge.minus",
+                        accent: NudgeTheme.textMuted
+                    )
+                    Spacer(minLength: 0)
+                }
 
                 // Show week list excluding today's records (already shown above)
                 let weekOnlyRecords = weekCompletedRecords.filter { !calendar.isDateInToday($0.completedAt) }

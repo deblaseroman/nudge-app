@@ -25,6 +25,43 @@ import SwiftData
 /// a planner) decide where it goes today. Completed tasks are swept too:
 /// their stale placements are inert everywhere, and sweeping them keeps the
 /// invariant simple — a non-nil placement is always today-or-later.
+/// Missed app-made sessions (Roman, Sep 21 2026): a study session the app
+/// built and the user did not do is neither rescheduled nor skipped; it is
+/// counted as missed for the Stats page and removed. App-group defaults,
+/// JSON `[dayStamp: [title]]`, pruned past `retentionDays`.
+enum MissedSessionLog {
+    static let key = "nudge.missedSessions"
+    static let retentionDays = 60
+
+    static func all() -> [String: [String]] {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard let data = defaults.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
+    static func record(title: String, day: Date, now: Date = Date()) {
+        var log = all()
+        let stamp = ExamPrepSweep.stamp(Calendar.current.startOfDay(for: day))
+        log[stamp, default: []].append(title)
+        // Prune.
+        if let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: now) {
+            let cutoffStamp = ExamPrepSweep.stamp(Calendar.current.startOfDay(for: cutoff))
+            log = log.filter { $0.key >= cutoffStamp }
+        }
+        if let data = try? JSONEncoder().encode(log) {
+            SharedModelContainer.appGroupDefaults.set(data, forKey: key)
+        }
+    }
+
+    /// Missed sessions on or after `start` (by the session's own day).
+    static func count(since start: Date) -> Int {
+        let startStamp = ExamPrepSweep.stamp(Calendar.current.startOfDay(for: start))
+        return all().filter { $0.key >= startStamp }.values.reduce(0) { $0 + $1.count }
+    }
+}
+
 @MainActor
 enum PlacementRollover {
     /// Clears every placement dated before today's start. Returns how many
@@ -36,6 +73,8 @@ enum PlacementRollover {
     @discardableResult
     static func sweep(modelContext: ModelContext, now: Date = Date()) -> Int {
         let startOfToday = Calendar.current.startOfDay(for: now)
+        let missed = sweepMissedSessions(modelContext: modelContext, startOfToday: startOfToday, now: now)
+        _ = missed
         // `??` keeps unplaced rows out at the store level; `.distantFuture`
         // can never be `< startOfToday`.
         let farFuture = Date.distantFuture
@@ -83,5 +122,34 @@ enum PlacementRollover {
         }
         try? modelContext.save()
         return stale.count
+    }
+
+    /// App-made study sessions whose own day has passed without being done
+    /// (Roman, Sep 21 2026): not rescheduled, not skipped, not left in any
+    /// list. Each is tombstoned (so a later Yes never recreates that day),
+    /// counted in `MissedSessionLog` for the Stats page, and deleted.
+    /// Applies to `source == "prep"` only: commitment dailies are the
+    /// user's own instruction and keep their carry-over rules.
+    @discardableResult
+    private static func sweepMissedSessions(modelContext: ModelContext, startOfToday: Date, now: Date) -> Int {
+        let prepSource = "prep"
+        let descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete && $0.source == prepSource }
+        )
+        let sessions = (try? modelContext.fetch(descriptor)) ?? []
+        var removed = 0
+        for session in sessions {
+            guard let own = session.dueDate ?? session.intendedDate,
+                  Calendar.current.startOfDay(for: own) < startOfToday else { continue }
+            ExamPrepSweep.recordDeletionIfGenerated(session, modelContext: modelContext)
+            MissedSessionLog.record(title: session.title, day: own, now: now)
+            modelContext.delete(session)
+            removed += 1
+            #if DEBUG
+            print("🧹 PlacementRollover — missed session \"\(session.title)\" (\(ExamPrepSweep.stamp(own))): counted in Stats, removed, tombstoned")
+            #endif
+        }
+        if removed > 0 { try? modelContext.save() }
+        return removed
     }
 }

@@ -176,7 +176,9 @@ saying why it's now authorized will get pushback.
 - **Skipped is a section, not Overdue** (same day): `PlacementRollover`
   counts skips on single no-due-date tasks (one reschedule, then the
   Skipped tab); subtasks and owed work are never counted. A captured task
-  identical to an overdue or skipped one replaces it.
+  identical to an overdue or skipped one replaces it. An app-made study
+  session whose day passes undone is removed, tombstoned and counted as
+  missed in Stats (Roman, Sep 21): never rescheduled, never Skipped.
 - **Stakes is not wired into scoring.** The scorer accepts an optional stakes
   input; every production call site omits it — only the DEBUG harness passes
   it, so live scores are identical to pre-stakes. Reading `task.stakes`
