@@ -118,7 +118,7 @@ mis-predict behavior. Nine live call sites (all through `ClaudeService`; item 4 
    personality prompt, no capture schema; prompt forbids claiming
    anything was saved and redirects real work back to a fresh message.
    Writes nothing; feeds nothing.
-2. **Screenshot calendar import** — schedule image → events.
+2. **Screenshot calendar import** — schedule image → events. Since Sep 21 2026 the model receives the picture AND a layout transcript whose day headers are resolved to dates deterministically (`ScheduleLayout`); it never assigns dates itself.
 3. **Per-task intelligence** (`NudgeIntelligence`) — cached 7 days. Its
    `statedUrgency` signal is read (cache-only, synchronously) inside the
    idle, prep, and floater builders and **feeds importance scoring, hence

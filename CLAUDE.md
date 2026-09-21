@@ -38,7 +38,7 @@ Unlike the items above, these are wrong — they're listed so they aren't mistak
 
 ## Roman's dev notes
 
-DEBUG builds have a **Dev notes** page under Settings where Roman writes issues and changes while using the app. They are a plain file in the app's Documents folder on the phone. With the phone plugged in, unlocked and trusted, run `scripts/pull-dev-notes.sh` to copy and print them; read them at the start of a session when he says he has notes. The same page has **Write data snapshot**, which dumps every task row to a JSON file; `scripts/pull-dev-snapshot.sh` pulls it, and that is how to see the store's real state on his phone (the app-group container itself cannot be copied through devicectl).
+DEBUG builds have a **Dev notes** page under Settings where Roman writes issues and changes while using the app. They are a plain file in the app's Documents folder on the phone. With the phone plugged in, unlocked and trusted, run `scripts/pull-dev-notes.sh` to copy and print them; read them at the start of a session when he says he has notes. The same page has **Write data snapshot**, which dumps every task row to a JSON file; `scripts/pull-dev-snapshot.sh` pulls it, and that is how to see the store's real state on his phone (the app-group container itself cannot be copied through devicectl). To reproduce a schedule-screenshot import without a device, launch the simulator build with `-nudge-skip-onboarding -nudge-import-screenshot <mac path to the image>` and read the console (`xcrun simctl launch --console`); the simulator's app-group store is then queryable with sqlite3 via `xcrun simctl get_app_container <udid> com.deblaser.nudge groups`.
 
 ## Build & verify
 

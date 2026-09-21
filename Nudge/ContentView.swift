@@ -330,6 +330,26 @@ struct ContentView: View {
             if profile.name.isEmpty { profile.name = "Test" }
             try? modelContext.save()
         }
+        // -nudge-import-screenshot <path>: run the real screenshot importer
+        // on an image file (simulator can read Mac paths) and print what it
+        // did. How a reported schedule gets reproduced without a device.
+        if let i = args.firstIndex(of: "-nudge-import-screenshot"), i + 1 < args.count,
+           let image = UIImage(contentsOfFile: args[i + 1]) {
+            let context = modelContext
+            Task { @MainActor in
+                let result = await ScreenshotCalendarImporter.shared.importFromImage(
+                    image, defaultCategory: "work", modelContext: context
+                )
+                print("[DEBUG import] \(result.summary) errors=\(result.errors)")
+                let events = (try? context.fetch(FetchDescriptor<NudgeTask>(
+                    predicate: #Predicate<NudgeTask> { $0.source == "screenshot" }
+                ))) ?? []
+                let fmt = DateFormatter(); fmt.dateFormat = "EEE yyyy-MM-dd h:mm a"
+                for e in events.sorted(by: { ($0.specificTime ?? .distantPast) < ($1.specificTime ?? .distantPast) }) {
+                    print("[DEBUG import] row: \(e.title) @ \(e.specificTime.map { fmt.string(from: $0) } ?? "-") \(e.estimatedMinutes ?? 0) min")
+                }
+            }
+        }
         if let i = args.firstIndex(of: "-nudge-tab"), i + 1 < args.count {
             let wanted: AppTab? = switch args[i + 1] {
                 case "tasks": .tasks

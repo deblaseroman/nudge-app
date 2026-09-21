@@ -669,14 +669,15 @@ class ClaudeService {
     /// emit structured events as JSON. Strict schema; expects ISO 8601
     /// datetimes anchored against today's date.
     func parseScheduleScreenshot(
-        ocrText: String,
+        imageJPEG: Data?,
+        transcript: String,
         defaultCategory: String
     ) async throws -> [ParsedScreenshotEvent] {
         let todayISO = Self.todayISO()
         let humanDate = DateFormatter.fullWeekday.string(from: Date())
 
         let prompt = """
-        I extracted this raw text from a screenshot of someone's schedule using OCR. Convert it into structured events. Be GENEROUS — if a line could plausibly be an event, include it. The user is trying to import a real schedule and missing events is worse than including a bad one.
+        The image is a screenshot of someone's schedule. Below it is a LAYOUT TRANSCRIPT the app built from the picture: day headers were found and resolved to real dates, and every line is prefixed with the date of the header it sits under. Convert the schedule into structured events. Be GENEROUS — if a line could plausibly be an event, include it. The user is trying to import a real schedule and missing events is worse than including a bad one.
 
         Return ONLY a JSON array. No prose, no markdown fences. Schema:
         [
@@ -690,27 +691,40 @@ class ClaudeService {
         ]
 
         Rules:
-        - Today is \(humanDate) (\(todayISO)). Anchor dates relative to today.
+        - Today is \(humanDate) (\(todayISO)).
+        - THE DATE OF A LINE IS ITS BRACKETED PREFIX, e.g. "[2026-09-22 Tue] 5:00 PM - 5:15 PM | Server". Use that date exactly. Never move an event to today or to another day because of where it appears in the text. A day header with nothing under it is a day off: emit nothing for it.
+        - Only a line with NO bracketed prefix needs a date inferred; then use the picture and today's date, preferring the current or coming week.
         - DATE FORMAT: Use "YYYY-MM-DDTHH:MM:SS" (e.g. "2026-06-03T09:00:00"). NO timezone, NO "Z", NO offset. We treat them as the user's local time.
-        - For dates shown like "Mon 6/3" or "Mon, Jun 3", figure out the correct full date based on today. Prefer dates in the future or current week.
         - For shift ranges like "9:00 AM - 5:00 PM" or "9a-5p", set startISO to the start time and durationMinutes to total minutes (e.g. 480 for 8 hours).
         - For class schedules like "MATH 220 MWF 10:00 AM", emit one event per implied day across the next 7 days at that time.
         - When in doubt about whether something is an event vs. UI text, INCLUDE IT. The user can delete bad ones.
         - Default category to "\(defaultCategory)" when unsure.
         - stakes = the CONSEQUENCE of missing the event, not its timing: "high" for exams/finals/interviews/flights/medical appointments; "medium" for regular classes and work shifts; "low" for optional or social items. Use null when you can't tell.
+        - Two events under the same day with different times are two events (a double shift), never one.
         - Only return [] if there is genuinely zero date/time information anywhere in the text.
 
-        OCR TEXT:
+        LAYOUT TRANSCRIPT:
         \"\"\"
-        \(ocrText)
+        \(transcript)
         \"\"\"
         """
+
+        // The picture rides along so the model sees the real layout; the
+        // transcript's prefixes are the rule for dates.
+        var content: [[String: Any]] = []
+        if let imageJPEG {
+            content.append([
+                "type": "image",
+                "source": ["type": "base64", "media_type": "image/jpeg", "data": imageJPEG.base64EncodedString()]
+            ])
+        }
+        content.append(["type": "text", "text": prompt])
 
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 2000,
             "system": "You are a precise data extractor. Return only valid JSON matching the requested schema. No prose, no commentary.",
-            "messages": [["role": "user", "content": prompt]]
+            "messages": [["role": "user", "content": content]]
         ]
 
         guard !apiKey.isEmpty else { throw ClaudeError.missingAPIKey }
