@@ -1127,9 +1127,12 @@ struct TasksTabView: View {
     /// The four one-at-a-time lists below Start Session. Raw value is the
     /// tab label.
     private enum TaskListTab: String, CaseIterable {
-        case unscheduled = "Unscheduled"
-        case today = "Today"
+        // Chip order is declaration order (Roman, Sep 21 2026): Tasks,
+        // Events, Unscheduled, Overdue, Skipped. The `today` case keeps its
+        // name in code; its chip reads "Tasks" and holds the day lenses.
+        case today = "Tasks"
         case events = "Events"
+        case unscheduled = "Unscheduled"
         case overdue = "Overdue"
         /// Single no-due-date tasks skipped twice (Roman, Sep 16 2026),
         /// kept apart from Overdue, which is for owed work only.
