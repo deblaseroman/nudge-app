@@ -36,6 +36,10 @@ Unlike the items above, these are wrong — they're listed so they aren't mistak
 - ~~**`deadlinePrepNotificationsEnabled` is misnamed**~~ — **resolved Jul 2026** by break-it-down's removal (item 4 above): nothing reads the field any more; it survives only as a deprecated tombstone column on `UserProfile` so existing stores open without a migration. The name still lies — read it as history, not a spec.
 - ~~**`hadRecentActivity` in `passesGates` evaluates against `now`**~~ — **fixed Jul 2026.** It is now `firesInsideActivityCooldown(_ fireDate:)` and blocks a candidate only when its own fire time lands in `[lastSessionStart, lastSessionStart + recentActivityCooldownMinutes)`. Strictly more permissive than the old rule for every future-firing candidate, so it can only free candidates, never block new ones. The active-session gate above it had the identical bug plus a missing `countsAgainstBudget` exemption, and was fixed the same way in the next cycle (`firesDuringActiveSession`). **Both gates now read the candidate's fire date; no gate in `passesGates` is keyed on `now` any more.**
 
+## Roman's dev notes
+
+DEBUG builds have a **Dev notes** page under Settings where Roman writes issues and changes while using the app. They are a plain file in the app's Documents folder on the phone. With the phone plugged in, unlocked and trusted, run `scripts/pull-dev-notes.sh` to copy and print them; read them at the start of a session when he says he has notes.
+
 ## Build & verify
 
 There are no test targets and no linter config — verification is building both schemes:

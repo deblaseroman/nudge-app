@@ -15,6 +15,8 @@ struct SettingsTabView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
     @State private var activeTimeEditor: TimeSettingDestination?
+    /// Roman's in-app notebook (DEBUG only).
+    @State private var showDevNotes = false
     @State private var notificationAuthorizationState: NudgeNotificationService.AuthorizationState = .notDetermined
 
     var body: some View {
@@ -199,6 +201,28 @@ struct SettingsTabView: View {
                     settingsCard(title: "Entitlement now", value: debugEntitlementSummary)
                 }
 
+                settingsSection(title: "Dev notes") {
+                    Button {
+                        NudgeHaptics.light()
+                        showDevNotes = true
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Open notes")
+                                    .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                    .foregroundColor(NudgeTheme.textPrimary)
+                                Text("Jot issues and changes while using the app. Pulled off the phone with scripts/pull-dev-notes.sh.")
+                                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                                    .foregroundColor(NudgeTheme.textMuted)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(NudgeTheme.textMuted)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 settingsSection(title: "Debug: classifier harness") {
                     Text("Seeds backdated NudgeOutcome rows covering every branch NudgeOutcomeClassifier distinguishes, runs the real decision logic over them, and prints expected vs actual to the Xcode console. Deletes everything it created afterward.")
                         .font(.custom(NudgeTheme.fontBody, size: 13))
@@ -233,6 +257,9 @@ struct SettingsTabView: View {
         .task {
             notificationAuthorizationState = await NudgeNotificationService.shared.authorizationState()
         }
+        #if DEBUG
+        .sheet(isPresented: $showDevNotes) { DevNotesView() }
+        #endif
         .sheet(item: $activeTimeEditor) { destination in
             TimeSettingSheet(
                 title: destination.title,
