@@ -15,6 +15,52 @@
 
 #if DEBUG
 import SwiftUI
+import SwiftData
+
+// MARK: - Data snapshot
+
+/// A JSON dump of the store's rows for reading off the device (Sep 21
+/// 2026): the app-group container that holds the SwiftData store cannot
+/// be copied through devicectl, but Documents can. Written on demand
+/// from the Dev notes page; pulled with scripts/pull-dev-snapshot.sh.
+/// Read-only: nothing here writes to the store.
+enum DevSnapshot {
+    static let fileName = "DataSnapshot.json"
+
+    static func write(modelContext: ModelContext) -> Int {
+        let tasks = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(sortBy: [SortDescriptor(\.createdAt)]))) ?? []
+        let profile = (try? modelContext.fetch(FetchDescriptor<UserProfile>()))?.first
+        let iso = ISO8601DateFormatter()
+        iso.timeZone = .current
+        func d(_ date: Date?) -> String? { date.map { iso.string(from: $0) } }
+        let rows: [[String: Any?]] = tasks.map { t in
+            [
+                "id": t.id.uuidString, "title": t.title, "source": t.source,
+                "isEvent": t.isInformationalEvent, "isComplete": t.isComplete,
+                "category": t.category, "priority": t.priority, "stakes": t.stakes?.rawValue,
+                "dueDate": d(t.dueDate), "dueTime": t.dueTime, "specificTime": d(t.specificTime),
+                "intendedDate": d(t.intendedDate), "plannedStartDate": d(t.plannedStartDate),
+                "plannedIsAuto": t.plannedIsAuto, "estimatedMinutes": t.estimatedMinutes,
+                "linkedEventId": t.linkedEventId, "sequenceIndex": t.sequenceIndex,
+                "skipCount": t.skipCount, "createdAt": d(t.createdAt), "completedAt": d(t.completedAt)
+            ]
+        }
+        let payload: [String: Any] = [
+            "writtenAt": iso.string(from: Date()),
+            "timeZone": TimeZone.current.identifier,
+            "profile": [
+                "wakeTime": d(profile?.wakeTime) as Any, "bedtime": d(profile?.bedtime) as Any,
+                "calendarSource": profile?.calendarSource ?? ""
+            ],
+            "taskCount": rows.count,
+            "tasks": rows.map { $0.compactMapValues { $0 } }
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else { return 0 }
+        let url = DevNotesStore.documents.appendingPathComponent(fileName)
+        try? data.write(to: url, options: .atomic)
+        return rows.count
+    }
+}
 
 // MARK: - Store
 
@@ -67,6 +113,8 @@ enum DevNotesStore {
 
 struct DevNotesView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @State private var snapshotLine: String?
     @State private var notes: [DevNote] = DevNotesStore.load()
     @State private var draft = ""
     @FocusState private var focused: Bool
@@ -119,6 +167,33 @@ struct DevNotesView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+
+                // Data snapshot: a JSON dump of every task row so Claude Code
+                // can see the store's actual state when something looks wrong.
+                HStack(spacing: 10) {
+                    Button {
+                        let n = DevSnapshot.write(modelContext: modelContext)
+                        snapshotLine = "Snapshot written: \(n) rows. Plug in and run scripts/pull-dev-snapshot.sh."
+                        NudgeHaptics.light()
+                    } label: {
+                        Text("Write data snapshot")
+                            .font(.custom(NudgeTheme.fontMedium, size: 13))
+                            .foregroundColor(NudgeTheme.textPrimary)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background(NudgeTheme.surfaceAlt)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    if let snapshotLine {
+                        Text(snapshotLine)
+                            .font(.custom(NudgeTheme.fontBody, size: 11))
+                            .foregroundColor(NudgeTheme.textMuted)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 6)
 
                 Text("Saved on this phone at Documents/DevNotes.md. Plug in and run scripts/pull-dev-notes.sh to hand them to Claude Code.")
                     .font(.custom(NudgeTheme.fontBody, size: 11))
