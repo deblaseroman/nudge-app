@@ -95,6 +95,13 @@ does. A `specificTime` with no `dueDate` also sets the day's 23:59
 
 `expected.tasks` names rows by exact `title` plus row fields.
 
+`input.goals` (both kinds) inserts active goals: a string is a title; a
+dict may add `lastActivityAt`, `createdAt` (relative dates) and
+`isActive`. Capture cases pass them to the model exactly as the Home chat
+does; a row's `goalTitle` is the linked goal's title or `null`. Arbiter
+cases may assert on goals: `expected.goals[]` by `title` with
+`candidates` / `eligible` / `scheduled` matched on the candidate's goal.
+
 `input.intelligence` seeds a per-task signals row for each task before
 the arbiter runs (`seedRow`, default true; `seedHash` true stores the
 current freshness hash, false leaves it empty like a row from before the
@@ -126,6 +133,9 @@ that are days compare as `"+Nd"`; `plannedStart` compares as `"+Nd HH:mm"`.
 | `plannedStart` | `"+Nd HH:mm"` or `null` |
 | `plannedIsAuto`, `estimatedMinutes`, `priority`, `sequenceIndex`, `skipCount`, `source`, `stakes` | as stored |
 | `candidates` | `{ "<kind>": true/false }`: whether the arbiter built a raw candidate of that kind for this row, before gates. Kinds: `eventBlock`, `morningPrompt`, `idle`, `prep`, `dueSoon`, `floater`, `comeBack`, `placementLead`, `placementMissed`, `goalLapse` |
+| `eligible`, `scheduled` | same shape: whether a candidate of that kind for this row passed the gates, and whether it was picked to fire. These read the clock (quiet hours, spacing), so assert them only where the fire time makes the answer stable |
+| `fireDay` | `{ "<kind>": "+Nd" }`: the day offset of the earliest raw candidate of that kind for this row (or goal), `null` when none |
+| `goalTitle` | the linked goal's title, or `null` |
 
 Assertions are on raw candidates, before gates, so quiet hours and the time
 of day cannot flip a result. Fields you leave out are not checked.

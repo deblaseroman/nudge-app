@@ -200,7 +200,9 @@ enum EvalHarness {
             return "input: \(inputSummary) | expected: a store | actual: error: \(error)"
         }
         let specs = (input["tasks"] as? [[String: Any]]) ?? []
+        var goals: [NudgeGoal] = []
         do {
+            goals = try insertGoals((input["goals"] as? [Any]) ?? [], into: fixture.context)
             for spec in specs { try insertTask(spec, into: fixture.context) }
             try fixture.context.save()
         } catch {
@@ -258,6 +260,30 @@ enum EvalHarness {
         if let count = expected["rowCount"] as? Int, rows.count != count {
             mismatches.append("rowCount: expected \(count), actual \(rows.count)")
         }
+        // Goal-level assertions: candidates carry goalID, not taskID.
+        for spec in (expected["goals"] as? [[String: Any]]) ?? [] {
+            guard let title = spec["title"] as? String else { mismatches.append("expected goal without a title"); continue }
+            guard let goal = goals.first(where: { $0.title == title }) else {
+                mismatches.append("goal \(title): not in input.goals"); continue
+            }
+            for group in ["candidates", "eligible", "scheduled", "fireDay"] {
+                guard let dict = spec[group] as? [String: Any] else { continue }
+                let set: [NudgeCandidate] = group == "eligible" ? (snapshot?.eligible ?? [])
+                    : group == "scheduled" ? (snapshot?.scheduled ?? []) : (snapshot?.raw ?? [])
+                let mine = set.filter { $0.goalID == goal.id }
+                let kinds = Set(mine.map { $0.kind.rawValue })
+                for (kind, want) in dict {
+                    let have: String
+                    if group == "fireDay" {
+                        have = mine.filter { $0.kind.rawValue == kind }.map(\.fireDate).min().map { day($0) } ?? "null"
+                    } else {
+                        have = str(kinds.contains(kind))
+                    }
+                    let wantStr = normalizeExpected(want)
+                    if have != wantStr { mismatches.append("goal \(title) \(group).\(kind): expected \(wantStr), actual \(have)") }
+                }
+            }
+        }
         return failureLine(input: inputSummary, mismatches: mismatches)
     }
 
@@ -272,7 +298,39 @@ enum EvalHarness {
         }
         var s = parts.joined(separator: "; ")
         if (input["rolloverSweep"] as? Bool) == true { s += " + rolloverSweep" }
+        if let goals = input["goals"] as? [Any], !goals.isEmpty {
+            s += " goals=" + goals.map { g -> String in
+                if let title = g as? String { return "\"\(title)\"" }
+                let d = (g as? [String: Any]) ?? [:]
+                var bits: [String] = []
+                for key in ["lastActivityAt", "createdAt", "isActive"] { if let v = d[key] { bits.append("\(key)=\(v)") } }
+                return "\"\((d["title"] as? String) ?? "?")\"" + (bits.isEmpty ? "" : " {\(bits.joined(separator: ", "))}")
+            }.joined(separator: "; ")
+        }
         return s
+    }
+
+    /// `input.goals`: active goals in the fixture. A string is a title; a
+    /// dict may add `lastActivityAt` / `createdAt` (relative dates) and
+    /// `isActive`. Returns the rows, and records their titles for
+    /// `goalTitle` reads.
+    private static func insertGoals(_ specs: [Any], into context: ModelContext) throws -> [NudgeGoal] {
+        goalTitles = [:]
+        var goals: [NudgeGoal] = []
+        for raw in specs {
+            let spec: [String: Any] = (raw as? String).map { ["title": $0] } ?? (raw as? [String: Any]) ?? [:]
+            guard let title = spec["title"] as? String else { throw HarnessError.bad("goal without a title") }
+            let created = try spec["createdAt"].flatMap { try resolve($0, defaultHour: 12, defaultMinute: 0, field: "goal.createdAt") } ?? Date()
+            let goal = NudgeGoal(title: title, isActive: (spec["isActive"] as? Bool) ?? true, createdAt: created)
+            if let last = spec["lastActivityAt"] {
+                goal.lastActivityAt = try resolve(last, defaultHour: 12, defaultMinute: 0, field: "goal.lastActivityAt")
+            }
+            context.insert(goal)
+            goalTitles[goal.id] = title
+            goals.append(goal)
+        }
+        try context.save()
+        return goals
     }
 
     private static func insertTask(_ spec: [String: Any], into context: ModelContext) throws {
@@ -321,9 +379,17 @@ enum EvalHarness {
         guard let text = input["text"] as? String else {
             return "input: ? | expected: input.text | actual: missing"
         }
-        let inputSummary = "\"\(text)\""
+        var inputSummary = "\"\(text)\""
+        if let goals = input["goals"] as? [Any], !goals.isEmpty {
+            inputSummary += " goals=" + goals.compactMap { ($0 as? String).map { "\"\($0)\"" } }.joined(separator: ", ")
+        }
         let fixture: Fixture
-        do { fixture = try makeFixture() } catch {
+        var goalContexts: [ActiveGoalContext] = []
+        do {
+            fixture = try makeFixture()
+            let goals = try insertGoals((input["goals"] as? [Any]) ?? [], into: fixture.context)
+            goalContexts = goals.enumerated().map { i, g in ActiveGoalContext(ref: "G\(i + 1)", id: g.id, title: g.title) }
+        } catch {
             return "input: \(inputSummary) | expected: a store | actual: error: \(error)"
         }
 
@@ -354,7 +420,7 @@ enum EvalHarness {
                     userMessage: text,
                     existingTasks: [],
                     knownCommitmentSizes: [],
-                    activeGoals: []
+                    activeGoals: goalContexts
                 )
                 returned = response.tasks.count
                 if ChatRouter.isEmptyCapture(response, questionOutstanding: false) { replyKind = "template" }
@@ -365,7 +431,7 @@ enum EvalHarness {
                 let written = CaptureWriter.apply(
                     response: response,
                     allTasks: [],
-                    goalContexts: [],
+                    goalContexts: goalContexts,
                     modelContext: fixture.context,
                     userMessage: text,
                     writeLog: false
@@ -451,6 +517,9 @@ enum EvalHarness {
     // MARK: - Field comparison (shared by both kinds)
 
     /// Every observable the cases can assert on, read from the real helpers.
+    /// Goal titles by id for the current case, so a row's `goalTitle` reads.
+    private static var goalTitles: [UUID: String] = [:]
+
     private static func actualFields(_ task: NudgeTask, snapshot: NudgeArbiter.DebugRunSnapshot?) -> [String: String] {
         var f: [String: String] = [:]
         f["isEvent"] = str(task.isInformationalEvent)
@@ -474,9 +543,17 @@ enum EvalHarness {
         f["stakes"] = task.stakes?.rawValue ?? "null"
         f["timeWindow"] = task.timeWindow?.rawValue ?? "null"
         let kinds = Set((snapshot?.raw ?? []).filter { $0.taskID == task.id }.map { $0.kind.rawValue })
+        let eligible = Set((snapshot?.eligible ?? []).filter { $0.taskID == task.id }.map { $0.kind.rawValue })
+        let scheduled = Set((snapshot?.scheduled ?? []).filter { $0.taskID == task.id }.map { $0.kind.rawValue })
         for k in NudgeOutcomeKind.allCases {
             f["candidates.\(k.rawValue)"] = str(kinds.contains(k.rawValue))
+            f["eligible.\(k.rawValue)"] = str(eligible.contains(k.rawValue))
+            f["scheduled.\(k.rawValue)"] = str(scheduled.contains(k.rawValue))
+            // Earliest raw candidate of the kind for this row, as a day offset.
+            let first = (snapshot?.raw ?? []).filter { $0.taskID == task.id && $0.kind == k }.map(\.fireDate).min()
+            f["fireDay.\(k.rawValue)"] = first.map { day($0) } ?? "null"
         }
+        f["goalTitle"] = task.goalID.flatMap { id in goalTitles[id] } ?? "null"
         return f
     }
 
@@ -484,9 +561,9 @@ enum EvalHarness {
         let actual = actualFields(task, snapshot: snapshot)
         var out: [String] = []
         for (key, value) in spec where key != "title" && key != "titleContains" {
-            if key == "candidates", let dict = value as? [String: Any] {
+            if ["candidates", "eligible", "scheduled", "fireDay"].contains(key), let dict = value as? [String: Any] {
                 for (kind, want) in dict {
-                    let fullKey = "candidates.\(kind)"
+                    let fullKey = "\(key).\(kind)"
                     guard let have = actual[fullKey] else {
                         out.append("\(label) \(fullKey): unknown candidate kind"); continue
                     }

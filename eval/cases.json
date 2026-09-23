@@ -836,5 +836,122 @@
       ]
     },
     "note": "A fresh row whose hash matches the current inputs: two refresh asks with nothing changed make no call. Local and free."
+  },
+  {
+    "id": "arb-duesoon-inside-quiet-hours",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Submit lab report",
+          "specificTime": "+1d 07:00"
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Submit lab report",
+          "candidates": {
+            "dueSoon": true
+          },
+          "scheduled": {
+            "dueSoon": false
+          }
+        }
+      ]
+    },
+    "note": "Open since Sep 3: dueSoon fires inside quiet hours (seen 6am and 7am). A 7:00 deadline puts the 5:00 lead inside the fixture profile's 22:00 to 08:30 window; the candidate should build but not be scheduled. dueSoon is budget-exempt and every shared gate is keyed on that flag, so this fails today."
+  },
+  {
+    "id": "cap-goal-link-spanish",
+    "kind": "capture",
+    "input": {
+      "text": "practice spanish on duolingo for 20 minutes",
+      "goals": [
+        "Learn Spanish"
+      ]
+    },
+    "expected": {
+      "routedTo": "capture",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "spanish",
+          "goalTitle": "Learn Spanish"
+        }
+      ]
+    },
+    "note": "The [GoalLink] check: a capture that plainly serves an active goal links to it (goalRef → goalID at the write site)."
+  },
+  {
+    "id": "cap-goal-link-none",
+    "kind": "capture",
+    "input": {
+      "text": "return the library books",
+      "goals": [
+        "Learn Spanish"
+      ]
+    },
+    "expected": {
+      "routedTo": "capture",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "librar",
+          "goalTitle": null
+        }
+      ]
+    },
+    "note": "The conservative half of goal linking: an unrelated task must not link. A wrong link corrupts the goal's activity history."
+  },
+  {
+    "id": "arb-goal-lapse-after-32-days",
+    "kind": "arbiter",
+    "input": {
+      "goals": [
+        {
+          "title": "Learn Spanish",
+          "lastActivityAt": "-32d"
+        }
+      ]
+    },
+    "expected": {
+      "goals": [
+        {
+          "title": "Learn Spanish",
+          "candidates": {
+            "goalLapse": true
+          }
+        }
+      ]
+    },
+    "note": "The [GoalLapseImpact] check: an active goal last worked more than goalLapseAfterDays (30) ago builds a goal-lapse candidate at wake+8h, rolling forward to the next anchor still ahead."
+  },
+  {
+    "id": "arb-goal-lapse-recent-activity",
+    "kind": "arbiter",
+    "input": {
+      "goals": [
+        {
+          "title": "Learn Spanish",
+          "lastActivityAt": "-5d"
+        }
+      ]
+    },
+    "expected": {
+      "goals": [
+        {
+          "title": "Learn Spanish",
+          "candidates": {
+            "goalLapse": true
+          },
+          "fireDay": {
+            "goalLapse": "+25d"
+          }
+        }
+      ]
+    },
+    "note": "A goal worked five days ago is not lapsed yet, but the builder is declarative: it always holds one candidate per active goal at lastActivity + goalLapseAfterDays (30), rebuilt on every reevaluate. So the candidate exists and its fire day is +25d. My first version of this case expected no candidate; that was the case's error, not the app's."
   }
 ]
