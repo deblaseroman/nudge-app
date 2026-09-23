@@ -495,10 +495,15 @@ enum TasksMessageComposer {
         // One-time news (prep note, the two announcements, today's planner
         // outcome) is consumed on first render, so anything that would
         // always win must yield to it or it never renders.
+        // A direct call, not a function reference passed to `flatMap`: the
+        // reference form hands a main-actor method to a nonisolated closure
+        // and warned on every build.
+        var planOutcomePending = false
+        if let planOutcome { planOutcomePending = planOutcomeMessage(planOutcome) != nil }
         let oneTimeNewsPending = prepNote != nil
             || prepAnnouncement != nil
             || commitmentAnnouncement != nil
-            || planOutcome.flatMap(planOutcomeMessage) != nil
+            || planOutcomePending
 
         // 1.2 — a plan proposal (cycle 2026-09-16-01): the app built the
         // steps for something due; Opus's sentence is the headline and the
