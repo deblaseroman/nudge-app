@@ -195,6 +195,10 @@ final class NudgeIntelligence {
             existing.statedUrgencyRaw = new.statedUrgencyRaw
             existing.suggestedFirstStep = new.suggestedFirstStep
             existing.analyzedAt = new.analyzedAt
+            // The freshness key too: without this an existing row (every
+            // row from before the column) never stored its hash, so every
+            // refresh called (device, Sep 23 2026: open + save = 2 calls).
+            existing.inputHash = new.inputHash
         } else {
             modelContext.insert(new)
         }
