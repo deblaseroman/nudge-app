@@ -34,6 +34,9 @@ struct TasksTabView: View {
     @State private var activeSheet: TaskSheetDestination?
     @State private var showCancelSessionAlert = false
     @State private var showSessionTaskPicker = false
+    /// A session about to start on top of an anchored item (Roman, Sep 23
+    /// 2026): name it, let the user decide. Nil means start straight away.
+    @State private var sessionStartConflict: SessionStartConflict?
     /// True when the picker was opened by the idle sheet's "pick something
     /// else" — the user just declined a single proposed task, so opening on
     /// another single suggestion (possibly the same task) would ignore what
@@ -891,7 +894,7 @@ struct TasksTabView: View {
                 suggested: sessionPickerShowsFullList ? nil : suggestedSessionTask,
                 onPick: { task in
                     showSessionTaskPicker = false
-                    coordinator.startSession(task: task, userName: profile.name)
+                    attemptStartSession(task)
                 }
             )
             .presentationDetents([.medium, .large])
@@ -902,7 +905,7 @@ struct TasksTabView: View {
                     task: task,
                     onConfirm: {
                         idleProposedTaskID = nil
-                        coordinator.startSession(task: task, userName: profile.name)
+                        attemptStartSession(task)
                     },
                     onPickSomethingElse: {
                         idleProposedTaskID = nil
@@ -1846,6 +1849,16 @@ struct TasksTabView: View {
                     .background(sessionStateTint)
                     .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
                 }
+                .alert(item: $sessionStartConflict) { pending in
+                    Alert(
+                        title: Text("Starting now overlaps \(pending.conflict.isEvent ? "an event" : "a task")"),
+                        message: Text("\(pending.conflict.title) is at \(pending.conflict.timeLabel) and can't be moved. Start anyway and they'll overlap on the timeline."),
+                        primaryButton: .default(Text("Start anyway")) {
+                            coordinator.startSession(task: pending.task, userName: profile.name)
+                        },
+                        secondaryButton: .cancel()
+                    )
+                }
                 .alert("Cancel Session?", isPresented: $showCancelSessionAlert) {
                     Button("Keep going", role: .cancel) { }
                     Button("Cancel session", role: .destructive) {
@@ -2355,6 +2368,19 @@ struct TasksTabView: View {
             modelContext.delete(record)
         }
         try? modelContext.save()
+    }
+
+    /// Starts a session unless the block it would put at now runs into an
+    /// anchored item; then the alert above asks first.
+    private func attemptStartSession(_ task: NudgeTask) {
+        let minutes = coordinator.sessionMinutes(for: task)
+        if !task.isInformationalEvent,
+           let conflict = TimelineReflow.anchoredConflict(for: task, start: Date(), minutes: minutes, pinStart: true, modelContext: modelContext) {
+            NudgeHaptics.light()
+            sessionStartConflict = SessionStartConflict(task: task, conflict: conflict)
+            return
+        }
+        coordinator.startSession(task: task, userName: profile.name)
     }
 
     private func startSession() {
@@ -3140,6 +3166,10 @@ struct TaskEditorSheet: View {
     var onRemoveFromTimeline: (() -> Void)? = nil
 
     @State private var draft = TaskDraft()
+    /// A duration the timeline cannot fit without overlapping an anchored
+    /// item (Roman, Sep 23 2026): the sheet says which one and the user
+    /// decides. Nil means Save proceeds.
+    @State private var durationConflict: TimelineReflow.AnchoredConflict?
 
     /// In edit mode, the AI-derived first step for this task so the
     /// under-3-hour CountdownLabel can suggest it. Pure READ — enrichment
@@ -3290,12 +3320,29 @@ struct TaskEditorSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") {
                         guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        if let conflict = pendingDurationConflict() {
+                            NudgeHaptics.light()
+                            durationConflict = conflict
+                            return
+                        }
                         NudgeHaptics.medium()
                         onSave(draft.cleaned())
                         dismiss()
                     }
                     .font(.custom(NudgeTheme.fontSemiBold, size: 15))
                 }
+            }
+            .alert(item: $durationConflict) { conflict in
+                Alert(
+                    title: Text("This runs into \(conflict.isEvent ? "an event" : "a task")"),
+                    message: Text("\(conflict.title) is at \(conflict.timeLabel) and can't be moved. Saving keeps both where they are, overlapping."),
+                    primaryButton: .default(Text("Save anyway")) {
+                        NudgeHaptics.medium()
+                        onSave(draft.cleaned())
+                        dismiss()
+                    },
+                    secondaryButton: .cancel(Text("Go back"))
+                )
             }
         }
         .onAppear(perform: populateDraftIfNeeded)
@@ -3620,6 +3667,16 @@ struct TaskEditorSheet: View {
         }
     }
 
+
+    /// The anchored item a picked duration would overlap, when the task
+    /// is placed today and the reflow could not move its start earlier.
+    private func pendingDurationConflict() -> TimelineReflow.AnchoredConflict? {
+        guard case .edit(let task) = mode, !task.isInformationalEvent,
+              draft.durationUserPicked, let mins = draft.durationMinutes, mins > 0,
+              let start = task.plannedStartDate, Calendar.current.isDateInToday(start)
+        else { return nil }
+        return TimelineReflow.anchoredConflict(for: task, start: start, minutes: mins, pinStart: false, modelContext: modelContext)
+    }
 
     private func populateDraftIfNeeded() {
         guard case .edit(let task) = mode else { return }
@@ -4127,4 +4184,12 @@ extension NudgeTask {
         return nil
     }
 
+}
+
+/// A session start held for the user's decision because it would overlap
+/// an anchored item on the timeline.
+struct SessionStartConflict: Identifiable {
+    let id = UUID()
+    let task: NudgeTask
+    let conflict: TimelineReflow.AnchoredConflict
 }

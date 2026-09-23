@@ -62,6 +62,12 @@ final class SessionCoordinator {
 
     /// Starts a session on a single task. Uses the task's `estimatedMinutes`
     /// if set, otherwise falls back to a 60-minute default.
+    /// The length a session on `task` will run: what `startSession` uses,
+    /// exposed so a view can check the timeline for conflicts first.
+    func sessionMinutes(for task: NudgeTask) -> Int {
+        task.estimatedMinutes ?? defaultDurationMinutes
+    }
+
     func startSession(task: NudgeTask, userName: String) {
         cancelSession()
 
@@ -76,7 +82,7 @@ final class SessionCoordinator {
         SharedModelContainer.appGroupDefaults
             .set(Date(), forKey: NotificationScheduler.lastFocusSessionStartedAtKey)
 
-        let minutes = task.estimatedMinutes ?? defaultDurationMinutes
+        let minutes = sessionMinutes(for: task)
         let duration = TimeInterval(minutes * 60)
         // The timeline follows the session (Roman, Sep 23 2026): the task's
         // block moves to now as a manual placement and whatever it now

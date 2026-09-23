@@ -42,6 +42,55 @@ enum TimelineReflow {
     private static let snapMinutes = 15
     private static let fallbackTaskMinutes = 30
 
+    /// An anchored item the change would run into with no way around it
+    /// (Roman, Sep 23 2026: warn, name it, and let the user decide).
+    struct AnchoredConflict: Identifiable {
+        let id = UUID()
+        let title: String
+        let start: Date
+        let isEvent: Bool
+        var timeLabel: String { TimelineReflow.clock(start) }
+    }
+
+    /// Dry run of the subject's own settlement: nil when the change fits or
+    /// can be resolved by moving the start earlier; the offending item when
+    /// it cannot (or when the start is pinned, as for a session at now).
+    static func anchoredConflict(for subject: NudgeTask, start: Date, minutes: Int, pinStart: Bool, modelContext: ModelContext) -> AnchoredConflict? {
+        let day = Calendar.current.startOfDay(for: start)
+        let anchored = titledAnchored(on: day, excluding: subject.id, modelContext: modelContext)
+        let end = start.addingTimeInterval(Double(minutes) * 60)
+        guard let hit = anchored.first(where: { $0.interval.start < end && start < $0.interval.end }) else { return nil }
+        if pinStart { return hit.conflict }
+        let floorStart = anchored.map(\.interval).filter { $0.end <= start }.map(\.end).max()
+            ?? dayWindow(on: day, modelContext: modelContext)?.start ?? day
+        let earlier = max(floorStart, hit.interval.start.addingTimeInterval(-Double(minutes) * 60))
+        return earlier.addingTimeInterval(Double(minutes) * 60) <= hit.interval.start ? nil : hit.conflict
+    }
+
+    private struct Anchored {
+        let interval: Interval
+        let conflict: AnchoredConflict
+    }
+
+    /// Events (real length, no buffer) and manual placements on `day`.
+    private static func titledAnchored(on day: Date, excluding subjectID: UUID, modelContext: ModelContext) -> [Anchored] {
+        let all = (try? modelContext.fetch(FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete }
+        ))) ?? []
+        return all.filter { $0.id != subjectID && isOnDay($0, day) && isAnchored($0) }.compactMap { t in
+            let start: Date? = t.isInformationalEvent ? t.specificTime : t.plannedStartDate
+            guard let s = start else { return nil }
+            let mins = t.isInformationalEvent ? t.eventDurationMinutes(modelContext: modelContext) : taskMinutes(t)
+            let interval = Interval(start: s, end: s.addingTimeInterval(Double(mins) * 60))
+            return Anchored(interval: interval, conflict: AnchoredConflict(title: t.title, start: s, isEvent: t.isInformationalEvent))
+        }.sorted { $0.interval.start < $1.interval.start }
+    }
+
+    private static func dayWindow(on day: Date, modelContext: ModelContext) -> DayWindow? {
+        guard let profile = (try? modelContext.fetch(FetchDescriptor<UserProfile>()))?.first else { return nil }
+        return DayWindow.resolve(on: day, wake: profile.wakeTime ?? profile.morningCheckInTime, bedtime: profile.bedtime)
+    }
+
     /// Anchored ⇔ an event, or a placement the user made by hand.
     static func isAnchored(_ task: NudgeTask) -> Bool {
         task.isInformationalEvent || (task.plannedStartDate != nil && !task.plannedIsAuto)
@@ -211,7 +260,7 @@ enum TimelineReflow {
         Date(timeIntervalSinceReferenceDate: (date.timeIntervalSinceReferenceDate / 60).rounded(.down) * 60)
     }
 
-    private static func clock(_ d: Date) -> String {
+    static func clock(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "h:mm a"; f.locale = Locale(identifier: "en_US_POSIX")
         return f.string(from: d)
     }
