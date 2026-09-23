@@ -23,3 +23,4 @@ eval/.last-run.log
 # capture-history draft: Roman's real messages; cases move to cases.json by hand
 eval/cases.draft.json
 eval/cases.draft.meta.json
+eval/.build-device/
