@@ -140,6 +140,15 @@ struct NudgeCandidate {
     /// Same `var`-with-default convention as `namedTaskID`.
     var goalID: UUID? = nil
 
+    /// TRUE when the fire time derives from a time the USER set: an event's
+    /// start, a task's due time, or a placement the user made by hand
+    /// (`plannedIsAuto == false`). Roman's ruling, Sep 23 2026: the app
+    /// never plans inside the quiet window on its own (`DayWindow` stops
+    /// at bedtime), so anything sitting there is the user's choice and is
+    /// treated like a daytime candidate. The quiet-hours gate skips these;
+    /// every other gate still applies to the budget-counting ones.
+    var anchoredToUserTime: Bool = false
+
     /// Within-slot ranking. `pow(urgency, 1.1) * pow(importance, 0.9)` —
     /// urgency exponent slightly higher to favor time-pressure breaking ties.
     var score: Double {
@@ -734,7 +743,8 @@ final class NudgeArbiter: NudgeArbitering {
                     importance: 1.0,
                     receptivity: 1.0,
                     countsAgainstBudget: false,
-                    estimatedMinutes: nil
+                    estimatedMinutes: nil,
+                    anchoredToUserTime: true
                 ))
             }
         }
@@ -1751,7 +1761,8 @@ final class NudgeArbiter: NudgeArbitering {
                 importance: 1.0,
                 receptivity: 1.0,
                 countsAgainstBudget: false,
-                estimatedMinutes: nil
+                estimatedMinutes: nil,
+                anchoredToUserTime: true
             ))
         }
         return candidates
@@ -2433,7 +2444,8 @@ final class NudgeArbiter: NudgeArbitering {
                     importance: importance,
                     receptivity: 1.0,
                     countsAgainstBudget: true,
-                    estimatedMinutes: estimatedMinutes
+                    estimatedMinutes: estimatedMinutes,
+                    anchoredToUserTime: !first.0.plannedIsAuto
                 ))
             }
         }
@@ -2581,7 +2593,8 @@ final class NudgeArbiter: NudgeArbitering {
                     importance: importance,
                     receptivity: 1.0,
                     countsAgainstBudget: true,
-                    estimatedMinutes: estimatedMinutes
+                    estimatedMinutes: estimatedMinutes,
+                    anchoredToUserTime: !task.plannedIsAuto
                 )
             }
 
@@ -2697,7 +2710,9 @@ final class NudgeArbiter: NudgeArbitering {
 
         // Quiet hours — the user's own "don't interrupt me" window, which is
         // NOT the same thing as their sleep schedule (it only defaults to it).
-        if candidate.countsAgainstBudget && !passesQuietHours(
+        // A candidate anchored to a time the user set is exempt here and
+        // only here (`anchoredToUserTime`); it still meets every other gate.
+        if candidate.countsAgainstBudget && !candidate.anchoredToUserTime && !passesQuietHours(
             fireDate: candidate.fireDate,
             profile: context.profile
         ) { return false }

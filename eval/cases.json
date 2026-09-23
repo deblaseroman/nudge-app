@@ -899,6 +899,67 @@
     "note": "The common case: a bare due date's effective deadline is the END of the day, which sortDeadline computes as the next midnight (00:00), so the 120-minute lead fires at 22:00. With a 23:00 bedtime the quiet window opens at 22:00 (bedtime minus 60) and its comparison is strict, so 22:00 is outside it: this reminder passes the gate on its own and never touches the exemption, by exactly one minute. With a 22:00 bedtime the window would open at 21:00 and the same reminder would fire inside it, through the exemption."
   },
   {
+    "id": "arb-manual-placement-inside-quiet-hours",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Read chapter 4",
+          "intendedDate": "+1d",
+          "plannedStartDate": "+1d 23:00",
+          "plannedIsAuto": false,
+          "estimatedMinutes": 30
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Read chapter 4",
+          "candidates": {
+            "placementLead": true
+          },
+          "scheduled": {
+            "placementLead": true
+          },
+          "fireAt": {
+            "placementLead": "+1d 22:55"
+          }
+        }
+      ]
+    },
+    "note": "Roman's ruling, Sep 23 2026: the app never plans inside the quiet window itself, so a task the user placed there by hand is treated like any daytime placement. The 22:55 heads-up sits inside the 22:00 to 08:30 window and is scheduled; budget, spacing and busy gates still apply."
+  },
+  {
+    "id": "arb-auto-placement-inside-quiet-hours",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Read chapter 4",
+          "intendedDate": "+1d",
+          "plannedStartDate": "+1d 23:00",
+          "plannedIsAuto": true,
+          "estimatedMinutes": 30
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Read chapter 4",
+          "candidates": {
+            "placementLead": true
+          },
+          "scheduled": {
+            "placementLead": false
+          }
+        }
+      ]
+    },
+    "note": "The other half: an automatic placement inside the window (only possible if a bedtime was edited after planning) keeps the quiet-hours gate. Built, not scheduled."
+  },
+  {
     "id": "cap-goal-link-spanish",
     "kind": "capture",
     "input": {
@@ -912,12 +973,12 @@
       "rowCount": 1,
       "rows": [
         {
-          "titleContains": "spanish",
+          "titleContains": "duolingo",
           "goalTitle": "Learn Spanish"
         }
       ]
     },
-    "note": "The [GoalLink] check: a capture that plainly serves an active goal links to it (goalRef → goalID at the write site)."
+    "note": "The [GoalLink] check: a capture that plainly serves an active goal links to it (goalRef → goalID at the write site). Matched on 'duolingo': the model's title varies between 'Practice Spanish on Duolingo' and 'Duolingo practice'."
   },
   {
     "id": "cap-goal-link-none",
