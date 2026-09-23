@@ -825,8 +825,14 @@ enum HomeChatRole: String, Codable {
 }
 
 /// Three dots that rise and fall in sequence, the iMessage typing cue.
-/// Pure animation, no timer: one repeating keyframe per dot, staggered.
+/// Pure animation, no timer, no loop of its own: one repeating SwiftUI
+/// animation per dot, on a view that exists only while a reply is
+/// outstanding (the bubble is removed on every reply and error path).
+/// It also stops the moment the app leaves the foreground and restarts on
+/// return, so nothing animates in the background (an earlier dots
+/// animation in this app crashed by running on while backgrounded).
 struct TypingDots: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var phase = false
 
     var body: some View {
@@ -838,14 +844,18 @@ struct TypingDots: View {
                     .offset(y: phase ? -3 : 1)
                     .opacity(phase ? 1 : 0.45)
                     .animation(
-                        .easeInOut(duration: 0.45)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(i) * 0.15),
+                        phase
+                            ? .easeInOut(duration: 0.45).repeatForever(autoreverses: true).delay(Double(i) * 0.15)
+                            : .default,
                         value: phase
                     )
             }
         }
-        .onAppear { phase = true }
+        .onAppear { phase = scenePhase == .active }
+        .onDisappear { phase = false }
+        .onChange(of: scenePhase) { _, newPhase in
+            phase = newPhase == .active
+        }
         .accessibilityLabel("Thinking")
     }
 }
