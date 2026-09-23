@@ -40,6 +40,18 @@ Unlike the items above, these are wrong — they're listed so they aren't mistak
 
 DEBUG builds have a **Dev notes** page under Settings where Roman writes issues and changes while using the app. They are a plain file in the app's Documents folder on the phone. With the phone plugged in, unlocked and trusted, run `scripts/pull-dev-notes.sh` to copy and print them; read them at the start of a session when he says he has notes. The same page has **Write data snapshot**, which dumps every task row to a JSON file; `scripts/pull-dev-snapshot.sh` pulls it, and that is how to see the store's real state on his phone (the app-group container itself cannot be copied through devicectl). To reproduce a schedule-screenshot import without a device, launch the simulator build with `-nudge-skip-onboarding -nudge-import-screenshot <mac path to the image>` and read the console (`xcrun simctl launch --console`); the simulator's app-group store is then queryable with sqlite3 via `xcrun simctl get_app_container <udid> com.deblaser.nudge groups`.
 
+## Commit and push
+
+Every cycle ends with a commit, and every commit is pushed to `origin` on the
+working branch in the same turn. Never merge to `main`; that is Roman's call
+through a pull request. The reason this is a rule: 42 commits sat on this Mac
+for nine days in Sep 2026 while GitHub showed the branch stuck on Sep 14, and
+Roman found out from the repo page. If the push is refused (the permission
+gate, or GitHub rejecting the keychain credential), say so in the report's
+first line and give the exact command to run with the `!` prefix; do not
+leave it to the closing summary. The "do not push" line in older plan
+templates is superseded by this rule.
+
 ## Build & verify
 
 There are no test targets and no linter config — verification is building both schemes:
