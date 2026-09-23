@@ -74,6 +74,16 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
             }
             return true
         }
+        // `-nudge-export-captures [path]`: write the capture-history draft
+        // (`scripts/export-captures.sh`) and exit. Reads the real store,
+        // writes two files in Documents, changes nothing else.
+        if CaptureHistoryExporter.isRequested {
+            Task { @MainActor in
+                CaptureHistoryExporter.runFromLaunchArguments()
+                exit(0)
+            }
+            return true
+        }
         #endif
 
         // ⚠️ TEMP-INTENT-AUDIT (cycle 2026-09-03-01 item 4) — every open

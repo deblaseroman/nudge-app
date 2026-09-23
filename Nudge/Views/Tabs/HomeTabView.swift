@@ -430,7 +430,8 @@ struct HomeTabView: View {
                     response: response,
                     allTasks: allTasks,
                     goalContexts: goalContexts,
-                    modelContext: modelContext
+                    modelContext: modelContext,
+                    userMessage: messageText
                 )
                 let newlyCreatedTasks = written.created
 

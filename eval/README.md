@@ -26,6 +26,22 @@ the same entry points the app uses: the Home chat's routers, `sendChat`,
 `CaptureWriter.apply`, `PlacementRollover.sweep`, `NudgeArbiter.reevaluate`.
 Nothing is reimplemented; the case file is read by path, not bundled.
 
+## Drafting cases from real captures
+
+`scripts/export-captures.sh` (phone plugged in or wirelessly connected,
+unlocked, DEBUG build installed) launches the app with
+`-nudge-export-captures`, pulls `eval/cases.draft.json` and prints the
+counts. The draft is in this file's shape, every case `"unverified": true`,
+with a `draft` object per case the harness ignores: capture date, the
+assistant's reply, each row's reconstructed `dueKind`, and `floaterTarget`
+from the arbiter. Captures since the DEBUG capture log shipped are exact
+(`alignment: logged`); older ones are paired by day and order with the rows'
+creation bursts (`exact`, or `ambiguous` with the day's bursts listed for
+hand pairing). Messages the small-talk or plan routers took are their own
+`swallowed-` / `plan-` cases whose `expected` records the swallow. Review,
+then move what you keep into `cases.json` by hand. The draft is
+git-ignored.
+
 ## Case shape
 
 ```json

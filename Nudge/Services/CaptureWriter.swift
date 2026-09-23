@@ -26,12 +26,18 @@ enum CaptureWriter {
     /// priority, placement, stakes, time window, commitment shape and goal
     /// link. Does not save, does not reevaluate, does not touch
     /// `taskUpdates` — the caller owns everything after the rows exist.
+    ///
+    /// `userMessage` and `writeLog` feed the DEBUG capture log only
+    /// (`CaptureLog`, for the eval draft export); the eval harness passes
+    /// `writeLog: false` so its in-memory runs never land in the log.
     @MainActor
     static func apply(
         response: ClaudeResponse,
         allTasks: [NudgeTask],
         goalContexts: [ActiveGoalContext],
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        userMessage: String? = nil,
+        writeLog: Bool = true
     ) -> CaptureWriteResult {
         // One active plan at a time: if this response captures a NEW
         // ordered plan, clear sequenceIndex on any surviving tasks
@@ -229,7 +235,13 @@ enum CaptureWriter {
             print("[CaptureWriter]   dropped \"\(item.title)\": \(item.reason)")
         }
         #endif
-        return CaptureWriteResult(created: newlyCreatedTasks, dropped: droppedItems)
+        let result = CaptureWriteResult(created: newlyCreatedTasks, dropped: droppedItems)
+        #if DEBUG
+        if writeLog, let userMessage {
+            CaptureLog.record(message: userMessage, response: response, result: result)
+        }
+        #endif
+        return result
     }
 
     // MARK: - Date / priority helpers (shared with the task_updates path)

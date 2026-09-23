@@ -19,3 +19,7 @@ build/
 # eval harness run artifacts (eval/.build/ is covered by .build/ above)
 eval/.build.log
 eval/.last-run.log
+
+# capture-history draft: Roman's real messages; cases move to cases.json by hand
+eval/cases.draft.json
+eval/cases.draft.meta.json

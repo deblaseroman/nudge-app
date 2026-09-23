@@ -280,7 +280,9 @@ enum EvalHarness {
                     response: response,
                     allTasks: [],
                     goalContexts: [],
-                    modelContext: fixture.context
+                    modelContext: fixture.context,
+                    userMessage: text,
+                    writeLog: false
                 )
                 created = written.created
                 try fixture.context.save()
