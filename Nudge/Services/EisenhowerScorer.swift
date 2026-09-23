@@ -52,18 +52,56 @@ enum EisenhowerScorer {
 
     // MARK: - Importance
     //
-    // Weighted sum of stable signals. Category provides the base prior;
+    // Two regimes. A DUE-DATED item takes the ladder (`dueDatedImportance`,
+    // `dueTodayImportance`) and nothing else. An UNDATED item takes the
+    // weighted sum of stable signals: category provides the base prior;
     // user-stated urgency, deep-work cognitive load, and dependencies bump
     // it. Clamped to 0...1.
 
+    /// - Parameters:
+    ///   - hasDueDate / isDueToday: the ladder inputs — `task.hasDeadline`
+    ///     and whether `task.sortDeadline` falls today. Call sites that
+    ///     have a task pass both; the DEBUG stakes dump passes neither.
+    ///   - stakes: the CONSEQUENCE signal (`NudgeTask.stakes`).
+    ///   Defaults to `nil`, which contributes exactly nothing — so a caller
+    ///   that doesn't pass it gets the identical pre-stakes number. Every
+    ///   production call site is currently in that state on purpose: the
+    ///   weights are being validated against real data through
+    ///   `NudgeArbiter`'s DEBUG stakes-impact dump before they go live.
     static func importance(
         category: TaskCategory?,
         isDeepWork: Bool,
         statedUrgency: StatedUrgency,
-        hasDependencies: Bool
+        hasDependencies: Bool,
+        stakes: TaskStakes? = nil,
+        hasDueDate: Bool = false,
+        isDueToday: Bool = false
     ) -> Double {
+        // The due-date ladder (Roman, Sep 16 2026) runs AHEAD of the mix:
+        // a due-dated item is medium from creation and high on its due
+        // day, full stop. Only undated items fall through to the weights.
+        if hasDueDate {
+            return isDueToday ? NudgeConfig.dueTodayImportance : NudgeConfig.dueDatedImportance
+        }
+
         var score = baseImportance(for: category)
-        if statedUrgency == .explicit { score += 0.25 }
+
+        // ── The correlated pair ──────────────────────────────────────────
+        // `statedUrgency == .explicit` ("I said this is urgent") and
+        // `stakes == .high` ("missing this has lasting consequences") land
+        // on the same tasks far more often than not. Summed naively they
+        // count one belief twice AND spend 0.45 of a 1.0 budget, which
+        // shoves the pair into the clamp below and destroys the ordering
+        // the stakes term was added to create. Capped, the pair costs 0.30.
+        //
+        // A `.low` penalty is NOT part of the cap — it's evidence pointing
+        // the other way, so it applies in full and buys separation at the
+        // bottom of the range where there's headroom to spend.
+        let statedBonus = statedUrgency == .explicit ? 0.25 : 0.0
+        let stakesTerm = stakes.flatMap { NudgeConfig.stakesImportanceBonus[$0] } ?? 0.0
+        score += min(statedBonus + max(stakesTerm, 0), NudgeConfig.stakesSignalCombinedCap)
+        score += min(stakesTerm, 0)
+
         if isDeepWork                 { score += 0.15 }
         if hasDependencies            { score += 0.10 }
         return min(max(score, 0), 1)

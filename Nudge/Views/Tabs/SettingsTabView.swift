@@ -15,6 +15,8 @@ struct SettingsTabView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
     @State private var activeTimeEditor: TimeSettingDestination?
+    /// Roman's in-app notebook (DEBUG only).
+    @State private var showDevNotes = false
     @State private var notificationAuthorizationState: NudgeNotificationService.AuthorizationState = .notDetermined
 
     var body: some View {
@@ -39,6 +41,32 @@ struct SettingsTabView: View {
                     value: profile.bedtime.formatted(date: .omitted, time: .shortened),
                     destination: .bedtime
                 )
+
+                settingsSection(title: "Quiet hours") {
+                    // Quiet hours default to the sleep schedule but are no
+                    // longer BOUND to it — bedtime is when you go to bed, not
+                    // necessarily when you want to stop being interrupted.
+                    toggleSettingsRow(
+                        title: "Match my sleep schedule",
+                        subtitle: "Quiet from 1 hr before bedtime until 30 min after wake. Turn off to set your own hours.",
+                        isOn: quietHoursFollowSleepBinding
+                    )
+
+                    if !profile.quietHoursFollowSleepSchedule {
+                        timeSettingsRow(
+                            title: "Quiet hours start",
+                            subtitle: "When Nudge should stop sending discretionary nudges.",
+                            value: timeValue(for: .quietHoursStart).formatted(date: .omitted, time: .shortened),
+                            destination: .quietHoursStart
+                        )
+                        timeSettingsRow(
+                            title: "Quiet hours end",
+                            subtitle: "When Nudge can start again. Earlier than the start time means the window runs overnight.",
+                            value: timeValue(for: .quietHoursEnd).formatted(date: .omitted, time: .shortened),
+                            destination: .quietHoursEnd
+                        )
+                    }
+                }
 
                 settingsSection(title: "Notifications") {
                     notificationPermissionCard
@@ -76,33 +104,172 @@ struct SettingsTabView: View {
                     // toggles let the user opt out of just one kind without
                     // killing everything.
                     toggleSettingsRow(
-                        title: "Morning kickoff",
-                        subtitle: "A nudge 30 min after your wake time to build momentum.",
+                        title: "Morning prompt",
+                        subtitle: "Asks what you want to get done today, 30 min after wake. Skipped when your day is already packed.",
                         isOn: $profile.morningCheckInNotificationsEnabled
                     )
+                    // The field name is historical: `taskDueSoonNotificationsEnabled`
+                    // has always gated the start-early pushes (the getAhead
+                    // builder, now prep), so it keeps doing that after the
+                    // Aug 2026 split — a user who turned it off silenced
+                    // exactly these.
                     toggleSettingsRow(
-                        title: "Bedtime planning",
-                        subtitle: "A check-in 30 min before bed to plan tomorrow.",
-                        isOn: $profile.eveningCheckInNotificationsEnabled
-                    )
-                    toggleSettingsRow(
-                        title: "Task due soon",
-                        subtitle: "Get-ahead reminders for tasks with deadlines, plus mid-day check-ins on open work.",
+                        title: "Start early",
+                        subtitle: "A push to start a deadline task days ahead, on the day there's still room to get ahead of it.",
                         isOn: $profile.taskDueSoonNotificationsEnabled
+                    )
+                    // Split out of get-ahead in Aug 2026: a factual reminder
+                    // ~2 hours before something is due. Its own field —
+                    // see the note on `UserProfile`.
+                    toggleSettingsRow(
+                        title: "Due soon",
+                        subtitle: "A heads-up about 2 hours before a deadline. Things due within the same hour share one reminder.",
+                        isOn: $profile.dueSoonReminderNotificationsEnabled
+                    )
+                    // Was folded into "Task due soon" until Jul 2026. One
+                    // switch for two features meant silencing the mid-day
+                    // check-in also silenced every deadline-driven get-ahead
+                    // nudge — the more valuable half.
+                    toggleSettingsRow(
+                        title: "Open work check-in",
+                        subtitle: "A mid-day nudge about an undated task you haven't gotten to, 6 hrs after wake.",
+                        isOn: $profile.floaterCheckInNotificationsEnabled
+                    )
+                    // Added Jul 2026. Event blocks were the only kind with no
+                    // switch of their own, so the only way to stop them was
+                    // the master toggle above.
+                    toggleSettingsRow(
+                        title: "Event reminders",
+                        subtitle: "A heads-up before a block of calendar events, so the first one doesn't start without you.",
+                        isOn: $profile.eventReminderNotificationsEnabled
                     )
                     toggleSettingsRow(
                         title: "Session starter",
                         subtitle: "A morning paralysis nudge if you haven't started anything 3 hrs after wake.",
                         isOn: $profile.sessionStarterNotificationsEnabled
                     )
+                    // Cycle 2026-08-03-03. Only ever fires after three
+                    // quiet days — every engagement pushes it forward.
                     toggleSettingsRow(
-                        title: "Break it down",
-                        subtitle: "Offer to break a task into steps if it keeps getting ignored.",
-                        isOn: $profile.deadlinePrepNotificationsEnabled
+                        title: "Looking ahead",
+                        subtitle: "After a few days away, one note about what's coming up, never about the days themselves.",
+                        isOn: $profile.comeBackNotificationsEnabled
+                    )
+                    // Cycle 2026-08-04-02: the placement lifecycle pair.
+                    // Two toggles, not one — the follow-up is the kind most
+                    // likely to earn an opt-out, and turning it off must
+                    // not cost the pre-slot warnings too.
+                    toggleSettingsRow(
+                        title: "Timeline heads-up",
+                        subtitle: "A few minutes before a task's planned slot. Slots close together share one heads-up.",
+                        isOn: $profile.placementLeadNotificationsEnabled
+                    )
+                    toggleSettingsRow(
+                        title: "Timeline follow-up",
+                        subtitle: "If a planned slot passes and the task is still open, a reminder, repeated a few times through the day until it's done.",
+                        isOn: $profile.placementMissedNotificationsEnabled
+                    )
+                    // Cycle 2026-08-04-03: the goal-lapse bait. Rare by
+                    // construction — monthly at most per goal.
+                    toggleSettingsRow(
+                        title: "Goal check-in",
+                        subtitle: "If a personal goal goes a month untouched, one short note, at most once a month per goal.",
+                        isOn: $profile.goalLapseNotificationsEnabled
                     )
                 }
 
                 settingsCard(title: "Calendar source", value: profile.calendarSource.isEmpty ? "Not connected yet" : profile.calendarSource)
+
+                #if DEBUG
+                // Debug builds only — stripped from Release.
+                settingsSection(title: "Dev notes") {
+                    Button {
+                        NudgeHaptics.light()
+                        showDevNotes = true
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Open notes")
+                                    .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                    .foregroundColor(NudgeTheme.textPrimary)
+                                Text("Jot issues and changes while using the app. Pulled off the phone with scripts/pull-dev-notes.sh.")
+                                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                                    .foregroundColor(NudgeTheme.textMuted)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(NudgeTheme.textMuted)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    // Share the DEBUG capture log (Documents/CaptureLog.jsonl,
+                    // one line per real capture) through the system share
+                    // sheet — to Notes, AirDrop, Files. Disabled until the
+                    // first capture has been logged.
+                    Divider().padding(.vertical, 4)
+                    let logLines = (try? String(contentsOf: CaptureLog.url, encoding: .utf8))?
+                        .split(separator: "\n").count ?? 0
+                    if logLines > 0 {
+                        ShareLink(
+                            item: CaptureLog.url,
+                            preview: SharePreview("Nudge capture log", image: Image(systemName: "doc.text"))
+                        ) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Share capture log")
+                                        .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                        .foregroundColor(NudgeTheme.textPrimary)
+                                    Text("\(logLines) capture\(logLines == 1 ? "" : "s") logged. Sends CaptureLog.jsonl through the share sheet.")
+                                        .font(.custom(NudgeTheme.fontBody, size: 12))
+                                        .foregroundColor(NudgeTheme.textMuted)
+                                }
+                                Spacer()
+                                Image(systemName: "square.and.arrow.up")
+                                    .foregroundColor(NudgeTheme.textMuted)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Share capture log")
+                                    .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                    .foregroundColor(NudgeTheme.textMuted)
+                                Text("No captures logged yet. The log starts with the next brain dump.")
+                                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                                    .foregroundColor(NudgeTheme.textMuted)
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+
+                settingsSection(title: "Debug: classifier harness") {
+                    Text("Seeds backdated NudgeOutcome rows covering every branch NudgeOutcomeClassifier distinguishes, runs the real decision logic over them, and prints expected vs actual to the Xcode console. Deletes everything it created afterward.")
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button(action: {
+                        NudgeHaptics.medium()
+                        NudgeOutcomeClassifierHarness.run(modelContext: modelContext)
+                    }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "testtube.2")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("Run classifier harness")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(NudgeTheme.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                    }
+                    .buttonStyle(.plain)
+                }
+                #endif
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -112,6 +279,9 @@ struct SettingsTabView: View {
         .task {
             notificationAuthorizationState = await NudgeNotificationService.shared.authorizationState()
         }
+        #if DEBUG
+        .sheet(isPresented: $showDevNotes) { DevNotesView() }
+        #endif
         .sheet(item: $activeTimeEditor) { destination in
             TimeSettingSheet(
                 title: destination.title,
@@ -119,11 +289,21 @@ struct SettingsTabView: View {
                 onConfirm: { newValue in
                     switch destination {
                     case .morningCheckIn:
+                        // Keep wakeTime in sync — the arbiter reads
+                        // `wakeTime ?? morningCheckInTime`, so writing only
+                        // morningCheckInTime here would leave a stale
+                        // wakeTime (set during onboarding) winning the
+                        // coalesce and scheduling nudges off the old value.
                         profile.morningCheckInTime = newValue
+                        profile.wakeTime = newValue
                     case .eveningCheckIn:
                         profile.eveningCheckInTime = newValue
                     case .bedtime:
                         profile.bedtime = newValue
+                    case .quietHoursStart:
+                        profile.quietHoursStartTime = newValue
+                    case .quietHoursEnd:
+                        profile.quietHoursEndTime = newValue
                     }
                     persistSettings()
                 }
@@ -295,12 +475,44 @@ struct SettingsTabView: View {
             return profile.eveningCheckInTime
         case .bedtime:
             return profile.bedtime
+        case .quietHoursStart:
+            // Falls back to the sleep-derived window rather than "now" — an
+            // unset custom time is what the arbiter itself falls back on, so
+            // the row shows the hours actually in force.
+            return profile.quietHoursStartTime
+                ?? NudgeArbiter.sleepDerivedQuietHours(for: profile).start
+        case .quietHoursEnd:
+            return profile.quietHoursEndTime
+                ?? NudgeArbiter.sleepDerivedQuietHours(for: profile).end
         }
+    }
+
+    /// Drives the "Match my sleep schedule" toggle, seeding the custom times
+    /// from the derived window on the way OFF.
+    ///
+    /// Seeding matters: without it, turning the toggle off leaves both times
+    /// nil, `quietWindow` falls back to the derived window anyway, and the
+    /// two rows below would show hours the user never picked while the
+    /// toggle claims they're custom. Seeded, flipping the switch is a
+    /// genuine no-op until the user actually moves one.
+    private var quietHoursFollowSleepBinding: Binding<Bool> {
+        Binding(
+            get: { profile.quietHoursFollowSleepSchedule },
+            set: { follows in
+                if !follows {
+                    let derived = NudgeArbiter.sleepDerivedQuietHours(for: profile)
+                    if profile.quietHoursStartTime == nil { profile.quietHoursStartTime = derived.start }
+                    if profile.quietHoursEndTime == nil { profile.quietHoursEndTime = derived.end }
+                }
+                profile.quietHoursFollowSleepSchedule = follows
+            }
+        )
     }
 
     private func persistSettings() {
         try? modelContext.save()
     }
+
 }
 
 // MARK: - Time Setting Sheet
@@ -371,6 +583,8 @@ enum TimeSettingDestination: String, Identifiable {
     case morningCheckIn
     case eveningCheckIn
     case bedtime
+    case quietHoursStart
+    case quietHoursEnd
 
     var id: String { rawValue }
 
@@ -382,6 +596,10 @@ enum TimeSettingDestination: String, Identifiable {
             return "Evening Check-in"
         case .bedtime:
             return "Bedtime"
+        case .quietHoursStart:
+            return "Quiet Hours Start"
+        case .quietHoursEnd:
+            return "Quiet Hours End"
         }
     }
 }

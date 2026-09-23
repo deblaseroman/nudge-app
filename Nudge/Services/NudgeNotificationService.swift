@@ -33,6 +33,28 @@ final class NudgeNotificationService: NSObject {
 
     static let shared = NudgeNotificationService()
 
+    /// App-group keys for the durable "idle Not-yet → show confirmation
+    /// sheet" intent. Written when the user taps "Not yet"; consumed by
+    /// TasksTabView when it appears/becomes active (survives cold launch).
+    static let pendingIdleTaskIDKey = "nudge.pendingIdleTaskID"
+    static let pendingIdleTaskDateKey = "nudge.pendingIdleTaskDate"
+
+    /// App-group keys for "the user tapped a nudge BODY and landed on the
+    /// Tasks tab" — the same durable pattern as the idle keys above (a
+    /// transient post dies on cold launch), consumed by the Tasks tab's
+    /// message box via `TappedNudgeContext.read()`. NOT one-shot: the box
+    /// is passive display, so the context stays readable for its freshness
+    /// window (`NudgeConfig.messageBoxTapContextMinutes`) and expires by
+    /// age. Written only on body taps that route to Tasks — action buttons
+    /// carry their own flows (Start starts a session, idle "Not yet" has
+    /// its sheet), and morning-prompt taps land in Home chat.
+    static let tappedNudgeKindKey = "nudge.tappedNudgeKind"
+    static let tappedNudgeTaskIDKey = "nudge.tappedNudgeTaskID"
+    static let tappedNudgeDateKey = "nudge.tappedNudgeDate"
+    /// Goal-lapse taps only: the `NudgeGoal.id` the bait was about, so the
+    /// message box's hook can name the right goal.
+    static let tappedNudgeGoalIDKey = "nudge.tappedNudgeGoalID"
+
     enum AuthorizationState {
         case notDetermined
         case denied
@@ -111,32 +133,34 @@ final class NudgeNotificationService: NSObject {
 // MARK: - UNUserNotificationCenterDelegate
 
 extension NudgeNotificationService: UNUserNotificationCenterDelegate {
-    nonisolated func userNotificationCenter(
+    // These delegate methods are @MainActor-isolated (inherited from the
+    // @MainActor class — note: NO `nonisolated`). The system delivers the
+    // callbacks and Swift guarantees the bodies run on the main actor. This
+    // replaces the old `nonisolated ... async` + manual `MainActor.run`
+    // pattern, which ran the body on the cooperative thread pool and then
+    // hopped — leaving a window where UI-driving work (tab switch, sheet
+    // presentation, SwiftData save → @Query invalidation) could be committed
+    // off the main thread, tripping UIKit's
+    // `_performBlockAfterCATransactionCommitSynchronizes` main-thread assert.
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
     }
 
-    nonisolated func userNotificationCenter(
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
         let request = response.notification.request
-        let actionID = response.actionIdentifier
-        let userInfo = request.content.userInfo
-        let notificationID = request.identifier
-        let taskIDString = userInfo[NudgeNotificationUserInfoKey.taskID] as? String
-        let taskID = taskIDString.flatMap(UUID.init(uuidString:))
-
-        await MainActor.run {
-            handleResponse(
-                actionID: actionID,
-                notificationID: notificationID,
-                taskID: taskID,
-                requestContent: request.content
-            )
-        }
+        let taskIDString = request.content.userInfo[NudgeNotificationUserInfoKey.taskID] as? String
+        handleResponse(
+            actionID: response.actionIdentifier,
+            notificationID: request.identifier,
+            taskID: taskIDString.flatMap(UUID.init(uuidString:)),
+            requestContent: request.content
+        )
     }
 
     @MainActor
@@ -149,10 +173,20 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
         let context = ModelContext(SharedModelContainer.container)
 
         // Resolve outcome row up-front so every branch can update it.
-        let outcomeDescriptor = FetchDescriptor<NudgeOutcome>(
-            predicate: #Predicate<NudgeOutcome> { $0.notificationID == notificationID }
+        //
+        // A notification ID can now match MORE than one row: `cancelAll`
+        // retains pending rows whose fire time has already passed (they're
+        // awaiting classification), so a rebuilt candidate that reuses its
+        // ID — break-it-down keys on task ID alone, with no day stamp —
+        // can insert a second row alongside the delivered one. Take the
+        // newest still-pending row, falling back to the newest row at all.
+        var outcomeDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> { $0.notificationID == notificationID },
+            sortBy: [SortDescriptor(\.scheduledFor, order: .reverse)]
         )
-        let outcome = (try? context.fetch(outcomeDescriptor))?.first
+        outcomeDescriptor.fetchLimit = 10
+        let matches = (try? context.fetch(outcomeDescriptor)) ?? []
+        let outcome = matches.first(where: { $0.resultRaw == "pending" }) ?? matches.first
 
         switch actionID {
         case UNNotificationDismissActionIdentifier:
@@ -163,25 +197,23 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             outcome?.result = .tappedStart
             outcome?.actedAt = Date()
             startSession(for: taskID, context: context)
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
+            // Defer the UI-driving post to a clean main runloop tick. Posting
+            // synchronously from inside the UN delegate's MainActor.run runs
+            // observers (deepLinkTab mutation, withAnimation tab switch) on
+            // the same dispatch pass as the foregrounding handoff, which
+            // triggered a "Call must be made on main thread" assertion.
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .nudgeNotificationOpenTab,
+                    object: nil,
+                    userInfo: ["tab": "tasks"]
+                )
+            }
 
         case NudgeNotificationActionID.snooze30.rawValue:
             outcome?.result = .tappedSnooze
             outcome?.actedAt = Date()
             rescheduleSnoozed(requestContent: requestContent, originalID: notificationID)
-
-        case NudgeNotificationActionID.breakItDown.rawValue:
-            outcome?.result = .tappedBreakDown
-            outcome?.actedAt = Date()
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
 
         case NudgeNotificationActionID.idleYesGood.rawValue:
             // User said they're already on it. Leave them alone for the
@@ -196,31 +228,105 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             // User hasn't started yet. Pick the top task for them so they
             // don't have to choose, drop them on the Tasks tab, and let
             // TasksTabView surface a confirmation sheet.
-            outcome?.result = .tappedStart
+            //
+            // `.tappedOpen`, not `.tappedStart` (Aug 2026): "Not yet" is a
+            // deliberate reply that OPENS a proposal sheet — by their own
+            // statement the user hasn't started anything. If they start
+            // from the sheet, the session lands after this row is resolved
+            // and is not re-attributed; under-crediting is the safe
+            // direction while outcomes are observation-only.
+            outcome?.result = .tappedOpen
             outcome?.actedAt = Date()
             let topTask = pickTopOpenTask(context: context)
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
-            if let topTask {
-                NotificationCenter.default.post(
-                    name: .nudgeIdleNotYetTapped,
-                    object: nil,
-                    userInfo: ["taskID": topTask.id.uuidString]
-                )
+            // Capture as a sendable value — must not access the SwiftData
+            // model from inside the deferred closures (different runloop
+            // tick, potentially stale faulted reference).
+            let topTaskIDString = topTask?.id.uuidString
+
+            // DURABLE pending state. The transient .nudgeIdleNotYetTapped
+            // post is only caught if TasksTabView is already mounted and
+            // subscribed — which it is NOT on a COLD LAUNCH from the
+            // notification tap (the whole view tree is still building, so the
+            // post fires before the subscriber exists and the sheet never
+            // shows). Persisting the proposed task to the app group makes the
+            // intent survive the launch: TasksTabView reads it whenever it
+            // appears / becomes active, independent of timing or launch path.
+            if let topTaskIDString {
+                let defaults = SharedModelContainer.appGroupDefaults
+                defaults.set(topTaskIDString, forKey: Self.pendingIdleTaskIDKey)
+                defaults.set(Date(), forKey: Self.pendingIdleTaskDateKey)
             }
+            // Two-step async hop: the tab-open post fires first on the next
+            // main runloop tick so SwiftUI can commit deepLinkTab → MainTabView
+            // selectedTab → TasksTabView mounts → .onReceive subscription
+            // becomes live. THEN the idleNotYet post fires on the tick after,
+            // by which time TasksTabView is in the hierarchy and its
+            // subscription will actually catch the notification. Posting both
+            // synchronously inside MainActor.run was both crashing during
+            // the foregrounding handoff AND missing the sheet observer
+            // because TasksTabView wasn't mounted yet.
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .nudgeNotificationOpenTab,
+                    object: nil,
+                    userInfo: ["tab": "tasks"]
+                )
+                if let topTaskIDString {
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(
+                            name: .nudgeIdleNotYetTapped,
+                            object: nil,
+                            userInfo: ["taskID": topTaskIDString]
+                        )
+                    }
+                }
+            }
+
+        case NudgeNotificationActionID.markUnhelpful.rawValue:
+            recordFeedback(.markedUnhelpful, on: outcome)
 
         case UNNotificationDefaultActionIdentifier:
             // User tapped the notification body itself (not a button).
-            outcome?.result = .tappedStart
+            // `.tappedOpen`, not `.tappedStart` (Aug 2026): a body tap
+            // means "show me", not "I'm starting" — recording it as
+            // tappedStart made the two indistinguishable in the data,
+            // which the fatigue gate must be able to tell apart before it
+            // ever arms. `.tappedStart` now comes only from the explicit
+            // Start action above.
+            outcome?.result = .tappedOpen
             outcome?.actedAt = Date()
-            NotificationCenter.default.post(
-                name: .nudgeNotificationOpenTab,
-                object: nil,
-                userInfo: ["tab": "tasks"]
-            )
+            // The morning prompt asks a question the user answers by TYPING —
+            // its landing surface is the Home chat, where the reply flows
+            // through normal brain-dump capture. Every other notification's
+            // home remains the Tasks tab.
+            let kindRaw = requestContent.userInfo[NudgeNotificationUserInfoKey.kind] as? String
+            let tab = (kindRaw == NudgeOutcomeKind.morningPrompt.rawValue) ? "home" : "tasks"
+            // Durable context for the Tasks tab's message box: which nudge
+            // the user arrived from, so the box can explain it in more room
+            // than a banner has. Same survives-cold-launch reasoning as the
+            // idle "Not yet" keys above.
+            if tab == "tasks", let kindRaw {
+                let defaults = SharedModelContainer.appGroupDefaults
+                defaults.set(kindRaw, forKey: Self.tappedNudgeKindKey)
+                if let taskID {
+                    defaults.set(taskID.uuidString, forKey: Self.tappedNudgeTaskIDKey)
+                } else {
+                    defaults.removeObject(forKey: Self.tappedNudgeTaskIDKey)
+                }
+                if let goalIDString = requestContent.userInfo[NudgeNotificationUserInfoKey.goalID] as? String {
+                    defaults.set(goalIDString, forKey: Self.tappedNudgeGoalIDKey)
+                } else {
+                    defaults.removeObject(forKey: Self.tappedNudgeGoalIDKey)
+                }
+                defaults.set(Date(), forKey: Self.tappedNudgeDateKey)
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .nudgeNotificationOpenTab,
+                    object: nil,
+                    userInfo: ["tab": tab]
+                )
+            }
 
         default:
             // Unknown action — log no result so the row stays pending and
@@ -231,14 +337,46 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
         try? context.save()
     }
 
+    /// Records an explicit 👎 on the nudge, and touches NOTHING else.
+    ///
+    /// Every other branch above writes `result` + `actedAt`. This one
+    /// deliberately does not, in either direction:
+    ///
+    ///   • It leaves `result` alone, so a row the user already acted on
+    ///     keeps its behavioural record alongside the rating.
+    ///   • It leaves a `pending` row PENDING, so `NudgeOutcomeClassifier`
+    ///     still sweeps it later and we end up with both readings on the
+    ///     same row — the inferred one and the stated one. Stamping a
+    ///     result here would take the row out of the sweep's predicate and
+    ///     destroy the comparison the feedback exists to enable.
+    ///
+    /// The feedback action is non-`.foreground` (see
+    /// `NudgeNotificationCategories`) so pressing it doesn't stamp
+    /// `AppOpenLog` either. The two signals stay independent end to end.
+    ///
+    /// Nothing consumes `feedback` yet — this is collection only.
+    @MainActor
+    private func recordFeedback(_ value: NudgeOutcomeResult, on outcome: NudgeOutcome?) {
+        guard let outcome else { return }
+        outcome.feedback = value
+        outcome.feedbackAt = Date()
+    }
+
     /// Returns the highest-priority open task per `TaskSortComparator`.
     /// Used by the idle "Not yet" handler to pre-select a task so the user
     /// doesn't have to scan the full list to pick something.
     @MainActor
     private func pickTopOpenTask(context: ModelContext) -> NudgeTask? {
         let allTasks = (try? context.fetch(FetchDescriptor<NudgeTask>())) ?? []
-        let open = allTasks.filter { !$0.isInformationalEvent && !$0.isComplete }
-        return open.sorted(by: { TaskSortComparator().compare($0, $1) }).first
+        // Day-integrity glue (cycle 2026-09-13-01): don't hand the user a
+        // future-day intention as "the thing to start now".
+        let open = allTasks.filter {
+            !$0.isInformationalEvent && !$0.isComplete && !$0.intentIsFuture()
+        }
+        // The comparator is plan-first: an ordered plan's NEXT item wins
+        // when one exists, deadline buckets rank the rest.
+        let comparator = TaskSortComparator()
+        return open.min { comparator.compare($0, $1) }
     }
 
     @MainActor

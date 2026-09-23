@@ -8,6 +8,202 @@
 import Foundation
 import SwiftData
 
+// MARK: - Event duration resolution
+//
+// THE one implementation of "how long does this event run?". Until Jul
+// 2026 there were four: `BusyWindowResolver.resolveDurationMinutes` (the
+// canonical one), a hand-maintained mirror in `TodayTimelineView`, and two
+// TRUNCATED copies (`DayPlanRefiner`, the widget chart) that skipped the
+// learned `EventDurationStats` row — so a three-hour lab with no explicit
+// estimate read as 60 minutes to the AI planner and the widget chart while
+// the busy gate correctly saw three hours.
+//
+// It lives HERE, not in a service, because the widget target compiles
+// `Nudge/Models/*.swift` and nothing else — a service method couldn't be
+// shared, and a NEW model file would need a hand edit to the widget's
+// `membershipExceptions` list in project.pbxproj.
+extension NudgeTask {
+    /// Fallback when nothing explicit or learned exists. This is the
+    /// single source of truth — `NudgeConfig.defaultEventDurationMinutes`
+    /// forwards to it (NudgeConfig is invisible to the widget target, so
+    /// the value itself must live in the model layer). Tune it here.
+    static let fallbackEventDurationMinutes: Int = 60
+
+    /// Resolved duration in minutes for an informational event:
+    /// explicit `estimatedMinutes` (written by the calendar / screenshot
+    /// import from the event's real end time) → learned per-title
+    /// `EventDurationStats` row → the shared fallback.
+    func eventDurationMinutes(modelContext: ModelContext) -> Int {
+        if let explicit = estimatedMinutes, explicit > 0 { return explicit }
+        let key = EventDurationStats.normalize(title)
+        var descriptor = FetchDescriptor<EventDurationStats>(
+            predicate: #Predicate<EventDurationStats> { $0.titleKey == key }
+        )
+        descriptor.fetchLimit = 1
+        if let learned = (try? modelContext.fetch(descriptor))?.first {
+            return learned.durationMinutes
+        }
+        return Self.fallbackEventDurationMinutes
+    }
+
+    /// Same resolution against an already-fetched stats array — for hot
+    /// paths that hold a bounded `@Query` (the timeline re-reads on every
+    /// 60s tick) and must not fetch per event per render.
+    func eventDurationMinutes(in stats: [EventDurationStats]) -> Int {
+        if let explicit = estimatedMinutes, explicit > 0 { return explicit }
+        let key = EventDurationStats.normalize(title)
+        if let learned = stats.first(where: { $0.titleKey == key }) {
+            return learned.durationMinutes
+        }
+        return Self.fallbackEventDurationMinutes
+    }
+}
+
+// MARK: - Display / pick ordering
+//
+// Shared by every "what order do tasks go in?" and "what should I start?"
+// site in BOTH targets — the app list, the session pickers, the idle
+// builder's target choice, the notification-tap target, and the widget
+// rows. Lives here (Models) for the same reason `eventDurationMinutes`
+// does: the widget compiles Models only.
+
+extension NudgeTask {
+    /// The instant used for deadline ordering: the explicit clock time
+    /// when one exists, else the END of the due day (a bare due date means
+    /// "by end of that day" — capture normalizes it to 23:59 for exactly
+    /// this reason), else `.distantFuture` for floaters.
+    var sortDeadline: Date {
+        if let specificTime {
+            return specificTime
+        }
+        if let dueDate {
+            let start = Calendar.current.startOfDay(for: dueDate)
+            return Calendar.current.date(byAdding: .day, value: 1, to: start) ?? dueDate
+        }
+        return .distantFuture
+    }
+
+    var isOverdue: Bool {
+        guard !isComplete else { return false }
+        return sortDeadline < Date()
+    }
+
+    /// The Skipped rule's subject: a single task with no due date, not a
+    /// subtask of an anchored thing, not a commitment. Only these are ever
+    /// counted or shown as skipped; anything owed is Overdue's business.
+    var isSkipCandidate: Bool {
+        !isInformationalEvent && !hasDeadline && linkedEventId == nil && commitmentShapeRaw == nil
+    }
+
+    /// Skipped twice (Roman, Sep 16 2026): shown in the Skipped section,
+    /// out of Unscheduled and the day lists, until the user dates or places
+    /// it again (which resets the count) or completes it. While Plan my
+    /// day has it on today's timeline it is NOT skipped for display (the
+    /// list, widget and timeline must agree), but the count is untouched
+    /// (Roman, Sep 21): if the day passes again it returns here.
+    var isSkipped: Bool {
+        !isComplete && isSkipCandidate
+            && skipCount >= Self.skipsBeforeSkippedSection
+            && plannedStartDate == nil
+    }
+
+    /// The Skipped threshold lives on the model, not in `NudgeConfig`, only
+    /// because the widget target compiles this file without the config;
+    /// `NudgeConfig.skipsBeforeSkippedSection` forwards here so the tunable
+    /// stays discoverable where every other one lives.
+    static let skipsBeforeSkippedSection: Int = 2
+
+    /// True when this task is actually OWED at a moment — the deadline half
+    /// of the deadline-vs-intention split (cycle 2026-09-03-01). Read sites
+    /// that mean "does time pressure exist here" should ask this, not
+    /// re-derive it from the fields, so the split stays one rule.
+    var hasDeadline: Bool {
+        dueDate != nil || specificTime != nil
+    }
+
+    /// The DAY-INTEGRITY invariant, task half (cycle 2026-09-13-01): a task
+    /// glued to a day still ahead is invisible to every "what should I do
+    /// NOW" path — planner candidates, morning naming, idle targeting,
+    /// session suggestions — until that day arrives. The user already chose
+    /// the day; those paths honor decisions, they don't re-make them.
+    /// Deadline tasks are deliberately NOT glued: working ahead of a due
+    /// date is the point of planning. A PAST intent day returns false — a
+    /// slipped intention is fair game again. Ask this helper, never
+    /// re-derive; one rule, every site.
+    func intentIsFuture(asOf reference: Date = Date()) -> Bool {
+        guard let intendedDate else { return false }
+        return intendedDate > Calendar.current.startOfDay(for: reference)
+    }
+
+    /// The day this TASK is scheduled to — intent day, else placement day,
+    /// else nil (the day-membership rule, cycle 2026-09-04-01; hoisted to
+    /// the model in 2026-09-13-02 so the Today lenses and the calendar view
+    /// read ONE implementation). Deadline-only tasks return nil: owed is
+    /// not scheduled. Meaningless on events — their anchor is
+    /// `specificTime ?? dueDate`.
+    var scheduledDay: Date? {
+        if let intendedDate { return Calendar.current.startOfDay(for: intendedDate) }
+        if let plannedStartDate { return Calendar.current.startOfDay(for: plannedStartDate) }
+        return nil
+    }
+}
+
+/// The one task ordering, with **plan-first built in** (Jul 2026 — before
+/// this, every site that consumed the comparator hand-bolted the "ordered
+/// plan outranks score" rule on top of it, or forgot to). Buckets:
+///
+///   0. plan tasks (`sequenceIndex != nil`), in stated order — the user's
+///      declared sequence outranks every deadline heuristic below
+///      (Cross-cutting invariant 1 in ARCHITECTURE.md)
+///   1. overdue, oldest deadline first
+///   2. dated, soonest deadline first
+///   3. floaters, oldest created first
+///   4. completed, newest completion first
+///
+/// Callers that must EXCLUDE plan tasks (the app's Unscheduled/Scheduled
+/// sections render them in their own numbered section) filter
+/// `sequenceIndex == nil` before sorting, same as before.
+struct TaskSortComparator {
+    func compare(_ lhs: NudgeTask, _ rhs: NudgeTask) -> Bool {
+        let leftBucket = sortBucket(for: lhs)
+        let rightBucket = sortBucket(for: rhs)
+
+        if leftBucket != rightBucket {
+            return leftBucket < rightBucket
+        }
+
+        switch leftBucket {
+        case 0:
+            if let l = lhs.sequenceIndex, let r = rhs.sequenceIndex, l != r {
+                return l < r
+            }
+            return lhs.sortDeadline < rhs.sortDeadline
+        case 1, 2:
+            return lhs.sortDeadline < rhs.sortDeadline
+        case 3:
+            return lhs.createdAt < rhs.createdAt
+        default:
+            return (lhs.completedAt ?? .distantPast) > (rhs.completedAt ?? .distantPast)
+        }
+    }
+
+    private func sortBucket(for task: NudgeTask) -> Int {
+        if task.isComplete {
+            return 4
+        }
+        if task.sequenceIndex != nil {
+            return 0
+        }
+        if task.isOverdue {
+            return 1
+        }
+        if task.sortDeadline != .distantFuture {
+            return 2
+        }
+        return 3
+    }
+}
+
 @Model
 final class NudgeTask {
     var id: UUID
@@ -29,6 +225,138 @@ final class NudgeTask {
     var dependsOnTaskId: UUID?      // optional dependency — this task blocked by another
     var isInformationalEvent: Bool
 
+    /// Where the user has PLACED this task on today's horizontal timeline.
+    /// Independent of `dueDate`/`specificTime` (which represent the deadline
+    /// and must not change when a task is placed). Nil = unscheduled.
+    var plannedStartDate: Date?
+    /// How long the placed block should span on the timeline, in minutes.
+    /// Nil falls back to `estimatedMinutes`, then a default.
+    var plannedDurationMinutes: Int?
+    /// True when the placement was created by "Plan my day" (auto), false
+    /// when the user placed it manually. Lets "Clear plan" remove only the
+    /// auto placements and keep manual ones.
+    var plannedIsAuto: Bool = false
+
+    /// Position (1-based) in an ordered "Today's plan" captured from the
+    /// brain dump ("first X, then Y…"). Nil means the task is NOT part of an
+    /// ordered plan. Independent of the timeline — a plan is a numbered,
+    /// reorderable list, not a placement.
+    var sequenceIndex: Int?
+
+    /// The day the user MEANS to do this — never a deadline (cycle
+    /// 2026-09-03-01). "Study Python tomorrow at 7" is an intention, not
+    /// something owed; before this field existed, capture had nowhere to put
+    /// that day except `dueDate`, and the whole app then treated it as due —
+    /// countdowns, overdue red, dueSoon nudges, fake urgency. Day
+    /// granularity, normalized to startOfDay at every write. Unlike a
+    /// placement (`plannedStartDate`), this SURVIVES its day passing — a
+    /// slipped intention is information (it's what makes a floater check-in
+    /// meaningful), where a stale placement is just clutter and gets swept.
+    /// Never set on informational events; an event's time is its time.
+    var intendedDate: Date? = nil
+
+    /// How many days this task sat on Today and was not finished (Roman,
+    /// Sep 16 2026). Counted by `PlacementRollover` for single tasks with
+    /// no due date that are not subtasks of an anchored thing; reset to 0
+    /// whenever the user places or dates the task again. At
+    /// `NudgeConfig.skipsBeforeSkippedSection` the task reads as skipped
+    /// (`isSkipped`) and lives in the Skipped section, apart from Overdue.
+    var skipCount: Int = 0
+
+    /// DEPRECATED tombstone column (Sep 2026). Held the exam study-lead
+    /// band (3, 7, or 14) the old silent exam sweep read; the plan reader
+    /// decides sessions itself now and nothing reads or writes this. Kept
+    /// so existing stores open without a migration.
+    var prepLeadDays: Int? = nil
+
+    /// Canonical consequence signal — raw storage for `TaskStakes`
+    /// ("high" | "medium" | "low"). Nil = never classified, which is what
+    /// a later backfill pass keys on. Read through `stakes`; unknown
+    /// strings read as nil, never crash. Deliberately NOT part of the
+    /// memberwise init: every automated writer must go through
+    /// `setStakesFromAutomation` so the user-override guard below cannot
+    /// be bypassed.
+    var stakesRaw: String? = nil
+    /// True once the user has set stakes by hand (manual editor — not
+    /// built yet). While set, `setStakesFromAutomation` is a no-op, so no
+    /// AI or import pass can clobber the user's choice. Only user-driven
+    /// UI may write `stakes` directly, and it must set this flag too.
+    var stakesIsUserSet: Bool = false
+
+    /// Commitment shape detected at capture — raw storage for
+    /// `CommitmentShape` ("splitwork" | "rate" | "quantity"), set on the
+    /// PARENT task a brain dump like "an hour a day until Friday"
+    /// produces (cycle 2026-08-03-01). Non-nil marks the task as a
+    /// commitment awaiting expansion: once its numbers are known
+    /// (`estimatedMinutes` = total effort for splitWork / per-day
+    /// duration for rate; `dueDate` = the end; `commitmentDailyCount`
+    /// for quantity), `ExamPrepSweep` converts it into a
+    /// `NudgeCommitment` row plus daily `source == "commitment"` tasks
+    /// and deletes this parent. Nil = an ordinary task; additive,
+    /// property-level default, so existing stores open unchanged.
+    var commitmentShapeRaw: String? = nil
+    /// Quantity shape only: units per day ("three applications a day"
+    /// → 3), carried until expansion stamps it onto
+    /// `NudgeCommitment.dailyCount`. Inert on every other task.
+    var commitmentDailyCount: Int? = nil
+    /// The AI's second name from capture: a SHORT session name for the
+    /// generated dailies ("Python course"), while this task's own
+    /// `title` keeps the goal phrasing with the dump's specific scope
+    /// ("Complete module 4 of Python course" — the known-sizes memory
+    /// matches on that string). Carried onto
+    /// `NudgeCommitment.sessionTitle` at expansion; nil (legacy
+    /// captures, AI omission) means dailies fall back to the goal name.
+    /// Inert on every non-commitment task.
+    var commitmentSessionTitle: String? = nil
+    /// The personal goal this task serves (`NudgeGoal.id`), linked
+    /// conservatively at capture — the AI matches against the user's
+    /// active goals riding the one capture call, and when in doubt leaves
+    /// it nil (a wrong link corrupts the goal's activity record; a missed
+    /// one just means an elapsed-time nudge fires slightly early). Soft
+    /// reference: a removed goal leaves this dangling and every reader
+    /// treats that as unlinked. Additive, property-level default.
+    var goalID: UUID? = nil
+    /// The chosen/derived first day of the commitment (start-of-day).
+    /// Set by the user's "today or tomorrow" answer, or by the app when
+    /// only one answer is possible (captured at 10pm → tomorrow). Nil =
+    /// undecided; expansion falls back to a viability default. (Cycle
+    /// 2026-08-03-02 item 3.)
+    var commitmentStartDate: Date? = nil
+    /// When the app asked "start today or tomorrow?" in chat. While this
+    /// is TODAY and `commitmentStartDate` is nil the question is
+    /// outstanding and expansion waits; a stale ask (yesterday's) expires
+    /// and expansion proceeds on the default — the question was about a
+    /// day that no longer exists.
+    var commitmentStartAskedAt: Date? = nil
+
+    /// Quantity-per-day fields (cycle 2026-08-03-01, item 3). "Three
+    /// applications a day" is ONE task with a count, not three tasks —
+    /// the model has no notion of partial completion, so the count
+    /// carries it. All nil on a normal task; additive, property-level
+    /// defaults.
+    ///
+    /// The day's base target in units. Set by the commitment sweep on
+    /// quantity dailies (from `NudgeCommitment.dailyCount`).
+    var targetCount: Int? = nil
+    /// Units done so far today. Nil reads as 0. The task completes only
+    /// when this reaches `effectiveTargetCount`.
+    var completedCount: Int? = nil
+    /// Capped carry from missed prior days, stamped onto TODAY's task by
+    /// the sweep (the durable accumulator is `NudgeCommitment.carryUnits`;
+    /// this is its display copy, so the number the row shows is always
+    /// the capped one). Never exceeds
+    /// `commitmentCarryCapDays × targetCount`.
+    var carriedCount: Int? = nil
+
+    /// Coarse "when is this task appropriate" band — raw storage for
+    /// `TaskTimeWindow` ("anytime" | "daytime" | "businesshours"),
+    /// assigned by the capture classification (cycle 2026-08-02-03).
+    /// Nil = never classified → the planner falls back to the
+    /// deterministic inference via `effectiveTimeWindow`. Additive,
+    /// property-level default: existing stores open unchanged and their
+    /// rows behave exactly as before (inference default is `.anytime`).
+    var timeWindowRaw: String? = nil
+
     init(
         id: UUID = UUID(),
         title: String,
@@ -47,7 +375,11 @@ final class NudgeTask {
         recurrence: String? = nil,
         linkedEventId: String? = nil,
         dependsOnTaskId: UUID? = nil,
-        isInformationalEvent: Bool = false
+        isInformationalEvent: Bool = false,
+        plannedStartDate: Date? = nil,
+        plannedDurationMinutes: Int? = nil,
+        plannedIsAuto: Bool = false,
+        sequenceIndex: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -67,6 +399,10 @@ final class NudgeTask {
         self.linkedEventId = linkedEventId
         self.dependsOnTaskId = dependsOnTaskId
         self.isInformationalEvent = isInformationalEvent
+        self.plannedStartDate = plannedStartDate
+        self.plannedDurationMinutes = plannedDurationMinutes
+        self.plannedIsAuto = plannedIsAuto
+        self.sequenceIndex = sequenceIndex
     }
 
     /// Typed view of `category` for scoring code. Reads the underlying
@@ -83,5 +419,58 @@ final class NudgeTask {
             return TaskCategory(rawValue: key) ?? .other
         }
         set { category = newValue?.rawValue }
+    }
+
+    /// Typed view of `stakesRaw`. Unknown or empty strings → nil (unlike
+    /// `taskCategory`, there is no catch-all case — nil means "never
+    /// classified" and later passes rely on that). The setter is for
+    /// user-driven editors only; automated writers use
+    /// `setStakesFromAutomation`.
+    var stakes: TaskStakes? {
+        get { TaskStakes.parse(stakesRaw) }
+        set { stakesRaw = newValue?.rawValue }
+    }
+
+    /// The single write path for every NON-USER stakes writer — the
+    /// brain-dump classifier, the screenshot import, the deterministic
+    /// calendar-import fallback, and any future backfill/upgrade pass.
+    /// Refuses to overwrite a hand-set value (`stakesIsUserSet`), and
+    /// treats nil as "the classifier didn't say" (keeps the current
+    /// value) rather than a clear.
+    func setStakesFromAutomation(_ newValue: TaskStakes?) {
+        guard !stakesIsUserSet else { return }
+        guard let newValue else { return }
+        stakesRaw = newValue.rawValue
+    }
+
+    /// The number the row displays and completion requires: the base
+    /// target plus the (already-capped) carry. Nil for non-count tasks.
+    var effectiveTargetCount: Int? {
+        guard let targetCount else { return nil }
+        return targetCount + (carriedCount ?? 0)
+    }
+
+    /// Typed view of `commitmentShapeRaw`. Unknown or empty strings → nil
+    /// (an unrecognized shape from a drifting AI response reads as "not a
+    /// commitment", the safe default — the task stays an ordinary task).
+    var commitmentShape: CommitmentShape? {
+        get { CommitmentShape.parse(commitmentShapeRaw) }
+        set { commitmentShapeRaw = newValue?.rawValue }
+    }
+
+    /// Typed view of `timeWindowRaw`. Unknown or empty strings → nil.
+    var timeWindow: TaskTimeWindow? {
+        get { TaskTimeWindow.parse(timeWindowRaw) }
+        set { timeWindowRaw = newValue?.rawValue }
+    }
+
+    /// The band the planner actually uses: the classification when one
+    /// exists, else the deterministic keyword inference (whose own default
+    /// is `.anytime`). Resolved at READ time rather than stamped into the
+    /// store — the stored value stays exclusively "what the classifier
+    /// said", so a later, better classification pass can tell classified
+    /// rows from fallback rows.
+    var effectiveTimeWindow: TaskTimeWindow {
+        timeWindow ?? TaskTimeWindow.infer(title: title, category: taskCategory)
     }
 }

@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; font-family: "Lexend", "Avenir Next", sans-serif; background: #F6F8F6; color: #1C211D; }
+    a { color: #5E80A6; } a:hover { color: #46648A; }
+  </style>
+</helmet>
+<div style="display: flex; flex-direction: column; gap: 14px; width: 440px; min-height: 600px; padding: 24px; background: #FFFFFF; border: 1px solid #D6DCD6; border-radius: 16px; box-sizing: border-box">
+  <div style="display: flex; flex-direction: row; align-items: center; gap: 10px">
+    <div style="font-size: 19px; font-weight: 600; flex-grow: 1">Goal-lapse hook</div>
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.06em; padding: 2px 9px; border-radius: 99px; background: #EEF1EE; color: #5F665F">HAIKU</span>
+  </div>
+  <div style="display: flex; flex-direction: row; gap: 8px; align-items: center">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.06em; padding: 2px 9px; border-radius: 99px; background: #EEF1EE; color: #5F665F">&#60;0.5&#162; · after bait tap · cached per day</span>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: #F0F3F0; border-radius: 10px">
+    <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.1em; color: #8C948E">WHAT IT DOES TODAY</div>
+    <div style="font-size: 12px; color: #5F665F; line-height: 1.5">Writes the one AI message in the Tasks message box after you tap the goal-lapse nudge.</div><div style="font-size: 12px; color: #5F665F; line-height: 1.5">Deterministic fallback when offline.</div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px; padding: 14px; background: #DDE7F0; border-radius: 10px; flex-grow: 1">
+    <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.1em; color: #46648A">HOW IT SHOULD ACT — YOUR WORDS</div>
+    <div style="font-size: 13.5px; color: #1C211D; line-height: 1.6">&#8226; [HOW PERSONAL SHOULD IT GET ABOUT A NEGLECTED GOAL?]</div>
+  </div>
+  <div style="display: flex; flex-direction: row; gap: 8px; align-items: baseline; padding: 10px 14px; background: #F5EAD2; border-radius: 10px">
+    <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.1em; color: #96700F">MODEL</div>
+    <div style="font-size: 13px; color: #1C211D">Haiku today &#8212; should be: [KEEP]</div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

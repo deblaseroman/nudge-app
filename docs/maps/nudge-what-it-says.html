@@ -1,0 +1,262 @@
+<title>What Nudge Says</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .byline { margin:12px 0 0; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+
+  /* notification preview */
+  .notif { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:12px 16px; max-width:520px; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
+  .notif .nt { font-size:13.5px; font-weight:600; }
+  .notif .nb { font-size:13.5px; color:var(--muted); margin-top:2px; }
+  .notif .na { display:flex; gap:8px; margin-top:8px; }
+  .notif .na span { font-size:11px; font-family:"IBM Plex Mono",monospace; padding:2px 10px;
+    border:1px solid var(--line); border-radius:99px; color:var(--accent); }
+
+  /* kind cards */
+  .kcard { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:18px 20px; margin:0 0 16px; }
+  .kcard header { display:flex; align-items:baseline; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .kcard .num { font-family:"IBM Plex Mono",monospace; font-size:18px; font-weight:600; color:var(--faint); }
+  .kcard h3 { margin:0; font-size:17px; font-weight:600; }
+  .kcard .kind { font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--accent); }
+  .badge { display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:600;
+    letter-spacing:0.08em; padding:1px 8px; border-radius:99px; border:1px solid; margin-left:auto; }
+  .badge.exempt { color:var(--warn); border-color:var(--warn); background:var(--warn-soft); }
+  .badge.counts { color:var(--muted); border-color:var(--line); background:var(--panel-2); }
+  .kcard dl { margin:12px 0 0; display:grid; grid-template-columns:110px 1fr; gap:6px 14px; font-size:13.5px; }
+  .kcard dt { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); padding-top:3px; }
+  .kcard dd { margin:0; }
+  .kcard dd .alt { color:var(--muted); font-size:12.5px; display:block; margin-top:3px; }
+  .aud { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+  .aud li { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--good);
+    border-radius:4px; padding:10px 14px; font-size:14px; }
+  .aud li.warn { border-left-color:var(--warn); }
+  .aud li strong { font-weight:500; }
+  .aud li .why { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:13.5px;
+    background:var(--panel); border:1px solid var(--line); }
+  th { text-align:left; font-family:"IBM Plex Mono",monospace; font-size:10.5px;
+    letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); font-weight:600;
+    padding:10px 12px; border-bottom:1.5px solid var(--line); }
+  td { padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  td.mono { font-family:"IBM Plex Mono",monospace; font-size:12px; }
+  .tablewrap { overflow-x:auto; }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <div class="name">
+      <h1>What Nudge Says</h1>
+      <p class="sub">Every notification, verbatim from the code: the exact words, when they fire, how many tasks they juggle, and what happens when you ignore them. Includes the goal-lapse wiring audit.</p>
+      <p class="byline">Roman DeBlase · Nudge</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-NTF-07</span></div>
+      <div><span class="k">Copy source</span><span class="v">NudgeArbiter.swift</span></div>
+      <div><span class="k">Revision</span><span class="v">2026-09-17</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 MULTIPLE TASKS ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>Your first question — what happens when many tasks compete</h2>
+    <p class="lede">The arbiter never sprays. Three separate mechanisms keep a busy list from becoming a busy lock screen — <strong>selection</strong> (most kinds name exactly one thing), <strong>batching</strong> (things at the same moment share one notification), and <strong>budget</strong> (suggestions compete for 10 daily slots at 90-minute spacing).</p>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Mechanism</th><th>Rule</th><th>Who uses it</th></tr>
+      <tr><td><strong>Pick one</strong></td><td>Rank all candidates, name a single task; the rest simply wait. Ranking is plan-order first, then stakes/deadline.</td><td>Morning prompt, idle, floater (collapses to the plan's next item), prep</td></tr>
+      <tr><td><strong>Batch into one</strong></td><td>Items close in time merge into a single notification whose sentence stays true for all of them.</td><td>Events (back-to-back cluster → one heads-up), dueSoon (same-hour deadlines → "3 things due by 11:59 PM: A, B, and C"), placement heads-ups (close slots share one)</td></tr>
+      <tr><td><strong>Budget + spacing</strong></td><td>Max 10 suggestion-type nudges per day, none within 90 min of another; facts (events, dueSoon) are exempt and seeded first, so a suggestion too close to a class reminder loses its slot to it.</td><td>Everything in the "counts" lane</td></tr>
+    </table>
+    </div>
+    <p class="lede" style="margin-top:14px">So with 12 open tasks you do <strong>not</strong> get 12 notifications — you get one morning naming the biggest, maybe one idle check-in, whatever facts genuinely land that day, and silence otherwise. Silence is a designed output.</p>
+  </section>
+
+  <!-- ════════ 2.0 SKIPPED ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>Your second question — what happens when you skip</h2>
+    <div class="tablewrap">
+    <table>
+      <tr><th>You skipped…</th><th>What the machine does</th><th>What it never does</th></tr>
+      <tr><td>A <strong>timeline slot</strong> (planned 12:00, didn't start)</td><td>The one persistent kind: a follow-up 30 min after the slot, repeating every 2 h, max 4 tries, stops at midnight. Completing or unscheduling the task ends the series instantly.</td><td>Carry into tomorrow — at midnight the slot is swept and the task returns to Unscheduled, visible, unpunished.</td></tr>
+      <tr><td>An <strong>intended day</strong> ("do it Friday", Friday passed)</td><td>The intent survives as a fact; the slipped task becomes floater-check-in material and fair game for any day's planner again.</td><td>Show overdue red or a countdown — an intention was never a deadline.</td></tr>
+      <tr><td>The <strong>morning prompt's task</strong>, twice</td><td>The task steps aside after 2 consecutive mornings; the next-ranked task gets named — unless the only alternative is a whole importance tier lower, in which case it repeats (a repeat beats the app contradicting its own ranking).</td><td>Escalate tone. Copy stays factual forever.</td></tr>
+      <tr><td><strong>Every nudge for days</strong></td><td>After 3 quiet days (no open, no tap, no completion): one come-back note in Roman's words: "Come back, you have some tasks to complete!" (or the plan variant on an empty list).</td><td>Guilt. The word "missed" never appears in a re-engagement message.</td></tr>
+      <tr><td><strong>Ignoring one task's nudges repeatedly</strong></td><td>Recorded honestly in outcome rows — and, today, nothing else: the per-task fatigue gate exists but is deliberately OFF until baseline data exists to tune it.</td><td>Silently suppress the task (yet). When armed: back off after 3 ignores, skipping kinds where silence isn't evidence.</td></tr>
+    </table>
+    </div>
+  </section>
+
+  <!-- ════════ 3.0 GOAL LAPSE AUDIT ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>Your third question — is the goal-lapse nudge set up correctly?</h2>
+    <p class="lede"><strong>Audited today, link by link: the wiring is complete and correct in code.</strong> What no static check can prove is the live firing — it needs a goal 30 days untouched (or a DEBUG-shifted clock), which is exactly why you haven't seen one yet: your goals are too young or too active.</p>
+    <ul class="aud">
+      <li><strong>Builder</strong> ✓ <span class="why">fires 30 days after the goal's last activity (or its creation — so a goal never worked on still lapses), wake + 8 h, one candidate per run, monthly cap per goal via its own delivered-marker map.</span></li>
+      <li><strong>The bait copy</strong> ✓ <span class="why">deliberately near-empty — no goal name, no elapsed time, and an explicit calm opener so an anxious user doesn't brace: see the preview below.</span></li>
+      <li><strong>Category registration</strong> ✓ <span class="why">the one classic failure spot — the category array iOS is handed is not compiler-checked — verified: <code>goalLapse</code> is in the registered set.</span></li>
+      <li><strong>Tap → context handoff</strong> ✓ <span class="why">the goal's ID rides the notification, and a tap writes it to the shared app-group keys with a freshness window — the cold-launch-safe pattern.</span></li>
+      <li><strong>The real message</strong> ✓ <span class="why">on arrival, the Tasks message box opens expanded with the goal-lapse hook — AI-written when online (cached per goal per day), a deterministic elapsed-time message when not. Both paths end in the one-tap "20 minutes on it" offer that creates a small linked task.</span></li>
+      <li class="warn"><strong>Not yet observed live</strong> <span class="why">the only honest gap: no <code>.goalLapse</code> outcome row exists yet because no goal has lapsed 30 days since the feature shipped (Sep 4). To see it without waiting a month: temporarily drop <code>goalLapseAfterDays</code> in NudgeConfig on a DEBUG build.</span></li>
+    </ul>
+  </section>
+
+  <!-- ════════ 4.0 THE COPY, VERBATIM ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>Every notification, word for word</h2>
+    <p class="lede">Quoted from the code. <code>Quoted parts</code> are dynamic. Six discretionary kinds can get an AI-polished body from the copy cache (same facts, warmer phrasing, validated before use); events and dueSoon never do — their bodies carry exact clock times computed at scheduling.</p>
+
+    <div class="kcard">
+      <header><span class="num">01</span><h3>Event heads-up</h3><span class="kind">eventBlock</span><span class="badge exempt">EXEMPT</span></header>
+      <div class="notif"><div class="nt">Heads up</div><div class="nb">Interview in 1 hour (3:00 PM).</div></div>
+      <dl>
+        <dt>Multiple</dt><dd>Back-to-back events cluster into one: <em>"Bio 101 lecture in 1 hour (9:00 AM). You've also got "Lab" at 11:00 AM, so your morning's booked."</em> — or with 3+: <em>"…You've got 2 more back-to-back after that, so wrap anything else first."</em> The body names the event by its own title (Roman, Sep 17 2026); the category noun (Class / Work shift / Appointment…) is only the fallback for a nameless row.</dd>
+        <dt>If ignored</dt><dd>Nothing. It's an FYI; going to class IS success. Deliberately actionless — tap opens the app, that's all.</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">02</span><h3>Morning prompt</h3><span class="kind">morningPrompt</span><span class="badge exempt">EXEMPT</span></header>
+      <div class="notif"><div class="nt">Good morning</div><div class="nb">Biggest thing on your list: "Finish the essay", due today at 5:00 PM.</div></div>
+      <dl>
+        <dt>Multiple</dt><dd>Names exactly ONE task — highest stakes among tasks doable that day, deadline as tiebreak. Everything else waits.</dd>
+        <dt>Skipped</dt><dd>Same task named max 2 mornings running, then it steps aside (unless the replacement is a full tier less important — then it repeats). A passed deadline reads past-tense: <em>", was due yesterday."</em>, never a growing hours-ago counter.</dd>
+        <dt>Notes</dt><dd>Skips packed days entirely. Tap lands in Home chat. Eligible for AI-polished body.</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">03</span><h3>Idle check-in</h3><span class="kind">idle</span><span class="badge counts">COUNTS</span></header>
+      <div class="notif"><div class="nt">Checking in</div><div class="nb">Have you gotten started on anything today?</div><div class="na"><span>Yes, I'm good</span><span>Not yet</span><span>👎</span></div></div>
+      <dl>
+        <dt>Multiple</dt><dd>The question is deliberately task-agnostic; internally it attaches to the top-ranked task for the records, but names nobody — no shame vector.</dd>
+        <dt>Skipped</dt><dd>"Yes, I'm good" silences it for the day. "Not yet" opens a one-task starter sheet (survives cold launch). Ignoring it: nothing further today.</dd>
+        <dt>Stands down</dt><dd>Never fires if a session started, a task completed, or you said you're good.</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">04</span><h3>Prep — start early</h3><span class="kind">prep</span><span class="badge counts">COUNTS</span></header>
+      <div class="notif"><div class="nt">Time to get ahead</div><div class="nb">Your deadline is in 4 days. At one session a day that's maybe 4 real shots at "Finish the essay". Start session 1 now?</div><div class="na"><span>Start</span><span>Snooze 30m</span><span>👎</span></div></div>
+      <dl>
+        <dt>Variant</dt><dd>Nearer deadlines get the short form: <em>""Finish the essay" needs a start. Just 25 min. That's it."</em></dd>
+        <dt>Multiple</dt><dd>One task per prep day; the fire DAY comes from the start-by planner, the walk stops at the deadline (never nudges "get ahead" on something already late).</dd>
+        <dt>Skipped</dt><dd>Snooze re-fires in 30 min; otherwise the next prep day tries again. Generated study-days are excluded (their dates are the plan, not deadlines).</dd>
+        <dt>Overlap</dt><dd>Since Sep 14 it cannot land inside a DIFFERENT task's planned slot (the planned-slot gate, Roman's ruling) — no more prep pushes arriving mid Python-block.</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">05</span><h3>Due soon</h3><span class="kind">dueSoon</span><span class="badge exempt">EXEMPT</span></header>
+      <div class="notif"><div class="nt">Due soon</div><div class="nb">"Finish the essay" is due at 11:59 PM.</div></div>
+      <dl>
+        <dt>Multiple</dt><dd>Same-hour deadlines batch into ONE: <em>"3 things due by 11:59 PM: "A", "B", and "C"."</em> — the "by" time is the latest in the batch so the sentence is true for all.</dd>
+        <dt>Fires</dt><dd>2 h before a REAL deadline, once per task ever (delivered-marker map). Since the deadline/intent split, it cannot fire on an intention.</dd>
+        <dt>If ignored</dt><dd>Nothing more — one warning per deadline is the contract.</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">06</span><h3>Floater check-in</h3><span class="kind">floater</span><span class="badge counts">COUNTS</span></header>
+      <div class="notif"><div class="nt">Are you working on something?</div><div class="nb">'Organize desk' is still open. Just 15 min. Start there?</div><div class="na"><span>Start</span><span>Snooze 30m</span><span>👎</span></div></div>
+      <dl>
+        <dt>Multiple</dt><dd>Collapses to the plan's next item when a plan exists; else the pool of no-deadline, no-upcoming-intent tasks (a slipped intent rejoins here).</dd>
+        <dt>Skipped</dt><dd>Rolls to tomorrow's anchor; the wake+6h slot is known to lose to midday event reminders on spacing — deliberately untuned until its outcome rows exist.</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">07</span><h3>Come-back</h3><span class="kind">comeBack</span><span class="badge counts">COUNTS</span></header>
+      <div class="notif"><div class="nt">Looking ahead</div><div class="nb">Come back, you have some tasks to complete!</div></div>
+      <dl>
+        <dt>Fires</dt><dd>After 3 quiet days (no open, no tapped nudge, no completion — widget completions count as engagement). Any engagement pushes it forward; it only ever fires for someone genuinely away.</dd>
+        <dt>Multiple</dt><dd>Never names a task (Roman's ruling, Sep 14). Two states only: open work exists, or, on an empty list, <em>"Come back! There's got to be something you need to plan."</em> It always speaks after three quiet days.</dd>
+        <dt>Tone rule</dt><dd>Roman's verbatim wording, never AI-swapped. Never "you missed".</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">08</span><h3>Goal lapse — the bait</h3><span class="kind">goalLapse</span><span class="badge counts">COUNTS</span></header>
+      <div class="notif"><div class="nt">Got a minute?</div><div class="nb">Nothing's wrong. There's just something worth a look when you have a moment.</div></div>
+      <dl>
+        <dt>Design</dt><dd>The notification is deliberately near-empty — no goal name, no elapsed time, an explicit "nothing's wrong". The REAL message waits in the Tasks message box the tap opens (see the audit in §3.0): the goal, how long it's been, and a one-tap "20 minutes on it" offer.</dd>
+        <dt>Multiple</dt><dd>One goal per run (earliest-lapsed); at most monthly per goal.</dd>
+        <dt>Skipped</dt><dd>Nothing until next month's window. Ignoring a goal bait is never attributed to any task.</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">09</span><h3>Placement heads-up</h3><span class="kind">placementLead</span><span class="badge counts">COUNTS</span></header>
+      <div class="notif"><div class="nt">Coming up</div><div class="nb">"Python session" is set for 12:00 PM, then "Job applications" at 2:00 PM.</div></div>
+      <dl>
+        <dt>Multiple</dt><dd>Slots within 2 h share one heads-up, second task named, further ones counted.</dd>
+        <dt>Fires</dt><dd>5 min before your own planned slot — including slots captured from "study at 9am". Actionless (the batch may span tasks).</dd>
+      </dl>
+    </div>
+
+    <div class="kcard">
+      <header><span class="num">10</span><h3>Placement follow-up</h3><span class="kind">placementMissed</span><span class="badge counts">COUNTS</span></header>
+      <div class="notif"><div class="nt">Still open</div><div class="nb">"Python session" was set for 12:00 PM and is still open. Just 25 min. Start there?</div><div class="na"><span>Start</span><span>Snooze 30m</span><span>👎</span></div></div>
+      <dl>
+        <dt>The series</dt><dd>30 min after the slot passes, then every 2 h, max 4 attempts, hard stop at midnight — pre-scheduled so it works even if the app never runs. Completing or unscheduling ends it instantly.</dd>
+        <dt>Skipped</dt><dd>At midnight the slot sweeps away; the task returns to Unscheduled with no residue. Tomorrow is a clean slate by design.</dd>
+      </dl>
+    </div>
+  </section>
+
+  <footer>
+    Companions: SYS-BLD-03 (the catalog this deepens) · SYS-ARB-02 (how winners are chosen) &nbsp;·&nbsp; all copy quoted verbatim from NudgeArbiter.swift, Sep 17 2026 &nbsp;·&nbsp; goal-lapse audit: static wiring verified; live firing pending a 30-day lapse or a DEBUG clock
+  </footer>
+</div>

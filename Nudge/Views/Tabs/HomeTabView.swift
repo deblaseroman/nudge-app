@@ -19,6 +19,13 @@ struct HomeTabView: View {
     @Query(sort: \DailySession.startedAt, order: .reverse) private var sessions: [DailySession]
     @Query private var allTasks: [NudgeTask]
     @Query(filter: #Predicate<NudgeTask> { !$0.isComplete }) private var incompleteTasks: [NudgeTask]
+    /// Expanded commitments — the memory behind "a second module of the
+    /// same course should not ask again". Unbounded @Query is fine: one
+    /// row per expanded commitment, a handful ever.
+    @Query private var commitments: [NudgeCommitment]
+    /// Active goals feed the capture prompt as matching context (item 2,
+    /// cycle 2026-08-04-03). Unbounded is fine — a handful of rows.
+    @Query(sort: \NudgeGoal.createdAt) private var allGoals: [NudgeGoal]
 
     @State private var composerText = ""
     @State private var messages: [HomeChatMessage] = []
@@ -62,14 +69,14 @@ struct HomeTabView: View {
                 ChatComposerStore.shared.sendAction = { sendMessage() }
                 ChatComposerStore.shared.updateHasSendableText(from: composerText)
                 ChatComposerStore.shared.isWaitingForAI = isWaitingForAI
-                Task { await refreshNotificationAuthState() }
+                Task { @MainActor in await refreshNotificationAuthState() }
             }
             .onChange(of: scenePhase) { _, newPhase in
                 // The user may have flipped the OS permission while we were
                 // backgrounded. Re-read the system state on every return so
                 // the banner appears / disappears immediately.
                 if newPhase == .active {
-                    Task { await refreshNotificationAuthState() }
+                    Task { @MainActor in await refreshNotificationAuthState() }
                 }
             }
             .onDisappear {
@@ -274,6 +281,28 @@ struct HomeTabView: View {
         // and returns a conversational response + structured task data.
         // ────────────────────────────────────────────────────────────────
         Task {
+            // Plan/restructure intent → route to the AI day-plan refiner
+            // instead of the brain-dump prompt. Still counts as a chat turn.
+            if Self.isPlanIntent(messageText) {
+                await handlePlanIntent()
+                isWaitingForAI = false
+                return
+            }
+            // Router (polarity fixed Sep 23 2026): the cheap lane needs
+            // positive evidence of chitchat, a whole message of chitchat
+            // tokens (`ChatRouter`), and answers from a template, no API
+            // call. Everything else is capture. Never while a question
+            // from the model is outstanding — a one-word "yes" or "today"
+            // is an answer in disguise.
+            if !hasOutstandingModelQuestion, ChatRouter.isSmallTalk(messageText) {
+                #if DEBUG
+                print("[Router] chitchat → template reply, no API call")
+                #endif
+                messages.append(HomeChatMessage(role: .assistant, text: ChatRouter.smallTalkReply(for: messageText)))
+                persistSession()
+                isWaitingForAI = false
+                return
+            }
             do {
                 let history = messages.dropLast().map { msg in
                     ChatMessage(
@@ -301,14 +330,28 @@ struct HomeTabView: View {
                     )
                 }
 
+                // Stable refs for this one call — the model echoes "G1"
+                // back in goalRef and we resolve it to the UUID below.
+                let goalContexts = allGoals
+                    .filter { $0.isActive }
+                    .enumerated()
+                    .map { index, goal in
+                        ActiveGoalContext(ref: "G\(index + 1)", id: goal.id, title: goal.title)
+                    }
+
                 let response = try await ClaudeService.shared.sendChat(
                     conversationHistory: Array(history),
                     userMessage: messageText,
-                    existingTasks: existingContext
+                    existingTasks: existingContext,
+                    knownCommitmentSizes: knownCommitmentSizes,
+                    activeGoals: goalContexts
                 )
 
-                let assistantMessage = HomeChatMessage(role: .assistant, text: response.message)
-                messages.append(assistantMessage)
+                // The assistant bubble is appended AFTER updates/creates
+                // are applied (cycle 2026-08-03-02 item 3): the start-day
+                // follow-up needs the freshly written commitment state to
+                // decide whether to append its question or statement to
+                // this same closing message.
 
                 // Apply updates to existing tasks (e.g. duration after clarifying
                 // question, or a time correction like "actually class is at 9 pm").
@@ -325,12 +368,37 @@ struct HomeTabView: View {
                         else { continue }
 
                         if let mins = update.estimatedMinutes { existingTask.estimatedMinutes = mins }
-                        if let priority = update.priority     { existingTask.priority = priority }
+                        if let priority = update.priority     { existingTask.priority = CaptureWriter.normalizedPriority(priority) }
                         if let title = update.title          { existingTask.title = title }
                         if let category = update.category    { existingTask.category = category }
                         if let isComplete = update.isComplete {
                             existingTask.isComplete = isComplete
                             existingTask.completedAt = isComplete ? Date() : nil
+                            // Chat-driven completion counts as goal
+                            // activity, same as the checkbox.
+                            if isComplete {
+                                NudgeGoal.recordActivity(
+                                    goalID: existingTask.goalID, in: modelContext
+                                )
+                            }
+                        }
+                        // The user's answer to a per-day count question —
+                        // same clamp as the capture write path.
+                        if let count = update.commitmentDailyCount, count > 0 {
+                            existingTask.commitmentDailyCount = min(count, 99)
+                        }
+                        // The user's answer to the app-asked start-day
+                        // question ("today" / "tomorrow") — settles the
+                        // outstanding ask; the sweep expands on it.
+                        if let startDay = update.commitmentStartDay?.lowercased() {
+                            let cal = Calendar.current
+                            let today = cal.startOfDay(for: Date())
+                            if startDay == "tomorrow" {
+                                existingTask.commitmentStartDate =
+                                    cal.date(byAdding: .day, value: 1, to: today)
+                            } else if startDay == "today" {
+                                existingTask.commitmentStartDate = today
+                            }
                         }
 
                         // Re-resolve dueDate / dueTime / specificTime together —
@@ -340,7 +408,7 @@ struct HomeTabView: View {
                         var newDueTime = existingTask.dueTime
                         var didChangeTimeFields = false
                         if let dueDateStr = update.dueDate {
-                            newDueDate = parseDateString(dueDateStr)
+                            newDueDate = CaptureWriter.parseDateString(dueDateStr)
                             existingTask.dueDate = newDueDate
                             didChangeTimeFields = true
                         }
@@ -350,7 +418,7 @@ struct HomeTabView: View {
                             didChangeTimeFields = true
                         }
                         if didChangeTimeFields {
-                            existingTask.specificTime = parseSpecificTime(
+                            existingTask.specificTime = CaptureWriter.parseSpecificTime(
                                 timeString: newDueTime,
                                 on: newDueDate
                             )
@@ -358,77 +426,105 @@ struct HomeTabView: View {
                     }
                 }
 
-                // Persist only genuinely NEW tasks
-                var newlyCreatedTasks: [NudgeTask] = []
-                for taskData in response.tasks {
-                    let newTitle = taskData.title.lowercased()
-                    let newDueDate = parseDateString(taskData.dueDate)
+                // The capture write site lives in `CaptureWriter` (moved
+                // verbatim Sep 23 2026 so the eval harness runs the same
+                // code). Returns the rows inserted plus the drop trace.
+                let written = CaptureWriter.apply(
+                    response: response,
+                    allTasks: allTasks,
+                    goalContexts: goalContexts,
+                    modelContext: modelContext,
+                    userMessage: messageText
+                )
+                let newlyCreatedTasks = written.created
 
-                    // Only skip if an INCOMPLETE task with the same title exists
-                    // for the SAME day. Completed tasks from previous days should
-                    // not block creating a fresh task for today.
-                    let alreadyExists = allTasks.contains { existing in
-                        guard !existing.isComplete else { return false }
-                        let existingTitle = existing.title.lowercased()
-                        let titleMatch = existingTitle == newTitle
-                            || existingTitle.contains(newTitle)
-                            || newTitle.contains(existingTitle)
-                        guard titleMatch else { return false }
+                // Start-day follow-up (item 3, cycle 2026-08-03-02):
+                // decided app-side with the same arithmetic the sweep
+                // uses — the model is never trusted with it — and
+                // appended to the SAME closing message.
+                // A capture that found nothing (no rows, no updates, no
+                // plan question or answer, nothing outstanding) gets one
+                // template line naming what the box is for, not the
+                // model's chat reply. Kept the model's text otherwise.
+                var assistantText = ChatRouter.isEmptyCapture(response, questionOutstanding: hasOutstandingModelQuestion)
+                    ? ChatRouter.emptyCaptureReply
+                    : response.message
+                if let followUp = commitmentStartDayFollowUp(newlyCreated: newlyCreatedTasks) {
+                    let trimmed = assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    assistantText = trimmed.isEmpty ? followUp : trimmed + " " + followUp
+                }
+                messages.append(HomeChatMessage(role: .assistant, text: assistantText))
 
-                        if let existingDue = existing.dueDate, let newDue = newDueDate {
-                            return Calendar.current.isDate(existingDue, inSameDayAs: newDue)
+                // Study-plan question and answer (cycle 2026-09-16-01 item
+                // 3). The question is recorded so the one-word answer is
+                // routed to capture; the answer is consent or refusal —
+                // a Yes builds and writes the plan at once (no second
+                // Yes / No in the message box), a No is final for that
+                // anchor. Either way the outstanding question clears.
+                if let question = response.planQuestion,
+                   let parent = planParent(named: question.title, among: newlyCreatedTasks) {
+                    PlanQuestionStore.markAsked(parentID: parent.id)
+                }
+                if let consents = response.planConsent, !consents.isEmpty {
+                    for consent in consents {
+                        guard let parent = planParent(named: consent.title, among: newlyCreatedTasks) else { continue }
+                        if consent.wants {
+                            PlanProposalSweep.shared.requestPlan(parentID: parent.id, modelContext: modelContext) { written in
+                                guard written > 0 else { return }
+                                WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                                NudgeArbiter.shared.reevaluate(
+                                    reason: .taskCreatedOrEdited,
+                                    profile: profile,
+                                    modelContext: modelContext
+                                )
+                            }
+                        } else {
+                            PlanProposalSweep.shared.decline(PlanProposalContext(
+                                parentID: parent.id, parentTitle: parent.title, reason: "", sessions: []
+                            ))
                         }
-                        return true
                     }
-                    if alreadyExists { continue }
-
-                    // Parse dueTime ("3:00 PM") combined with dueDate into specificTime.
-                    let specificTime = parseSpecificTime(timeString: taskData.dueTime, on: newDueDate)
-
-                    // Events MUST have a concrete time — if the AI flagged
-                    // something as an event but didn't supply a time, demote
-                    // it back to a task so it doesn't get stuck in the events
-                    // list without a slot.
-                    let isEvent = (taskData.isEvent ?? false) && specificTime != nil
-
-                    // Floater detection: no date AND no time → low-priority,
-                    // "get to it whenever" task. Force low priority unless the
-                    // AI explicitly said urgent/high.
-                    let isFloater = newDueDate == nil && specificTime == nil
-                    let rawPriority = taskData.priority ?? "medium"
-                    let priority: String = {
-                        guard isFloater else { return rawPriority }
-                        return (rawPriority == "urgent" || rawPriority == "high")
-                            ? rawPriority : "low"
-                    }()
-
-                    let task = NudgeTask(
-                        title: taskData.title,
-                        dueDate: newDueDate,
-                        dueTime: taskData.dueTime,
-                        specificTime: specificTime,
-                        priority: priority,
-                        category: taskData.category,
-                        source: "capture",
-                        estimatedMinutes: taskData.estimatedMinutes,
-                        recurrence: taskData.recurrence,
-                        isInformationalEvent: isEvent
-                    )
-                    modelContext.insert(task)
-                    newlyCreatedTasks.append(task)
+                    PlanQuestionStore.clear()
                 }
 
                 persistSession()
 
-                try? modelContext.save()
+                // NOT `try?` (cycle 2026-08-05-02): a failed save here
+                // discarded the whole batch AFTER the chat had already shown
+                // it as captured — the worst version of a silent drop. The
+                // user is told the fact (save failed, retry) with no invented
+                // cause; the inserts stay in the context, so the retry path
+                // is the next successful save, not re-entry.
+                do {
+                    try modelContext.save()
+                } catch {
+                    #if DEBUG
+                    print("[HomeTabView] SAVE FAILED after capture: \(error)")
+                    #endif
+                    messages.append(HomeChatMessage(
+                        role: .assistant,
+                        text: "I couldn't save that just now. If it's not in your list, send it again."
+                    ))
+                    persistSession()
+                }
 
                 if !response.tasks.isEmpty || response.taskUpdates?.isEmpty == false {
                     WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
                     // Kick off intelligence analysis for each new task so
                     // get-ahead nudges fire at recommendedStartBy.
                     for task in newlyCreatedTasks {
-                        NudgeIntelligence.shared.refreshSoon(for: task, modelContext: modelContext)
+                        NudgeIntelligence.shared.refreshSoon(for: task)
                     }
+                    // Expand any commitment whose numbers are now known —
+                    // covers both the fully-specified capture ("an hour a
+                    // day until Friday") and the answer turn that just
+                    // filled in the missing number via task_updates.
+                    // BEFORE the reevaluate, so fresh dailies are in the
+                    // store when candidates are built.
+                    ExamPrepSweep.shared.run(modelContext: modelContext)
+                    // A dump may have created an anchored item worth a
+                    // plan; the reader judges it (async, proposes only).
+                    PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
                     // Single arbiter call replaces every per-feature scheduler.
                     NudgeArbiter.shared.reevaluate(
                         reason: .taskCreatedOrEdited,
@@ -441,11 +537,11 @@ struct HomeTabView: View {
                 print("[HomeTabView] API error: \(error)")
                 #endif
 
-                let errorText: String
+                var errorText: String
                 if let claudeError = error as? ClaudeError {
                     switch claudeError {
                     case .missingAPIKey:
-                        errorText = "I'm not set up yet — my API key is missing."
+                        errorText = "I'm not set up yet, my API key is missing."
                     case .authenticationFailed:
                         errorText = "Hmm, my credentials aren't working. Check the API key in Settings."
                     case .rateLimitExceeded:
@@ -456,7 +552,20 @@ struct HomeTabView: View {
                         errorText = "Sorry, something went wrong on my end. Try again in a moment."
                     }
                 } else {
-                    errorText = "Sorry, I couldn't connect right now. Check your internet and try again."
+                    // Deliberately causeless (cycle 2026-08-05-02): this
+                    // branch catches ANY non-ClaudeError — a URLError, but
+                    // just as easily a DecodingError from a malformed model
+                    // response. "Check your internet" asserted a diagnosis
+                    // the app doesn't have (fabricated precision, per
+                    // DESIGN.md), and sent users retrying a network that was
+                    // fine. State the two things actually known: it didn't
+                    // go through, and nothing from it was saved — the throw
+                    // precedes every insert, which is what makes "try again"
+                    // safe to say.
+                    errorText = "That didn't go through, nothing from it was saved. Try sending it again."
+                    #if DEBUG
+                    errorText += " [\(type(of: error))]"
+                    #endif
                 }
 
                 let fallback = HomeChatMessage(role: .assistant, text: errorText)
@@ -466,6 +575,145 @@ struct HomeTabView: View {
 
             isWaitingForAI = false
         }
+    }
+
+    /// The start-today-or-tomorrow flow (cycle 2026-08-03-02 item 3),
+    /// run over every unexpanded, fully-specified commitment parent this
+    /// turn touched. Decided deterministically with the sweep's own
+    /// arithmetic — the model never computes room or session growth:
+    ///   • no room today → start tomorrow silently (a question with one
+    ///     answer is noise; the message box announcement says "from
+    ///     tomorrow")
+    ///   • dropping today would grow the sessions → start today and SAY
+    ///     so (no choice to offer, so state what's happening)
+    ///   • both genuinely available → ask, and hold that commitment's
+    ///     expansion until the answer (or until the day rolls over and
+    ///     the question expires)
+    /// At most one appended sentence per turn — the flow is capped at
+    /// two questions for a reason; a second choice-commitment in the
+    /// same dump just expands on the default.
+    private func commitmentStartDayFollowUp(newlyCreated: [NudgeTask]) -> String? {
+        let cal = Calendar.current
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+
+        // New parents first (the @Query may not reflect this turn's
+        // inserts yet), then surviving existing ones, deduped.
+        let newIDs = Set(newlyCreated.map(\.id))
+        let candidates = newlyCreated + allTasks.filter { !newIDs.contains($0.id) }
+
+        var sentence: String?
+        for parent in candidates {
+            guard parent.commitmentShapeRaw != nil,
+                  parent.commitmentStartDate == nil,
+                  parent.commitmentStartAskedAt == nil,
+                  let shape = ExamPrepSweep.expansionReadiness(parent, today: today),
+                  let due = parent.dueDate else { continue }
+
+            let decision = ExamPrepSweep.startDayDecision(
+                shape: shape,
+                totalMinutes: shape == .splitWork ? parent.estimatedMinutes : nil,
+                dailyMinutes: shape == .rate ? parent.estimatedMinutes : nil,
+                category: parent.taskCategory,
+                endDay: cal.startOfDay(for: due),
+                now: now,
+                profile: profile
+            )
+            switch decision {
+            case .tomorrowOnly:
+                parent.commitmentStartDate = cal.date(byAdding: .day, value: 1, to: today)
+            case .todayForced:
+                if sentence == nil {
+                    sentence = "I'm starting “\(parent.title)” today, waiting until "
+                        + "tomorrow would make each session longer."
+                }
+            case .choice:
+                if sentence == nil {
+                    parent.commitmentStartAskedAt = now
+                    sentence = "Want to start “\(parent.title)” today, or from tomorrow?"
+                }
+            }
+        }
+        return sentence
+    }
+
+    /// Previously-answered commitment sizes for the capture prompt's
+    /// KNOWN COMMITMENT SIZES context — one line per sized splitWork
+    /// commitment. The rows themselves are the memory; matching a new
+    /// commitment against them is the model's job (it rides the one
+    /// capture call, so there is no second round trip).
+    private var knownCommitmentSizes: [String] {
+        commitments
+            .filter { $0.shape == .splitWork }
+            .compactMap { commitment in
+                guard let total = commitment.totalMinutes, total > 0 else { return nil }
+                let hours = Double(total) / 60
+                let sized = hours == hours.rounded()
+                    ? "\(Int(hours)) hour\(Int(hours) == 1 ? "" : "s")"
+                    : String(format: "%.1f hours", hours)
+                return "\"\(commitment.title)\" ≈ \(sized)"
+            }
+    }
+
+    /// Simple keyword intent: is the user asking to plan / restructure / move
+    /// their day around? (Not a brain dump.)
+    // MARK: - Model router (Sep 2026)
+
+    /// True while the capture model has a question on the table (the
+    /// commitment start-day ask). Any reply — however chatty it looks —
+    /// must reach the full capture path to become a task_update.
+    private var hasOutstandingModelQuestion: Bool {
+        allTasks.contains { $0.commitmentStartAskedAt != nil }
+            || PlanQuestionStore.outstandingParentID() != nil
+    }
+
+    /// The exam the model's study-plan question or answer names: the
+    /// open exam event whose title matches, else the parent the question
+    /// was recorded for (the model may paraphrase the title back).
+    private func planParent(named title: String, among created: [NudgeTask]) -> NudgeTask? {
+        let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pool = created + allTasks.filter { task in !created.contains { $0.id == task.id } }
+        if let exact = pool.first(where: { !$0.isComplete && $0.title.lowercased() == wanted }) {
+            return exact
+        }
+        if let outstanding = PlanQuestionStore.outstandingParentID(),
+           let parent = pool.first(where: { $0.id == outstanding }) {
+            return parent
+        }
+        return pool.first { !$0.isComplete && $0.isInformationalEvent && $0.title.lowercased().contains(wanted) }
+    }
+
+    static func isPlanIntent(_ text: String) -> Bool {
+        let t = text.lowercased()
+        let phrases = [
+            "plan my day", "plan my", "plan out my day", "plan the day",
+            "restructure", "reorganize", "reorganise", "rearrange",
+            "move things around", "move stuff around", "shuffle my day",
+            "organize my day", "organise my day", "redo my schedule",
+            "fix my schedule", "replan"
+        ]
+        return phrases.contains { t.contains($0) }
+    }
+
+    /// Runs the AI day-plan refiner and replies in-chat with the rationale.
+    /// An explicit chat message → `force: true`.
+    private func handlePlanIntent() async {
+        let outcome = await DayPlanRefiner.shared.refine(
+            profile: profile,
+            modelContext: modelContext,
+            force: true
+        )
+        let reply: String
+        switch outcome {
+        case .success(let rationale), .cached(let rationale):
+            reply = rationale.isEmpty ? "Done, I laid out your day on the timeline." : rationale
+        case .noTasks:
+            reply = "You're all set, there's nothing open to schedule into today's free time."
+        case .failed:
+            reply = "I couldn't rework the schedule just now. Try again in a moment, or use “Plan my day” in the Tasks tab."
+        }
+        messages.append(HomeChatMessage(role: .assistant, text: reply))
+        persistSession()
     }
 
     private func persistSession() {
@@ -491,48 +739,6 @@ struct HomeTabView: View {
             )
             modelContext.insert(session)
         }
-    }
-
-    private func parseDateString(_ dateString: String?) -> Date? {
-        guard let dateString, !dateString.isEmpty else { return nil }
-        let parser = DateFormatter()
-        parser.dateFormat = "yyyy-MM-dd"
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.timeZone = TimeZone.current
-        let parsedDate = parser.date(from: dateString) ?? Date()
-
-        #if DEBUG
-        print("[HomeTabView] Parsed date: input=\"\(dateString)\" → result=\(parsedDate)")
-        #endif
-
-        return parsedDate
-    }
-
-    /// Combines a date with a clock-time string ("3:00 PM", "15:00") into a
-    /// concrete Date. Returns nil for fuzzy values ("morning", "afternoon",
-    /// "evening", "night") or when no time/date is given.
-    private func parseSpecificTime(timeString: String?, on date: Date?) -> Date? {
-        guard let timeString, !timeString.isEmpty, let date else { return nil }
-
-        let fuzzy: Set<String> = ["morning", "afternoon", "evening", "night"]
-        if fuzzy.contains(timeString.lowercased()) { return nil }
-
-        let formats = ["h:mm a", "h a", "HH:mm", "H:mm"]
-        let calendar = Calendar.current
-        let day = calendar.startOfDay(for: date)
-
-        for format in formats {
-            let parser = DateFormatter()
-            parser.dateFormat = format
-            parser.locale = Locale(identifier: "en_US_POSIX")
-            parser.timeZone = TimeZone.current
-            if let parsed = parser.date(from: timeString) {
-                let hour = calendar.component(.hour, from: parsed)
-                let minute = calendar.component(.minute, from: parsed)
-                return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day)
-            }
-        }
-        return nil
     }
 
     private func loadConversation() {

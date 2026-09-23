@@ -1,0 +1,497 @@
+<title>Nudge System Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6;
+    --panel: #FFFFFF;
+    --panel-2: #EEF1EE;
+    --ink: #1C211D;
+    --muted: #5F665F;
+    --faint: #8C948E;
+    --line: #C9CFC9;
+    --accent: #5E80A6;
+    --accent-soft: #DDE7F0;
+    --warn: #C98A1F;
+    --warn-soft: #F5EAD2;
+    --danger: #C24444;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17;
+      --panel: #1E2320;
+      --panel-2: #262C28;
+      --ink: #E3E8E3;
+      --muted: #A7B0A8;
+      --faint: #79837A;
+      --line: #3A423B;
+      --accent: #9CB2C8;
+      --accent-soft: #2A3542;
+      --warn: #D9A94E;
+      --warn-soft: #3A3222;
+      --danger: #D97B7B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17;
+    --panel: #1E2320;
+    --panel-2: #262C28;
+    --ink: #E3E8E3;
+    --muted: #A7B0A8;
+    --faint: #79837A;
+    --line: #3A423B;
+    --accent: #9CB2C8;
+    --accent-soft: #2A3542;
+    --warn: #D9A94E;
+    --warn-soft: #3A3222;
+    --danger: #D97B7B;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Lexend", "Avenir Next", "Segoe UI", sans-serif;
+    font-weight: 300;
+    line-height: 1.6;
+    font-size: 15.5px;
+  }
+  .doc { max-width: 940px; margin: 0 auto; padding: 40px 24px 96px; }
+
+  /* ── Title block ─────────────────────────────── */
+  .titleblock {
+    border: 1.5px solid var(--ink);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    margin-bottom: 48px;
+  }
+  .titleblock .name { padding: 26px 28px; }
+  .titleblock h1 {
+    margin: 0 0 6px;
+    font-size: 30px; font-weight: 600; letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .titleblock .sub { margin: 0; color: var(--muted); max-width: 58ch; }
+  .titleblock .byline { margin: 12px 0 0; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+  .titleblock .meta {
+    border-left: 1.5px solid var(--ink);
+    display: grid; grid-template-rows: repeat(3, 1fr);
+    min-width: 200px;
+  }
+  .titleblock .meta > div {
+    padding: 8px 16px;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .titleblock .meta > div + div { border-top: 1px solid var(--line); }
+  .k {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--faint);
+  }
+  .v { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--ink); }
+
+  /* ── Sections ────────────────────────────────── */
+  section { margin: 56px 0; }
+  h2 {
+    font-size: 13px; font-weight: 600;
+    font-family: "IBM Plex Mono", monospace;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 8px; margin: 0 0 10px;
+  }
+  h2 .n { color: var(--faint); margin-right: 10px; }
+  .lede { color: var(--muted); max-width: 68ch; margin: 0 0 22px; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+  code {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.86em;
+    background: var(--panel-2); padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* ── Figures ─────────────────────────────────── */
+  figure {
+    margin: 0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 22px 18px 14px;
+    overflow-x: auto;
+  }
+  figure svg { display: block; min-width: 680px; max-width: 100%; height: auto; margin: 0 auto; }
+  figcaption {
+    font-size: 13px; color: var(--muted);
+    border-top: 1px solid var(--line);
+    margin-top: 16px; padding-top: 12px; max-width: 74ch;
+  }
+  figcaption .fig { font-family: "IBM Plex Mono", monospace; font-weight: 600; color: var(--ink); margin-right: 6px; }
+
+  /* SVG shape classes — themed from page tokens */
+  svg { color: var(--ink); }
+  svg text { font-family: "Lexend", sans-serif; font-size: 12.5px; fill: var(--ink); }
+  svg text.m  { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
+  svg text.s  { font-size: 10.5px; fill: var(--muted); }
+  svg text.lab { font-size: 10.5px; fill: var(--muted); }
+  svg text.acct { fill: var(--accent); }
+  svg text.warnt { fill: var(--warn); }
+  svg .box   { fill: var(--panel-2); stroke: currentColor; stroke-width: 1.2; }
+  svg .store { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+  svg .soft  { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+  svg .accb  { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+  svg .warnb { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.2; }
+  svg .wire  { stroke: currentColor; stroke-width: 1.2; fill: none; }
+  svg .wire.acc { stroke: var(--accent); }
+  svg .wire.warn { stroke: var(--warn); }
+  svg .wire.dash { stroke-dasharray: 5 4; }
+  svg .never { stroke: var(--danger); }
+  svg text.nevert { fill: var(--danger); font-size: 10.5px; }
+
+  /* ── Tables & rule lists ─────────────────────── */
+  table {
+    width: 100%; border-collapse: collapse; font-size: 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--faint); font-weight: 600;
+    padding: 10px 14px; border-bottom: 1.5px solid var(--line);
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; white-space: nowrap; }
+  .tag {
+    display: inline-block; font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+    padding: 1px 8px; border-radius: 99px; border: 1px solid;
+  }
+  .tag.opus  { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .tag.haiku { color: var(--muted); border-color: var(--line); background: var(--panel-2); }
+  .tablewrap { overflow-x: auto; }
+
+  .rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .rules li {
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--warn);
+    border-radius: 4px; padding: 12px 16px; font-size: 14px;
+  }
+  .rules li strong { font-weight: 500; }
+  .rules li .why { color: var(--muted); }
+
+  footer {
+    margin-top: 72px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--faint); font-family: "IBM Plex Mono", monospace;
+  }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <div class="name">
+      <h1>Nudge System Map</h1>
+      <p class="sub">How a brain dump becomes a scheduled, ADHD-friendly notification — the data path, the scheduling model, the decision engine, and the process boundaries.</p>
+      <p class="byline">Roman DeBlase · Nudge</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-MAP-01</span></div>
+      <div><span class="k">Source of truth</span><span class="v">ARCHITECTURE.md</span></div>
+      <div><span class="k">Revision</span><span class="v">2026-09-13</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 SYSTEM CONTEXT ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>System context — one store, one decision engine</h2>
+    <p class="lede">Everything flows through a single shared SwiftData store. AI turns language into structure on the way <strong>in</strong>; everything downstream of the store — planning, notification decisions — is <strong>deterministic</strong>. The store is also where the loop closes: every notification's outcome is written back as data the system can learn from.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 320" role="img" aria-label="Data-flow diagram: user input parses through ClaudeService into the SwiftData store; the arbiter reads the store and schedules iOS notifications; user responses flow back into the store as outcome rows; planners and widgets read and write the same store.">
+        <defs>
+          <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- main row -->
+        <rect class="soft" x="10" y="62" width="118" height="66" rx="5"/>
+        <text x="69" y="88" text-anchor="middle" font-weight="500">User input</text>
+        <text class="s" x="69" y="106" text-anchor="middle">chat · calendar · screenshot</text>
+
+        <rect class="accb" x="182" y="62" width="140" height="66" rx="5"/>
+        <text class="m" x="252" y="88" text-anchor="middle" font-weight="600">ClaudeService</text>
+        <text class="s" x="252" y="106" text-anchor="middle">language → structure</text>
+
+        <rect class="store" x="386" y="44" width="150" height="102" rx="5"/>
+        <text class="m" x="461" y="76" text-anchor="middle" font-weight="600">SwiftData store</text>
+        <text class="s" x="461" y="96" text-anchor="middle">NudgeTask · UserProfile</text>
+        <text class="s" x="461" y="112" text-anchor="middle">NudgeOutcome · Goals …</text>
+
+        <rect class="box" x="600" y="62" width="140" height="66" rx="5"/>
+        <text class="m" x="670" y="84" text-anchor="middle" font-weight="600">NudgeArbiter</text>
+        <text class="s" x="670" y="101" text-anchor="middle">deterministic —</text>
+        <text class="s" x="670" y="115" text-anchor="middle">no AI in this path</text>
+
+        <rect class="soft" x="794" y="62" width="116" height="66" rx="5"/>
+        <text x="852" y="88" text-anchor="middle" font-weight="500">iOS</text>
+        <text class="s" x="852" y="106" text-anchor="middle">notifications</text>
+
+        <!-- main arrows -->
+        <line class="wire" x1="128" y1="95" x2="178" y2="95" marker-end="url(#ar)"/>
+        <text class="lab" x="153" y="86" text-anchor="middle">free text</text>
+
+        <line class="wire acc" x1="322" y1="95" x2="382" y2="95" marker-end="url(#arA)"/>
+        <text class="lab acct" x="352" y="86" text-anchor="middle">tasks · events</text>
+
+        <line class="wire" x1="536" y1="95" x2="596" y2="95" marker-end="url(#ar)"/>
+        <text class="lab" x="566" y="86" text-anchor="middle">reads</text>
+
+        <line class="wire" x1="740" y1="95" x2="790" y2="95" marker-end="url(#ar)"/>
+        <text class="lab" x="765" y="86" text-anchor="middle">schedules</text>
+
+        <!-- feedback loop -->
+        <polyline class="wire dash" points="852,128 852,206 545,206" fill="none"/>
+        <polyline class="wire dash" points="545,206 480,206 480,150" marker-end="url(#ar)"/>
+        <text class="lab" x="666" y="198" text-anchor="middle">taps · dismissals · silence → NudgeOutcome rows (recording only — fatigue gate off)</text>
+
+        <!-- planners -->
+        <rect class="soft" x="182" y="236" width="196" height="58" rx="5"/>
+        <text class="m" x="280" y="259" text-anchor="middle" font-weight="600">Planners</text>
+        <text class="s" x="280" y="277" text-anchor="middle">DayPlanEngine · DayPlanRefiner</text>
+        <polyline class="wire" points="380,262 430,262 430,150" marker-end="url(#ar)"/>
+        <text class="lab" x="418" y="240" text-anchor="middle" transform="rotate(-90 418 240)"> </text>
+        <text class="lab" x="392" y="252" text-anchor="start">placements</text>
+
+        <!-- widgets -->
+        <rect class="soft" x="560" y="236" width="180" height="58" rx="5"/>
+        <text class="m" x="650" y="259" text-anchor="middle" font-weight="600">Widget extension</text>
+        <text class="s" x="650" y="277" text-anchor="middle">reads store · intents write back</text>
+        <polyline class="wire" points="560,262 512,262 512,150" marker-end="url(#ar)"/>
+        <text class="lab" x="522" y="252" text-anchor="start">shared App Group</text>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>The one-way trust boundary: AI may write <em>into</em> the store at capture time, but the arbiter — the component that interrupts the user — reads only data and rules. UI never schedules a notification directly; it mutates data and asks the arbiter to reevaluate.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 2.0 SCHEDULING MODEL ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>The scheduling model — four independent facts about a task</h2>
+    <p class="lede">A task carries up to four scheduling facts, and they are deliberately <strong>independent fields with exclusive consumers</strong>. The load-bearing rule: a <em>deadline</em> is work that is owed; an <em>intent day</em> is a day the user chose. Only deadlines may generate time pressure — an intention can never produce a countdown, an overdue state, or a "due soon" nudge.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 350" role="img" aria-label="Four fields of NudgeTask on the left — deadline, intent day, placement, plan order — each with arrows to its exclusive consumers on the right. A crossed-out dashed line shows that intent never reaches the time-pressure consumers.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- NudgeTask container -->
+        <rect class="soft" x="10" y="20" width="300" height="310" rx="6"/>
+        <text class="m" x="160" y="46" text-anchor="middle" font-weight="600">NudgeTask</text>
+
+        <rect class="warnb" x="28" y="62" width="264" height="56" rx="4"/>
+        <text class="m" x="40" y="84" font-weight="600">dueDate · specificTime</text>
+        <text class="s" x="40" y="102">DEADLINE — the work is owed then</text>
+
+        <rect class="accb" x="28" y="130" width="264" height="56" rx="4"/>
+        <text class="m" x="40" y="152" font-weight="600">intendedDate</text>
+        <text class="s" x="40" y="170">INTENT — the user chose this day</text>
+
+        <rect class="box" x="28" y="198" width="264" height="56" rx="4"/>
+        <text class="m" x="40" y="220" font-weight="600">plannedStartDate</text>
+        <text class="s" x="40" y="238">PLACEMENT — a slot on one day's timeline</text>
+
+        <rect class="box" x="28" y="266" width="264" height="48" rx="4"/>
+        <text class="m" x="40" y="288" font-weight="600">sequenceIndex</text>
+        <text class="s" x="40" y="304">PLAN ORDER — “first X, then Y”</text>
+
+        <!-- consumers -->
+        <rect class="warnb" x="600" y="42" width="310" height="70" rx="5"/>
+        <text x="612" y="66" font-weight="500">Time pressure</text>
+        <text class="s" x="612" y="84">countdowns · overdue red · dueSoon nudges</text>
+        <text class="s" x="612" y="100">urgency scoring</text>
+
+        <rect class="soft" x="600" y="128" width="310" height="62" rx="5"/>
+        <text x="612" y="152" font-weight="500">Day membership</text>
+        <text class="s" x="612" y="170">day lists · planner must-place · floater check-in</text>
+        <text class="s" x="612" y="184">(a slipped intent becomes floater material)</text>
+
+        <rect class="soft" x="600" y="204" width="310" height="56" rx="5"/>
+        <text x="612" y="228" font-weight="500">Today's timeline</text>
+        <text class="s" x="612" y="246">blocks on the strip · placement nudges · slot colors</text>
+
+        <rect class="soft" x="600" y="274" width="310" height="48" rx="5"/>
+        <text x="612" y="296" font-weight="500">Ordering</text>
+        <text class="s" x="612" y="312">numbered list · plan-first in every sort</text>
+
+        <!-- arrows -->
+        <line class="wire warn" x1="292" y1="90" x2="596" y2="77" marker-end="url(#ar2)"/>
+        <line class="wire acc" x1="292" y1="158" x2="596" y2="159" marker-end="url(#ar2)"/>
+        <line class="wire" x1="292" y1="226" x2="596" y2="232" marker-end="url(#ar2)"/>
+        <line class="wire" x1="292" y1="290" x2="596" y2="298" marker-end="url(#ar2)"/>
+
+        <!-- the forbidden edge -->
+        <line class="wire dash never" x1="292" y1="142" x2="596" y2="100"/>
+        <line class="never" x1="438" y1="110" x2="452" y2="130" stroke-width="2"/>
+        <line class="never" x1="452" y1="110" x2="438" y2="130" stroke-width="2"/>
+        <text class="nevert" x="460" y="112">never — an intention cannot fabricate time pressure</text>
+
+        <!-- placement lifecycle note -->
+        <text class="s" x="612" y="342">Placement is cleared at midnight (PlacementRollover); intent survives its day — the slip is information.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 2</span>Capture decides which field a stated date lands in (<code>dueKind: deadline | start</code>), defaulting to intent when uncertain — the cheap wrong guess skips a countdown; the expensive one invents pressure the whole system then acts on.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 3.0 ARBITER ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>The arbiter — a declarative rebuild, not a scheduler</h2>
+    <p class="lede">On every trigger the arbiter <strong>cancels everything it owns and rebuilds the world from data</strong>. Nothing is ever "updated" — a notification exists only if the current data justifies it. Two lanes exist: discretionary nudges pass shared gates and compete for budget; factual reminders (an event is about to start) bypass the gates, self-checking only what applies to them.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 330" role="img" aria-label="Arbiter pipeline: cancel owned requests, rebuild candidates from ten builders, pass discretionary candidates through four gates, pick winners under budget and spacing, schedule. A bypass lane carries budget-exempt kinds around the gates.">
+        <defs>
+          <marker id="ar3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar3A" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <text class="m" x="14" y="30" font-weight="600">reevaluate(reason:)</text>
+        <text class="s" x="14" y="46">app open · data change · BGTask</text>
+
+        <rect class="box" x="10" y="66" width="150" height="62" rx="5"/>
+        <text x="85" y="92" text-anchor="middle" font-weight="500">1 · Cancel owned</text>
+        <text class="s m" x="85" y="110" text-anchor="middle">nudge.arb.* only</text>
+
+        <rect class="box" x="212" y="66" width="170" height="62" rx="5"/>
+        <text x="297" y="92" text-anchor="middle" font-weight="500">2 · Rebuild</text>
+        <text class="s" x="297" y="110" text-anchor="middle">10 builders, wake-anchored</text>
+
+        <rect class="accb" x="436" y="46" width="200" height="122" rx="5"/>
+        <text x="536" y="70" text-anchor="middle" font-weight="500">3 · Shared gates</text>
+        <text class="s" x="536" y="92" text-anchor="middle">active session · cooldown</text>
+        <text class="s" x="536" y="108" text-anchor="middle">quiet hours · busy windows</text>
+        <text class="s warnt" x="536" y="130" text-anchor="middle">fatigue: DISABLED by config</text>
+        <text class="s m" x="536" y="152" text-anchor="middle">every gate reads FIRE DATE, never now</text>
+
+        <rect class="box" x="690" y="66" width="130" height="62" rx="5"/>
+        <text x="755" y="92" text-anchor="middle" font-weight="500">4 · Winners</text>
+        <text class="s" x="755" y="110" text-anchor="middle">budget 10 · 90 m spacing</text>
+
+        <rect class="soft" x="856" y="66" width="54" height="62" rx="5"/>
+        <text x="883" y="92" text-anchor="middle" font-weight="500">OS</text>
+        <text class="s" x="883" y="110" text-anchor="middle">sched.</text>
+
+        <line class="wire" x1="160" y1="97" x2="208" y2="97" marker-end="url(#ar3)"/>
+        <line class="wire" x1="382" y1="97" x2="432" y2="97" marker-end="url(#ar3)"/>
+        <text class="lab" x="407" y="88" text-anchor="middle">counts</text>
+        <line class="wire" x1="636" y1="97" x2="686" y2="97" marker-end="url(#ar3)"/>
+        <line class="wire" x1="820" y1="97" x2="852" y2="97" marker-end="url(#ar3)"/>
+
+        <!-- bypass lane -->
+        <polyline class="wire acc" points="297,128 297,232 660,232" fill="none"/>
+        <polyline class="wire acc" points="660,232 755,232 755,132" fill="none" marker-end="url(#ar3A)"/>
+        <text class="lab acct" x="478" y="222">budget-exempt: event blocks · morning prompt · dueSoon</text>
+        <text class="lab" x="478" y="248">self-gate inside their builders (per-kind toggle, day-fullness, own dedupe) — seeded into winners first</text>
+
+        <!-- outcome write -->
+        <line class="wire dash" x1="883" y1="128" x2="883" y2="290" />
+        <polyline class="wire dash" points="883,290 560,290" fill="none" marker-end="url(#ar3)"/>
+        <text class="lab" x="720" y="282" text-anchor="middle">every scheduled request writes a pending NudgeOutcome row</text>
+      </svg>
+      <figcaption><span class="fig">FIG 3</span>Because step 1 always runs first, a builder that fails to rebuild something <em>deletes</em> it — several past bugs were exactly this shape. And because gates read each candidate's fire date rather than the current moment, something happening right now can never silently kill a nudge scheduled for tomorrow.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 4.0 PROCESS BOUNDARIES ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>Process boundaries — two executables, one truth</h2>
+    <p class="lede">The app and the widget are separate processes that must agree about the data. They share one store and one settings suite through an App Group — but the widget builds its <strong>own</strong> model container, and the code they share crosses the boundary through a hand-maintained list, not automatically.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 300" role="img" aria-label="App target and widget extension as separate process boxes, both connected to a shared App Group container holding the SwiftData store and shared defaults. A bridge strip shows the hand-maintained list of files compiled into both targets.">
+        <defs>
+          <marker id="ar4" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- shared code bridge -->
+        <rect class="warnb" x="150" y="16" width="620" height="52" rx="5"/>
+        <text class="m" x="460" y="38" text-anchor="middle" font-weight="600">Compiled into BOTH targets — hand-kept membershipExceptions list in project.pbxproj</text>
+        <text class="s" x="460" y="56" text-anchor="middle">Models/ · NudgeTheme · SharedModelContainer — a new Models file is invisible to the widget until added here</text>
+
+        <!-- app process -->
+        <rect class="box" x="30" y="102" width="360" height="116" rx="6"/>
+        <text class="m" x="210" y="128" text-anchor="middle" font-weight="600">Nudge (app target)</text>
+        <text class="s" x="210" y="150" text-anchor="middle">all UI · services · arbiter · AI calls</text>
+        <text class="s" x="210" y="168" text-anchor="middle">container from SharedModelContainer</text>
+        <text class="s" x="210" y="186" text-anchor="middle">only process that schedules notifications</text>
+
+        <!-- widget process -->
+        <rect class="box" x="530" y="102" width="360" height="116" rx="6"/>
+        <text class="m" x="710" y="128" text-anchor="middle" font-weight="600">NudgeWidgetExtension</text>
+        <text class="s" x="710" y="150" text-anchor="middle">widgets · Live Activities · App Intents</text>
+        <text class="s warnt" x="710" y="168" text-anchor="middle">declares its OWN schema + container</text>
+        <text class="s" x="710" y="186" text-anchor="middle">~30 MB memory ceiling — bounded fetches only</text>
+
+        <line class="wire warn dash" x1="330" y1="68" x2="270" y2="98" marker-end="url(#ar4)"/>
+        <line class="wire warn dash" x1="590" y1="68" x2="650" y2="98" marker-end="url(#ar4)"/>
+
+        <!-- app group -->
+        <rect class="store" x="280" y="246" width="360" height="46" rx="6"/>
+        <text class="m" x="460" y="266" text-anchor="middle" font-weight="600">App Group · group.com.deblaser.nudge</text>
+        <text class="s" x="460" y="283" text-anchor="middle">Nudge.store (SwiftData) + shared UserDefaults</text>
+
+        <line class="wire" x1="210" y1="218" x2="330" y2="244" marker-end="url(#ar4)"/>
+        <text class="lab" x="228" y="240">read / write</text>
+        <line class="wire" x1="710" y1="218" x2="590" y2="244" marker-end="url(#ar4)"/>
+        <text class="lab" x="618" y="240" text-anchor="end">read + intent writes</text>
+      </svg>
+      <figcaption><span class="fig">FIG 4</span>Three schema lists must agree by hand (app container, widget container, preview container) — a mismatch is a runtime crash, not a build error. This boundary is the map's most common failure surface.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 5.0 AI SURFACE ════════ -->
+  <section>
+    <h2><span class="n">5.0</span>Where AI is allowed — and how much it costs</h2>
+    <p class="lede">Seven live call sites, tiered per site: the one place where judgment <strong>is</strong> the product runs the frontier model; high-volume background jobs run the cheap one. The arbiter itself calls no model — AI-derived data reaches it only as cached fields read synchronously.</p>
+
+    <div class="tablewrap">
+    <table>
+      <tr><th>Call site</th><th>Model</th><th>Job</th></tr>
+      <tr><td class="mono">sendChat (capture)</td><td><span class="tag opus">Opus 5</span></td><td>Brain dump → tasks, events, commitments, goal links. The behavioral contract lives in its system prompt.</td></tr>
+      <tr><td class="mono">Screenshot import</td><td><span class="tag haiku">Haiku</span></td><td>Schedule image (after Vision OCR) → events.</td></tr>
+      <tr><td class="mono">NudgeIntelligence</td><td><span class="tag haiku">Haiku</span></td><td>Per-task signals, cached 7 days; read synchronously by scoring.</td></tr>
+      <tr><td class="mono">StakesBackfill</td><td><span class="tag haiku">Haiku</span></td><td>One-shot stakes repair on existing rows; atomic — all or nothing.</td></tr>
+      <tr><td class="mono">DayPlanRefiner</td><td><span class="tag haiku">Haiku</span></td><td>AI pass over the deterministic day plan. Pro-gated, once per day.</td></tr>
+      <tr><td class="mono">NudgeCopyService</td><td><span class="tag haiku">Haiku</span></td><td>Notification copy, generated <em>ahead</em> and cached — the arbiter only reads.</td></tr>
+      <tr><td class="mono">Goal-lapse hook</td><td><span class="tag haiku">Haiku</span></td><td>Message-box copy when the user answers the goal-lapse bait. Cached per goal per day.</td></tr>
+    </table>
+    </div>
+  </section>
+
+  <!-- ════════ 6.0 STANDING RULES ════════ -->
+  <section>
+    <h2><span class="n">6.0</span>Standing rules — the tripwires</h2>
+    <p class="lede">Each of these exists because its violation shipped a real bug. They are the part of the map that must never drift.</p>
+    <ul class="rules">
+      <li><strong>UI never schedules notifications.</strong> <span class="why">Views mutate data and call <code>reevaluate</code>. The arbiter is the only scheduling site.</span></li>
+      <li><strong>Every gate reads the candidate's fire date, never <code>now</code>.</strong> <span class="why">A now-keyed gate silently deletes future candidates because of something happening this minute.</span></li>
+      <li><strong>One outcome kind per feature.</strong> <span class="why">Two builders sharing a kind produce rows nobody can attribute — the ability to measure either is silently lost.</span></li>
+      <li><strong>Three schema lists, synced by hand.</strong> <span class="why">App, widget, and preview containers each declare the models; a miss is a runtime crash.</span></li>
+      <li><strong>Deadlines are owed; intents are chosen.</strong> <span class="why">Only <code>dueDate</code>/<code>specificTime</code> may produce countdowns, overdue states, or dueSoon nudges. When capture is unsure, it guesses intent — the cheap failure.</span></li>
+      <li><strong>Stakes is recorded, not consumed.</strong> <span class="why">The scorer accepts it; no production caller passes it. Arming waits for floater baseline data.</span></li>
+      <li><strong>Every tunable lives in <code>NudgeConfig</code>.</strong> <span class="why">Behavior changes there, never as inline constants.</span></li>
+      <li><strong>Arbiter changes get a before/after dump on real data first.</strong> <span class="why">The <code>debug*Impact</code> seams exist for this; they have caught wrong assumptions repeatedly.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    Generated from ARCHITECTURE.md (rev 367254e) · builder/gate census: docs/plan/CONTEXT.md · this page is a map, not the truth — the code is.
+  </footer>
+</div>

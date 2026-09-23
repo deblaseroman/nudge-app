@@ -26,6 +26,7 @@
 //      are free and we don't burn tokens.
 //
 
+import CryptoKit
 import Foundation
 import SwiftData
 
@@ -34,89 +35,120 @@ final class NudgeIntelligence {
     static let shared = NudgeIntelligence()
     private init() {}
 
-    // MARK: - Public API
+    /// TaskIDs with an in-flight LLM refresh. Prevents repeated callers
+    /// (e.g. NudgeArbiter.reevaluate, called many times per minute under
+    /// rapid foreground/background cycling) from stacking up concurrent
+    /// `Task { await refresh(...) }` blocks for the same task. Each such
+    /// Task strongly captured a NudgeTask + ModelContext + an in-flight
+    /// URLSession request while awaiting Claude — a confirmed contributor
+    /// to the rapid-cycling memory jetsam.
+    private var inFlightRefreshTaskIDs: Set<UUID> = []
 
-    /// Returns the (cached or freshly computed) signals row for a task. If
-    /// a cached row exists and is fresh, returns it immediately. Otherwise
-    /// triggers an async refresh and returns the heuristic fallback so
-    /// callers (UI + scoring) have something to use right away.
-    func intelligence(for task: NudgeTask, modelContext: ModelContext) -> TaskIntelligence {
+    // MARK: - Public API — READ (synchronous, side-effect-free)
+
+    /// READ-ONLY signal lookup. Returns the cached `TaskIntelligence` row if
+    /// one exists and is still fresh; otherwise returns the deterministic
+    /// keyword-based fallback.
+    ///
+    /// This method NEVER spawns a Task and NEVER writes to SwiftData, so it
+    /// is safe to call from hot synchronous paths - notably every candidate
+    /// builder inside `NudgeArbiter.reevaluate`, which runs on every
+    /// foreground and every wake-time change. Keeping the read pure is what
+    /// makes `reevaluate` provably free of off-main async work.
+    ///
+    /// LLM enrichment is triggered SEPARATELY and explicitly by
+    /// `refreshSoon(for:)` at the only moments new signals can appear: task
+    /// creation and task-title edits. The arbiter never triggers it.
+    func cachedIntelligence(for task: NudgeTask, modelContext: ModelContext) -> TaskIntelligence {
         if let cached = fetchCached(taskID: task.id, modelContext: modelContext),
            isFresh(cached) {
             return cached
         }
-
-        Task { [weak self] in
-            await self?.refresh(task: task, modelContext: modelContext)
-        }
-
         return fallback(for: task)
     }
 
-    /// Force a re-analysis (e.g. user edited the title).
-    func refreshSoon(for task: NudgeTask, modelContext: ModelContext) {
-        Task { [weak self] in
-            await self?.refresh(task: task, modelContext: modelContext)
+    // MARK: - Public API — ENRICH (async, user-triggered only)
+
+    /// Asks for a refresh of a task's signals. Safe to call on every
+    /// lifecycle event (creation, editor open, editor save): it is a no-op
+    /// while a cached row is fresh and its `inputHash` matches the task's
+    /// current inputs, so only a new task or a changed title / category /
+    /// due line reaches the API (Sep 23 2026; before this every call paid).
+    /// Single-flight per taskID so overlapping calls collapse to one.
+    ///
+    /// `container` defaults to the shared store; the eval harness passes
+    /// its own in-memory container so nothing it does touches the app's.
+    func refreshSoon(for task: NudgeTask, in container: ModelContainer = SharedModelContainer.container) {
+        let taskID = task.id
+        guard inFlightRefreshTaskIDs.insert(taskID).inserted else { return }
+
+        Task { @MainActor [weak self] in
+            _ = await self?.refreshIfNeeded(task: task, in: container)
+            self?.inFlightRefreshTaskIDs.remove(taskID)
         }
     }
 
-    // MARK: - Refresh path
+    /// The awaitable form. Returns TRUE when an API call was made, FALSE
+    /// when the cache answered. The harness counts these.
+    @discardableResult
+    func refreshIfNeeded(task: NudgeTask, in container: ModelContainer = SharedModelContainer.container) async -> Bool {
+        // Inputs are read BEFORE the suspension point, on the main actor.
+        let inputs = Inputs(task: task)
+        let taskID = task.id
+        let context = ModelContext(container)
+        if let cached = fetchCached(taskID: taskID, modelContext: context),
+           isFresh(cached), cached.inputHash == inputs.hash {
+            #if DEBUG
+            print("[NudgeIntelligence] cache hit for \"\(inputs.title)\" — no call")
+            #endif
+            return false
+        }
 
-    private func refresh(task: NudgeTask, modelContext: ModelContext) async {
-        let prompt = buildPrompt(for: task)
-        let parsed: TaskSignalsJSON? = try? await callAI(prompt: prompt)
+        let signals = try? await ClaudeService.shared.analyzeTask(userMessage: inputs.userMessage)
 
+        // Resumes on the main actor (this func is @MainActor), so the
+        // SwiftData write below happens on the main thread.
         let row: TaskIntelligence
-        if let parsed {
+        if let signals {
             row = TaskIntelligence(
-                taskID: task.id,
-                statedUrgency: parsed.statedUrgencyEnum,
-                suggestedFirstStep: parsed.suggestedFirstStep,
+                taskID: taskID,
+                statedUrgency: StatedUrgency(rawValue: signals.statedUrgency) ?? .none,
+                suggestedFirstStep: signals.suggestedFirstStep,
                 analyzedAt: Date()
             )
         } else {
             row = fallback(for: task)
         }
-
-        upsert(row, modelContext: modelContext)
+        row.inputHash = inputs.hash
+        upsert(row, modelContext: ModelContext(container))
+        return true
     }
 
-    // MARK: - AI call
+    // MARK: - Prompt inputs
 
-    private func callAI(prompt: String) async throws -> TaskSignalsJSON {
-        let response = try await ClaudeService.shared.send(userMessage: prompt)
-        guard let data = response.message.data(using: .utf8) else {
-            throw NudgeIntelligenceError.malformed
+    /// The prompt's user message and its hash, from one value: the hash is
+    /// SHA-256 of the exact string sent, so nothing can be added to the
+    /// prompt without changing the freshness key.
+    struct Inputs {
+        let title: String
+        let userMessage: String
+
+        init(task: NudgeTask) {
+            title = task.title
+            let category = task.category ?? "uncategorized"
+            let dueLine = task.dueDate.map(ISO8601DateFormatter().string(from:)) ?? "none"
+            userMessage = "Task title: \"\(task.title)\"\nCategory: \(category)\nDue: \(dueLine)"
         }
-        return try JSONDecoder().decode(TaskSignalsJSON.self, from: data)
+
+        var hash: String {
+            SHA256.hash(data: Data(userMessage.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
     }
 
-    private func buildPrompt(for task: NudgeTask) -> String {
-        let dueString = task.dueDate.map(ISO8601DateFormatter().string(from:)) ?? "none"
-        let categoryString = task.category ?? "uncategorized"
-        let today = ISO8601DateFormatter().string(from: Date())
-
-        return """
-        Return ONLY valid JSON matching this exact schema (no prose, no fences):
-        {
-          "statedUrgency": "none" | "explicit",
-          "suggestedFirstStep": "<short concrete first action, under 80 chars>"
-        }
-
-        Task title: "\(task.title)"
-        Category: \(categoryString)
-        Due: \(dueString)
-        Today: \(today)
-
-        Rules:
-        - statedUrgency: "explicit" if the title contains words like "urgent", \
-        "asap", "due tonight", "due tomorrow", "deadline", "rush", or otherwise \
-        signals time pressure directly. "none" otherwise. Do NOT mark explicit \
-        based on the due date — only language in the title.
-        - suggestedFirstStep: a tiny concrete action to lower activation energy. \
-        Example: "Open the doc and write one sentence." Avoid generic openers \
-        like "Get started" — name the first concrete move.
-        """
+    /// The freshness key a row must carry to be a cache hit right now.
+    /// The harness seeds rows with it to test the no-call path.
+    static func currentInputHash(for task: NudgeTask) -> String {
+        Inputs(task: task).hash
     }
 
     // MARK: - Fallback
@@ -167,24 +199,13 @@ final class NudgeIntelligence {
             existing.statedUrgencyRaw = new.statedUrgencyRaw
             existing.suggestedFirstStep = new.suggestedFirstStep
             existing.analyzedAt = new.analyzedAt
+            // The freshness key too: without this an existing row (every
+            // row from before the column) never stored its hash, so every
+            // refresh called (device, Sep 23 2026: open + save = 2 calls).
+            existing.inputHash = new.inputHash
         } else {
             modelContext.insert(new)
         }
         try? modelContext.save()
     }
-}
-
-// MARK: - DTO
-
-private struct TaskSignalsJSON: Codable {
-    let statedUrgency: String
-    let suggestedFirstStep: String
-
-    var statedUrgencyEnum: StatedUrgency {
-        statedUrgency == "explicit" ? .explicit : .none
-    }
-}
-
-private enum NudgeIntelligenceError: Error {
-    case malformed
 }

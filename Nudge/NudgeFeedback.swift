@@ -31,7 +31,7 @@ struct NudgeHaptics {
         g.prepare(); g.impactOccurred()
     }
 
-    /// Success pattern — all tasks done, streak milestone, Pro upgrade confirmed
+    /// Success pattern — all tasks done, streak milestone
     static func success() {
         let g = UINotificationFeedbackGenerator()
         g.prepare(); g.notificationOccurred(.success)

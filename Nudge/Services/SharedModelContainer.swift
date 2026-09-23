@@ -48,6 +48,8 @@ struct SharedModelContainer {
         TaskIntelligence.self,
         CategoryDurationStats.self,
         EventDurationStats.self,
+        PrepTombstone.self,
+        NudgeCommitment.self,
     ])
 
     nonisolated(unsafe) static var container: ModelContainer = {

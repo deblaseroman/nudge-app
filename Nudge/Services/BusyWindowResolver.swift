@@ -12,13 +12,11 @@
 //  Nothing here makes scheduling decisions — it just answers "is the user
 //  busy at this Date?" for callers like `NudgeArbiter`'s gate.
 //
-//  Duration resolution per event, in order:
-//    1. `task.estimatedMinutes` if set (calendar/screenshot import wrote
-//       a real end time).
-//    2. `EventDurationStats` row keyed by normalized title — populated
-//       once the user confirms the duration of an event they added
-//       without one (capture flow, step 6).
-//    3. `NudgeConfig.defaultEventDurationMinutes` (60) as a safety net.
+//  Duration resolution per event is the shared
+//  `NudgeTask.eventDurationMinutes` (explicit → learned per-title row →
+//  fallback) — one implementation for this gate, the timeline, both
+//  planners, and the widget chart, so they can never disagree about how
+//  long an event runs.
 //
 
 import Foundation
@@ -27,6 +25,32 @@ import SwiftData
 struct BusyWindow {
     let start: Date
     let end: Date
+}
+
+/// Aggregate commitment load for one day's awake window — the reusable
+/// answer to "how full is this day already?". Previously this math existed
+/// only implicitly inside `TasksTabView.planMyDay()` and (privately) in
+/// `DayPlanRefiner.freeGaps` — neither exported a number a gate could
+/// consume, which is why this lives here now instead of a third copy.
+struct DayLoad {
+    let windowStart: Date
+    let windowEnd: Date
+    /// Minutes of the window covered by merged event busy windows
+    /// (including their tail buffers and cramped-gap merges). Placed
+    /// tasks deliberately do NOT count — the question is about fixed
+    /// commitments, not the plan the user drew on top of them.
+    let busyMinutes: Int
+
+    var windowMinutes: Int {
+        max(Int(windowEnd.timeIntervalSince(windowStart) / 60), 0)
+    }
+
+    /// 0 = completely free day, 1 = fully committed.
+    var busyFraction: Double {
+        let total = windowMinutes
+        guard total > 0 else { return 1 }
+        return min(Double(busyMinutes) / Double(total), 1)
+    }
 }
 
 @MainActor
@@ -51,7 +75,7 @@ final class BusyWindowResolver {
         // Build raw windows (start + end before any merging or buffer).
         var rawWindows: [BusyWindow] = events.compactMap { event in
             guard let start = event.specificTime else { return nil }
-            let durationMin = resolveDurationMinutes(for: event, modelContext: modelContext)
+            let durationMin = event.eventDurationMinutes(modelContext: modelContext)
             let end = start.addingTimeInterval(Double(durationMin) * 60)
             // Range filter — keep events whose window overlaps [from, to].
             if end < from || start > to { return nil }
@@ -77,23 +101,42 @@ final class BusyWindowResolver {
         return windows.contains { fireDate >= $0.start && fireDate <= $0.end }
     }
 
-    // MARK: - Duration resolution
+    // MARK: - Day load
 
-    private func resolveDurationMinutes(
-        for event: NudgeTask,
+    /// Commitment load for `day`'s awake window — `DayWindow.resolve`, the
+    /// one shared derivation (cycle 2026-08-02-02; this method's inline copy
+    /// had the same same-calendar-day bedtime bug as the planners: a
+    /// past-midnight bedtime collapsed the window and this returned nil, so
+    /// the day-fullness gate silently failed open for exactly those
+    /// profiles — now they get a real window). `wake`/`bedtime` are
+    /// clock-time Dates from `UserProfile`; only hour/minute are read, so
+    /// any `day` — today or a future fire day — can be assessed. Returns
+    /// nil only when the sleep window is shorter than its quiet buffers
+    /// (misconfigured profile) — callers should still fail OPEN on nil
+    /// rather than suppress.
+    func dayLoad(
+        on day: Date,
+        wake: Date,
+        bedtime: Date,
         modelContext: ModelContext
-    ) -> Int {
-        if let explicit = event.estimatedMinutes, explicit > 0 {
-            return explicit
+    ) -> DayLoad? {
+        guard let window = DayWindow.resolve(on: day, wake: wake, bedtime: bedtime) else {
+            return nil
         }
-        let key = EventDurationStats.normalize(event.title)
-        let descriptor = FetchDescriptor<EventDurationStats>(
-            predicate: #Predicate<EventDurationStats> { $0.titleKey == key }
+        let start = window.start
+        let end = window.end
+
+        let windows = busyWindows(from: start, to: end, modelContext: modelContext)
+        let busySeconds = windows.reduce(0.0) { total, window in
+            let overlapStart = max(window.start, start)
+            let overlapEnd = min(window.end, end)
+            return total + max(overlapEnd.timeIntervalSince(overlapStart), 0)
+        }
+        return DayLoad(
+            windowStart: start,
+            windowEnd: end,
+            busyMinutes: Int(busySeconds / 60)
         )
-        if let learned = (try? modelContext.fetch(descriptor))?.first {
-            return learned.durationMinutes
-        }
-        return NudgeConfig.defaultEventDurationMinutes
     }
 
     // MARK: - Merge logic

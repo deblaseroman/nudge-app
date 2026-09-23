@@ -26,6 +26,9 @@ final class UserProfile {
     var calendarImportURL: String?
     var connectedAppleCalendarID: String?
     var connectedAppleCalendarTitle: String?
+    /// DEPRECATED tombstone columns (Sep 21 2026, Roman: one version, no
+    /// free/pro tiers). Nothing reads or writes them; kept so existing
+    /// stores open without a migration.
     var isPro: Bool
     var trialStartDate: Date?
     var dailyMessageCount: Int
@@ -33,11 +36,122 @@ final class UserProfile {
     var onboardingComplete: Bool
     var widgetAdded: Bool
     var notificationsEnabled: Bool
+    /// Gates the arbiter's morning prompt (formerly the fixed
+    /// NotificationScheduler morning kickoff — same toggle, new machinery).
     var morningCheckInNotificationsEnabled: Bool
     var taskDueSoonNotificationsEnabled: Bool
-    var eveningCheckInNotificationsEnabled: Bool
-    var deadlinePrepNotificationsEnabled: Bool
     var sessionStarterNotificationsEnabled: Bool
+
+    /// Gates the arbiter's floater check-in (`buildFloaterCheckInCandidates`).
+    /// Split out of `taskDueSoonNotificationsEnabled` in Jul 2026, alongside
+    /// `NudgeOutcomeKind.floater` — that toggle gated two unrelated features,
+    /// so opting out of mid-day check-ins also killed deadline-driven
+    /// get-ahead nudges, the more valuable half.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, unlike every field above it (they're assigned
+    /// in `init` only). This project has no `VersionedSchema` / migration
+    /// plan, so SwiftData's lightweight migration is what has to open an
+    /// existing store — and a new non-optional attribute with no default
+    /// makes that FAIL AT LAUNCH on any device that already has a profile
+    /// row. Not a build error. Keep the default here, not just in `init`.
+    var floaterCheckInNotificationsEnabled: Bool = true
+
+    /// Gates the arbiter's event-block reminders (`buildEventBlockCandidates`).
+    /// Added Jul 2026: event blocks were the ONLY notification kind with no
+    /// per-kind toggle, so silencing the heads-up before a class or meeting
+    /// meant turning off `notificationsEnabled` and losing everything else
+    /// with it.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, for the same reason as
+    /// `floaterCheckInNotificationsEnabled` above — no `VersionedSchema`
+    /// here, so a defaultless non-optional attribute fails at LAUNCH on an
+    /// existing store, not at build. Defaulting to `true` also means every
+    /// current user's behavior is unchanged.
+    var eventReminderNotificationsEnabled: Bool = true
+
+    /// Gates the arbiter's due-soon reminders (`buildDueSoonCandidates`) —
+    /// the "this is landing" half of the Aug 2026 get-ahead split. The
+    /// other half (`.prep`, "start early") keeps
+    /// `taskDueSoonNotificationsEnabled`, the toggle the whole get-ahead
+    /// feature always read: a user who silenced get-ahead nudges was
+    /// silencing the start-early pushes that actually fired, so intent
+    /// continuity beats the (now unfortunate) field name. Same split
+    /// convention as `floaterCheckInNotificationsEnabled` above — the
+    /// direct descendant keeps the old field, the split-out feature gets a
+    /// fresh one.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block: no `VersionedSchema`, so a defaultless non-optional
+    /// attribute fails at LAUNCH on an existing store, not at build.
+    var dueSoonReminderNotificationsEnabled: Bool = true
+
+    /// Gates the arbiter's come-back nudge (`buildComeBackCandidates`,
+    /// cycle 2026-08-03-03) — the forward-looking nudge that only fires
+    /// after `NudgeConfig.comeBackAfterDays` days with no engagement. Own
+    /// field per the one-toggle-per-feature rule above.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var comeBackNotificationsEnabled: Bool = true
+
+    /// Gates the placement heads-up (`buildPlacementLeadCandidates`, cycle
+    /// 2026-08-04-02) — the short warning minutes before a planned slot.
+    /// Own field per the one-toggle-per-feature rule above.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var placementLeadNotificationsEnabled: Bool = true
+
+    /// Gates the missed-placement follow-up (`buildPlacementMissedCandidates`,
+    /// cycle 2026-08-04-02) — the persistent series after a planned slot
+    /// passes with the task still open. Separate from the heads-up toggle
+    /// above on purpose: the follow-up is the kind most likely to earn an
+    /// opt-out, and silencing it must not cost the 5-minute warnings too.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var placementMissedNotificationsEnabled: Bool = true
+
+    /// Gates the goal-lapse bait (`buildGoalLapseCandidates`, cycle
+    /// 2026-08-04-03) — the rare, at-most-monthly-per-goal note that a
+    /// personal goal has gone a month untouched. Own field per the
+    /// one-toggle-per-feature rule above.
+    ///
+    /// PROPERTY-LEVEL DEFAULT, same reason as every post-launch field in
+    /// this block.
+    var goalLapseNotificationsEnabled: Bool = true
+
+    // MARK: - Quiet hours
+    //
+    // "When do I not want to be interrupted?" — deliberately SEPARATE from
+    // the sleep schedule. `insideAwakeWindow` used to derive quiet hours
+    // from `bedtime`/`wakeTime` directly, which conflated two different
+    // things: a student with an 11pm bedtime who studies until 12:30 got
+    // nothing after 10pm, the exact hours they were working.
+    //
+    // PROPERTY-LEVEL DEFAULTS, for the same reason as
+    // `floaterCheckInNotificationsEnabled` above — no VersionedSchema here,
+    // so a defaultless non-optional attribute fails at LAUNCH on an
+    // existing store, not at build.
+
+    /// When true (the default, and where every pre-existing store lands),
+    /// quiet hours are derived from the sleep schedule exactly as before:
+    /// `bedtime − preBedtimeQuietMinutes` → `wakeTime + postWakeQuietMinutes`.
+    /// Behavior is unchanged for anyone who never touches the setting.
+    var quietHoursFollowSleepSchedule: Bool = true
+
+    /// Clock time quiet hours BEGIN. Only hour/minute are read; the date
+    /// component is meaningless. Consumed only when
+    /// `quietHoursFollowSleepSchedule` is false — and if either this or
+    /// `quietHoursEndTime` is nil, the resolver falls back to the derived
+    /// window rather than guessing.
+    var quietHoursStartTime: Date? = nil
+
+    /// Clock time quiet hours END. Same reading rules as
+    /// `quietHoursStartTime`. May be numerically LESS than the start (the
+    /// normal case — the window wraps midnight); the resolver handles that
+    /// explicitly instead of collapsing.
+    var quietHoursEndTime: Date? = nil
 
     // MARK: - Deprecated notification fields
     //
@@ -46,11 +160,28 @@ final class UserProfile {
     // source today. Do NOT add UI for them; do NOT consume them. If a future
     // notification kind needs a toggle, prefer adding a new field over
     // resurrecting one of these (the names are misleading at this point).
+
+    /// Gated the retired bedtime-planning notification (removed Jul 2026).
+    var eveningCheckInNotificationsEnabled: Bool
+    /// Misnamed from birth — it gated the break-it-down builder, never any
+    /// deadline-prep feature (get-ahead reads
+    /// `taskDueSoonNotificationsEnabled`). Break-it-down was removed
+    /// Jul 2026, and this field retired with it — kept as a column so
+    /// existing stores open without a migration plan, per the block
+    /// comment above.
+    var deadlinePrepNotificationsEnabled: Bool
     var windDownNotificationsEnabled: Bool
     var habitReminderNotificationsEnabled: Bool
     var monthlyCheckInNotificationsEnabled: Bool
     var smartNotificationsEnabled: Bool
     var maxSmartNotificationsPerDay: Int
+    /// SUPERSEDED by `quietHoursStartTime` / `quietHoursEndTime` above, and
+    /// never read by anything at any point — these were written in `init`
+    /// and consumed nowhere. Not reused for the Jul 2026 quiet-hours work
+    /// for two reasons: `Int` hours can't express `bedtime − 60m` off a
+    /// 23:30 bedtime, and every existing store already holds the init
+    /// defaults (22 / 8), so consuming them would have silently CHANGED the
+    /// window for every current user instead of preserving it.
     var quietHoursStart: Int
     var quietHoursEnd: Int
     var streakNotificationsEnabled: Bool
@@ -74,10 +205,6 @@ final class UserProfile {
         calendarImportURL: String? = nil,
         connectedAppleCalendarID: String? = nil,
         connectedAppleCalendarTitle: String? = nil,
-        isPro: Bool = false,
-        trialStartDate: Date? = nil,
-        dailyMessageCount: Int = 0,
-        dailyMessageResetDate: Date? = nil,
         onboardingComplete: Bool = false,
         widgetAdded: Bool = false,
         notificationsEnabled: Bool = true,
@@ -89,6 +216,11 @@ final class UserProfile {
         monthlyCheckInNotificationsEnabled: Bool = true,
         deadlinePrepNotificationsEnabled: Bool = true,
         sessionStarterNotificationsEnabled: Bool = true,
+        floaterCheckInNotificationsEnabled: Bool = true,
+        eventReminderNotificationsEnabled: Bool = true,
+        quietHoursFollowSleepSchedule: Bool = true,
+        quietHoursStartTime: Date? = nil,
+        quietHoursEndTime: Date? = nil,
         smartNotificationsEnabled: Bool = true,
         maxSmartNotificationsPerDay: Int = 3,
         quietHoursStart: Int = 22,
@@ -113,10 +245,11 @@ final class UserProfile {
         self.calendarImportURL = calendarImportURL
         self.connectedAppleCalendarID = connectedAppleCalendarID
         self.connectedAppleCalendarTitle = connectedAppleCalendarTitle
-        self.isPro = isPro
-        self.trialStartDate = trialStartDate
-        self.dailyMessageCount = dailyMessageCount
-        self.dailyMessageResetDate = dailyMessageResetDate
+        // Tombstones (one version, no tiers): fixed values, never read.
+        self.isPro = false
+        self.trialStartDate = nil
+        self.dailyMessageCount = 0
+        self.dailyMessageResetDate = nil
         self.onboardingComplete = onboardingComplete
         self.widgetAdded = widgetAdded
         self.notificationsEnabled = notificationsEnabled
@@ -128,6 +261,11 @@ final class UserProfile {
         self.monthlyCheckInNotificationsEnabled = monthlyCheckInNotificationsEnabled
         self.deadlinePrepNotificationsEnabled = deadlinePrepNotificationsEnabled
         self.sessionStarterNotificationsEnabled = sessionStarterNotificationsEnabled
+        self.floaterCheckInNotificationsEnabled = floaterCheckInNotificationsEnabled
+        self.eventReminderNotificationsEnabled = eventReminderNotificationsEnabled
+        self.quietHoursFollowSleepSchedule = quietHoursFollowSleepSchedule
+        self.quietHoursStartTime = quietHoursStartTime
+        self.quietHoursEndTime = quietHoursEndTime
         self.smartNotificationsEnabled = smartNotificationsEnabled
         self.maxSmartNotificationsPerDay = maxSmartNotificationsPerDay
         self.quietHoursStart = quietHoursStart
@@ -137,9 +275,4 @@ final class UserProfile {
         self.milestoneNotificationsEnabled = milestoneNotificationsEnabled
     }
 
-    /// Whether the user is currently in their 14-day trial period
-    var isInTrial: Bool {
-        guard let start = trialStartDate else { return false }
-        return Date().timeIntervalSince(start) < 14 * 24 * 60 * 60
-    }
 }

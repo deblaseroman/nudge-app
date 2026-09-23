@@ -76,9 +76,31 @@ final class SessionCoordinator {
         SharedModelContainer.appGroupDefaults
             .set(Date(), forKey: NotificationScheduler.lastFocusSessionStartedAtKey)
 
-        // Defer reevaluation: re-runs the arbiter so all pending
-        // discretionary nudges are cancelled now that the user is engaged.
+        let minutes = task.estimatedMinutes ?? defaultDurationMinutes
+        let duration = TimeInterval(minutes * 60)
+        // MUST be set before the reevaluate below. The arbiter's
+        // active-session gate reads `sessionEnd` live to decide whether a
+        // candidate would arrive DURING this session — and `cancelSession()`
+        // at the top of this function resets it to `.distantPast`. Computing
+        // it after the reevaluate left that pass seeing `isSessionActive ==
+        // true` alongside an end instant in the distant past, so the gate
+        // suppressed nothing on the one reevaluate whose entire job is to
+        // clear nudges out of the session the user just started.
+        sessionEnd = Date().addingTimeInterval(duration)
+
+        // Defer reevaluation: re-runs the arbiter so pending discretionary
+        // nudges that would land inside this session are cancelled now that
+        // the user is engaged.
         let context = ModelContext(SharedModelContainer.container)
+
+        // Starting a session on a goal-linked task counts as working on
+        // the goal ("running a session on one" — cycle 2026-08-04-03).
+        // Recorded at start, not completion: showing up is the activity.
+        NudgeGoal.recordActivity(
+            goalID: task.goalID, at: sessionStartedAt ?? Date(), in: context
+        )
+        try? context.save()
+
         if let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
             NudgeArbiter.shared.reevaluate(
                 reason: .sessionStarted,
@@ -86,10 +108,6 @@ final class SessionCoordinator {
                 modelContext: context
             )
         }
-
-        let minutes = task.estimatedMinutes ?? defaultDurationMinutes
-        let duration = TimeInterval(minutes * 60)
-        sessionEnd = Date().addingTimeInterval(duration)
 
         // Publish the active session to the widget. Without this write
         // the widget timeline shows the "Start" button even after the
@@ -216,7 +234,12 @@ final class SessionCoordinator {
         guard isSessionActive else { return }
         cancelAllTimers()
 
-        Task {
+        // ActivityKit (`Activity<...>.end` etc.) asserts main thread.
+        // LiveActivityManager is @MainActor, and @_inheritActorContext on
+        // Task.init SHOULD carry it in from here — but being explicit
+        // removes any ambiguity if the surrounding actor context is ever
+        // lost (e.g., called from a non-isolated callback in the future).
+        Task { @MainActor in
             await activityManager.endActivity()
         }
 
@@ -226,6 +249,26 @@ final class SessionCoordinator {
         sessionEnd = .distantPast
         sessionStartedAt = nil
         publishSessionState(isActive: false, currentTaskID: nil, timerEndDate: nil)
+
+        // Re-run the arbiter now that the session is over. Without this the
+        // active-session gate keeps rejecting every candidate until the next
+        // foreground reevaluation, so an abandoned session silently suppressed
+        // all nudges. Must come AFTER `isSessionActive = false` — the gate
+        // reads that flag live.
+        reevaluateAfterSessionEnd()
+    }
+
+    /// Fires a `.sessionEnded` arbiter pass. Callers must have already cleared
+    /// `isSessionActive`, since `passesGates` reads it directly.
+    private func reevaluateAfterSessionEnd() {
+        let context = ModelContext(SharedModelContainer.container)
+        guard let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first
+        else { return }
+        NudgeArbiter.shared.reevaluate(
+            reason: .sessionEnded,
+            profile: profile,
+            modelContext: context
+        )
     }
 
     // MARK: - Private
@@ -240,7 +283,7 @@ final class SessionCoordinator {
         sessionState = .complete
         playAlarmSound()
 
-        Task {
+        Task { @MainActor in
             await activityManager.endActivity()
         }
 
@@ -253,16 +296,23 @@ final class SessionCoordinator {
         publishSessionState(isActive: false, currentTaskID: nil, timerEndDate: nil)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.isSessionActive = false
-            self?.currentTask = nil
-            self?.sessionState = .active
+            guard let self else { return }
+            self.isSessionActive = false
+            self.currentTask = nil
+            self.sessionState = .active
+            // Deliberately inside the deferred block, not at the end of
+            // finishSession: `isSessionActive` stays true for these 3 seconds
+            // (the completion card animates out), and the arbiter's gate reads
+            // it live. Reevaluating any earlier would gate-reject every
+            // candidate and leave the same stale state this fixes.
+            self.reevaluateAfterSessionEnd()
         }
     }
 
     private func triggerFocusAlert() {
         guard isSessionActive, sessionState == .active, let task = currentTask else { return }
         let ends = sessionEnd
-        Task {
+        Task { @MainActor in
             await activityManager.showStayFocusedAlert(taskTitle: task.title, taskEnds: ends)
         }
         focusAlertRevertTimer = scheduleWork(after: focusAlertDuration) { [weak self] in
@@ -273,7 +323,7 @@ final class SessionCoordinator {
     private func revertFocusAlert() {
         guard isSessionActive, let task = currentTask else { return }
         let ends = sessionEnd
-        Task {
+        Task { @MainActor in
             await activityManager.revertToActive(taskTitle: task.title, taskEnds: ends)
         }
     }

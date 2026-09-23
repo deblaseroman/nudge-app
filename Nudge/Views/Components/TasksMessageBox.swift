@@ -1,0 +1,1474 @@
+//
+//  TasksMessageBox.swift
+//  Nudge
+//
+//  The read-only message surface at the top of the Tasks tab — the app's
+//  only place to SPEAK. Every other surface either takes input or shows
+//  data; this one explains. Deliberately display-only: no field, no send
+//  button, no keyboard — Home owns capture, and a second capture path
+//  doubles where a capture bug can live.
+//
+//  Content is composed from data the app already has, so the box works
+//  offline and with no API key (DESIGN.md: AI at the edges, deterministic
+//  in the core). Two AI-written messages ride on top of that deterministic
+//  ladder, both read-only and both with the deterministic copy as their
+//  fallback: the goal-lapse hook (after a bait tap) and, since Sep 2026,
+//  the daily Opus memo (`ClaudeService.generateTasksMemo`), the box's
+//  standing voice whenever no one-time news is pending.
+//
+
+import SwiftUI
+import CryptoKit
+
+// MARK: - Message model
+
+/// What the box says: a headline that always fits collapsed, plus optional
+/// detail revealed on tap.
+struct TasksMessage: Equatable {
+    let headline: String
+    let detail: String?
+}
+
+/// "The user tapped a nudge and landed here" — read from the app-group keys
+/// `NudgeNotificationService` writes on a notification body tap. The same
+/// durable-intent pattern as the idle "Not yet" keys (a transient post dies
+/// on cold launch because this view isn't mounted yet; App Group defaults
+/// survive any launch path), with one deliberate difference: the idle keys
+/// are consumed one-shot because they drive a modal sheet, where this
+/// context is passive display and stays readable for its whole freshness
+/// window (`NudgeConfig.messageBoxTapContextMinutes`), then expires by age.
+struct TappedNudgeContext {
+    let kind: NudgeOutcomeKind
+    let taskID: UUID?
+    /// Goal-lapse taps only: which goal the bait was about.
+    let goalID: UUID?
+    let tappedAt: Date
+
+    /// Reads the context from the app group; returns nil (and tidies the
+    /// keys) once it has gone stale.
+    static func read(now: Date = Date()) -> TappedNudgeContext? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard
+            let kindRaw = defaults.string(forKey: NudgeNotificationService.tappedNudgeKindKey),
+            let kind = NudgeOutcomeKind(rawValue: kindRaw),
+            let tappedAt = defaults.object(forKey: NudgeNotificationService.tappedNudgeDateKey) as? Date
+        else { return nil }
+
+        let ageMinutes = now.timeIntervalSince(tappedAt) / 60
+        guard ageMinutes >= 0, ageMinutes <= Double(NudgeConfig.messageBoxTapContextMinutes) else {
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeKindKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeTaskIDKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeGoalIDKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeDateKey)
+            return nil
+        }
+        let taskID = defaults.string(forKey: NudgeNotificationService.tappedNudgeTaskIDKey)
+            .flatMap(UUID.init(uuidString:))
+        let goalID = defaults.string(forKey: NudgeNotificationService.tappedNudgeGoalIDKey)
+            .flatMap(UUID.init(uuidString:))
+        return TappedNudgeContext(kind: kind, taskID: taskID, goalID: goalID, tappedAt: tappedAt)
+    }
+}
+
+/// Per-(goal, day) cache for the AI-written goal-lapse hook, so the box
+/// re-appearing (tab switch, scene change) inside the tap-context window
+/// doesn't re-spend an API call on a message that was already written.
+/// App-group defaults like every other message-box context; one slot is
+/// enough because at most one goal-lapse fires per day by construction.
+enum GoalLapseHookCache {
+    static let goalKey = "nudge.goalLapseHook.goalID"
+    static let dayKey = "nudge.goalLapseHook.day"
+    static let headlineKey = "nudge.goalLapseHook.headline"
+    static let detailKey = "nudge.goalLapseHook.detail"
+
+    static func read(goalID: UUID, now: Date = Date()) -> TasksMessage? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: goalKey) == goalID.uuidString,
+              defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now),
+              let headline = defaults.string(forKey: headlineKey)
+        else { return nil }
+        return TasksMessage(headline: headline, detail: defaults.string(forKey: detailKey))
+    }
+
+    static func write(goalID: UUID, message: TasksMessage, now: Date = Date()) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        defaults.set(goalID.uuidString, forKey: goalKey)
+        defaults.set(NudgeCopyStore.dayStamp(now), forKey: dayKey)
+        defaults.set(message.headline, forKey: headlineKey)
+        if let detail = message.detail {
+            defaults.set(detail, forKey: detailKey)
+        } else {
+            defaults.removeObject(forKey: detailKey)
+        }
+    }
+}
+
+/// Cache for the daily Opus memo (Sep 2026). Keyed on the day AND a
+/// fingerprint of what the memo was written from (open tasks, deadlines,
+/// completion state, goals), so a brain dump landing at noon earns a fresh
+/// memo while a tab switch never re-spends the call. `countToday` is the
+/// per-day spend cap's counter (`NudgeConfig.tasksMemoMaxPerDay`): past it
+/// the last memo stands for the rest of the day, stale rather than costly.
+enum TasksMemoCache {
+    static let dayKey = "nudge.tasksMemo.day"
+    static let fingerprintKey = "nudge.tasksMemo.fingerprint"
+    static let headlineKey = "nudge.tasksMemo.headline"
+    static let detailKey = "nudge.tasksMemo.detail"
+    static let countKey = "nudge.tasksMemo.countToday"
+
+    static func read(fingerprint: String, now: Date = Date()) -> TasksMessage? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now),
+              defaults.string(forKey: fingerprintKey) == fingerprint,
+              let headline = defaults.string(forKey: headlineKey)
+        else { return nil }
+        return TasksMessage(headline: headline, detail: defaults.string(forKey: detailKey))
+    }
+
+    /// Today's most recent memo regardless of fingerprint — what stands in
+    /// once the day's cap is spent.
+    static func readLatestToday(now: Date = Date()) -> TasksMessage? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now),
+              let headline = defaults.string(forKey: headlineKey)
+        else { return nil }
+        return TasksMessage(headline: headline, detail: defaults.string(forKey: detailKey))
+    }
+
+    static func generatedToday(now: Date = Date()) -> Int {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard defaults.string(forKey: dayKey) == NudgeCopyStore.dayStamp(now) else { return 0 }
+        return defaults.integer(forKey: countKey)
+    }
+
+    static func write(fingerprint: String, message: TasksMessage, now: Date = Date()) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        let count = generatedToday(now: now) + 1
+        defaults.set(NudgeCopyStore.dayStamp(now), forKey: dayKey)
+        defaults.set(fingerprint, forKey: fingerprintKey)
+        defaults.set(message.headline, forKey: headlineKey)
+        defaults.set(count, forKey: countKey)
+        if let detail = message.detail {
+            defaults.set(detail, forKey: detailKey)
+        } else {
+            defaults.removeObject(forKey: detailKey)
+        }
+    }
+}
+
+/// Builds what the memo writer sees (`ClaudeService.TasksMemoContext`) and
+/// the fingerprint the cache is keyed on. Every date becomes a phrase HERE,
+/// deterministically, so the model never does calendar math; every input
+/// is data the Tasks tab already holds. Read-only by construction.
+enum TasksMemoContextBuilder {
+    static func build(
+        tasks: [NudgeTask],
+        goals: [NudgeGoal],
+        completedRecords: [CompletedTaskRecord],
+        userName: String,
+        ignoredNudgeCount: Int,
+        now: Date
+    ) -> ClaudeService.TasksMemoContext {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        let dayAfter = calendar.date(byAdding: .day, value: 2, to: today) ?? today
+
+        // NOW
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "EEEE, MMMM d"
+        let hour = calendar.component(.hour, from: now)
+        let band = hour < 12 ? "morning" : (hour < 17 ? "afternoon" : "evening")
+        let nowLine = "\(dayFmt.string(from: now)), \(band)"
+
+        // TASKS — open, non-event, soonest deadline first, capped.
+        let open = tasks
+            .filter { !$0.isComplete && !$0.isInformationalEvent }
+            .sorted { $0.sortDeadline < $1.sortDeadline }
+            .prefix(NudgeConfig.tasksMemoOpenTaskCap)
+        let goalTitles = Dictionary(uniqueKeysWithValues: goals.map { ($0.id, $0.title) })
+        let taskLines: [String] = open.map { task in
+            var parts = ["\"\(task.title)\""]
+            parts.append(whenPhrase(for: task, today: today, tomorrow: tomorrow, now: now))
+            if task.stakes == .high { parts.append("high stakes") }
+            if task.plannedStartDate.map({ calendar.isDate($0, inSameDayAs: now) }) == true {
+                parts.append("on today's timeline")
+            }
+            if let goalID = task.goalID, let title = goalTitles[goalID] {
+                parts.append("toward \"\(title)\"")
+            }
+            return parts.joined(separator: " | ")
+        }
+
+        // EVENTS — today and tomorrow, time-ordered.
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "h:mm a"
+        let eventLines: [String] = tasks
+            .filter { $0.isInformationalEvent && !$0.isComplete }
+            .compactMap { event -> (Date, String)? in
+                guard let anchor = event.specificTime ?? event.dueDate,
+                      anchor >= today, anchor < dayAfter else { return nil }
+                let dayWord = anchor < tomorrow ? "Today" : "Tomorrow"
+                let clock = event.specificTime != nil ? " \(timeFmt.string(from: anchor))" : ""
+                return (anchor, "\(dayWord)\(clock): \(event.title)")
+            }
+            .sorted { $0.0 < $1.0 }
+            .prefix(8)
+            .map(\.1)
+
+        // GOALS — active ones, with elapsed time and whether anything on the
+        // list points at them.
+        let openGoalIDs = Set(tasks.filter { !$0.isComplete }.compactMap(\.goalID))
+        let goalLines: [String] = goals.filter(\.isActive).map { goal in
+            let elapsed = TasksMessageComposer.goalElapsedPhrase(
+                from: goal.lastActivityAt ?? goal.createdAt, to: now
+            )
+            let worked = goal.lastActivityAt == nil
+                ? "set \(elapsed) ago, never worked on"
+                : "last worked on \(elapsed) ago"
+            let listed = openGoalIDs.contains(goal.id)
+                ? "something on the list is toward it"
+                : "nothing on the list toward it"
+            return "\"\(goal.title)\": \(worked); \(listed)"
+        }
+
+        // HABITS — completions over the last 7 days and when they land.
+        let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+        let recent = completedRecords.filter { $0.completedAt >= weekAgo }
+        var habitLines: [String] = []
+        if recent.isEmpty {
+            habitLines.append("No tasks completed in the last 7 days.")
+        } else {
+            var bands: [String: Int] = [:]
+            for record in recent {
+                let h = calendar.component(.hour, from: record.completedAt)
+                let b = h < 12 ? "morning" : (h < 17 ? "afternoon" : "evening")
+                bands[b, default: 0] += 1
+            }
+            let top = bands.max { $0.value < $1.value }
+            let where_ = top.map { ", mostly in the \($0.key)" } ?? ""
+            habitLines.append("Completed \(recent.count) task\(recent.count == 1 ? "" : "s") in the last 7 days\(where_).")
+        }
+        let placedToday = tasks.filter {
+            !$0.isComplete && !$0.isInformationalEvent
+                && $0.plannedStartDate.map { calendar.isDate($0, inSameDayAs: now) } == true
+        }.count
+        habitLines.append("Tasks placed on today's timeline: \(placedToday).")
+        habitLines.append("Nudges ignored in the last two weeks: \(ignoredNudgeCount).")
+
+        return ClaudeService.TasksMemoContext(
+            userName: userName.trimmingCharacters(in: .whitespaces).isEmpty ? "the user" : userName,
+            nowLine: nowLine,
+            taskLines: taskLines,
+            eventLines: eventLines,
+            goalLines: goalLines,
+            habitLines: habitLines
+        )
+    }
+
+    /// What the memo was written FROM, hashed. Changes when a task is added,
+    /// completed, retitled, re-dated, tips overdue, or moves onto today's
+    /// timeline; when an event today/tomorrow appears; when a goal's
+    /// activity moves. A stable digest, not `hashValue` (per-process salt).
+    static func fingerprint(tasks: [NudgeTask], goals: [NudgeGoal], now: Date) -> String {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let dayAfter = calendar.date(byAdding: .day, value: 2, to: today) ?? today
+        var parts: [String] = []
+        for task in tasks where !task.isComplete {
+            if task.isInformationalEvent {
+                guard let anchor = task.specificTime ?? task.dueDate,
+                      anchor >= today, anchor < dayAfter else { continue }
+                parts.append("e:\(task.id.uuidString):\(task.title):\(Int(anchor.timeIntervalSince1970))")
+            } else {
+                let placedToday = task.plannedStartDate.map { calendar.isDate($0, inSameDayAs: now) } == true
+                parts.append("t:\(task.id.uuidString):\(task.title):\(Int(task.sortDeadline.timeIntervalSince1970)):\(task.isOverdue):\(task.stakesRaw ?? ""):\(placedToday):\(task.goalID?.uuidString ?? "")")
+            }
+        }
+        for goal in goals where goal.isActive {
+            parts.append("g:\(goal.id.uuidString):\(goal.title):\(Int((goal.lastActivityAt ?? goal.createdAt).timeIntervalSince1970))")
+        }
+        parts.sort()
+        let digest = SHA256.hash(data: Data(parts.joined(separator: "\n").utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func whenPhrase(for task: NudgeTask, today: Date, tomorrow: Date, now: Date) -> String {
+        let calendar = Calendar.current
+        if task.hasDeadline {
+            if task.isOverdue {
+                let ago = CountdownState.remainingLine(dueDate: task.sortDeadline, now: now) ?? "earlier"
+                return "was due \(ago)"
+            }
+            let dueLine = CountdownState.dueDateLine(dueDate: task.dueDate, specificTime: task.specificTime) ?? ""
+            let days = calendar.dateComponents([.day], from: today, to: calendar.startOfDay(for: task.sortDeadline)).day ?? 0
+            let rel: String
+            switch days {
+            case ...0: rel = "due today"
+            case 1: rel = "due tomorrow"
+            default: rel = "due in \(days) days"
+            }
+            return dueLine.isEmpty ? rel : "\(rel) (\(dueLine))"
+        }
+        if let day = task.scheduledDay {
+            if day == today { return "planned for today" }
+            if day == tomorrow { return "planned for tomorrow" }
+            let days = calendar.dateComponents([.day], from: today, to: day).day ?? 0
+            return days < 0 ? "was planned for \(-days) day\(days == -1 ? "" : "s") ago" : "planned in \(days) days"
+        }
+        return "no date"
+    }
+}
+
+/// The most recent Plan-my-day outcome from today — written by the planner
+/// (button now, morning auto-run when it exists), read back on the same
+/// App-Group-defaults pattern as `TappedNudgeContext`. Exists so no planner
+/// run can end silently: a refusal ("nothing to plan", "no room") is
+/// correct behavior, but correct-and-mute reads as a dead button (cycle
+/// 2026-08-02-01's diagnosis). Valid for the day it was written; a manual
+/// successful plan clears it (the placements ARE the feedback).
+struct PlanOutcomeContext {
+    enum Kind: String {
+        /// Tasks were placed by an automatic run — announce what happened.
+        case planned
+        /// Nothing open and unplaced to work with — a correct refusal.
+        case noCandidates
+        /// Candidates exist but no free gap fits any of them.
+        case noRoom
+        /// The planning window was empty (late-night tap, or a profile
+        /// whose sleep window is shorter than its quiet buffers). Backstop
+        /// — the wake-anchored `DayWindow` makes the all-day version of
+        /// this impossible on sane profiles.
+        case windowCollapsed
+    }
+
+    let kind: Kind
+    let placedCount: Int
+    let placedTitles: [String]
+    /// Auto placements evicted back to Unscheduled to fit a generated
+    /// session (item 4) — the announcement must name them; a silent
+    /// un-placement is the vanishing-task shape.
+    let displacedTitles: [String]
+    /// The generated session an eviction WOULD have fit, except every
+    /// helpful candidate was equal-or-higher stakes — reported instead of
+    /// evicted (the app proposes, the user decides). `noRoom` only.
+    let contentionTitle: String?
+    /// Candidates the pass refused because their appropriateness band had
+    /// no usable free time today (cycle 2026-08-04-01 item 1) — a correct
+    /// refusal that must not be silent. Parallel arrays (title +
+    /// `TaskTimeWindow` raw value) because UserDefaults holds flat string
+    /// arrays; `outOfBandBands[i]` belongs to `outOfBandTitles[i]`.
+    let outOfBandTitles: [String]
+    let outOfBandBands: [String]
+    let isAuto: Bool
+    let date: Date
+
+    static let kindKey = "nudge.planOutcome.kind"
+    static let countKey = "nudge.planOutcome.count"
+    static let titlesKey = "nudge.planOutcome.titles"
+    static let displacedKey = "nudge.planOutcome.displaced"
+    static let contentionKey = "nudge.planOutcome.contention"
+    static let outOfBandTitlesKey = "nudge.planOutcome.outOfBandTitles"
+    static let outOfBandBandsKey = "nudge.planOutcome.outOfBandBands"
+    static let autoKey = "nudge.planOutcome.auto"
+    static let dateKey = "nudge.planOutcome.date"
+
+    static func write(
+        kind: Kind,
+        placedCount: Int = 0,
+        placedTitles: [String] = [],
+        displacedTitles: [String] = [],
+        contentionTitle: String? = nil,
+        outOfBandTitles: [String] = [],
+        outOfBandBands: [String] = [],
+        isAuto: Bool
+    ) {
+        let defaults = SharedModelContainer.appGroupDefaults
+        defaults.set(kind.rawValue, forKey: kindKey)
+        defaults.set(placedCount, forKey: countKey)
+        defaults.set(placedTitles, forKey: titlesKey)
+        defaults.set(displacedTitles, forKey: displacedKey)
+        if let contentionTitle {
+            defaults.set(contentionTitle, forKey: contentionKey)
+        } else {
+            defaults.removeObject(forKey: contentionKey)
+        }
+        defaults.set(outOfBandTitles, forKey: outOfBandTitlesKey)
+        defaults.set(outOfBandBands, forKey: outOfBandBandsKey)
+        defaults.set(isAuto, forKey: autoKey)
+        defaults.set(Date(), forKey: dateKey)
+    }
+
+    static func clear() {
+        let defaults = SharedModelContainer.appGroupDefaults
+        for key in [kindKey, countKey, titlesKey, displacedKey, contentionKey,
+                    outOfBandTitlesKey, outOfBandBandsKey, autoKey, dateKey] {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    /// Today's outcome, or nil (tidying the keys) once it's from a past day.
+    static func read(now: Date = Date()) -> PlanOutcomeContext? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard
+            let kindRaw = defaults.string(forKey: kindKey),
+            let kind = Kind(rawValue: kindRaw),
+            let date = defaults.object(forKey: dateKey) as? Date
+        else { return nil }
+        guard Calendar.current.isDate(date, inSameDayAs: now) else {
+            clear()
+            return nil
+        }
+        return PlanOutcomeContext(
+            kind: kind,
+            placedCount: defaults.integer(forKey: countKey),
+            placedTitles: (defaults.array(forKey: titlesKey) as? [String]) ?? [],
+            displacedTitles: (defaults.array(forKey: displacedKey) as? [String]) ?? [],
+            contentionTitle: defaults.string(forKey: contentionKey),
+            outOfBandTitles: (defaults.array(forKey: outOfBandTitlesKey) as? [String]) ?? [],
+            outOfBandBands: (defaults.array(forKey: outOfBandBandsKey) as? [String]) ?? [],
+            isAuto: defaults.bool(forKey: autoKey),
+            date: date
+        )
+    }
+}
+
+// MARK: - Composer (pure)
+
+/// Deterministic message selection. Priority order — first state that
+/// applies wins:
+///   1. a nudge was just tapped (explain it beyond the 60-char banner)
+///   2. something is overdue (name it and by how long)
+///   3. something high-stakes is approaching (name it and days remaining)
+///   4. a study task was deleted — the one-time "still want study time
+///      for that exam?" note (cycle 2026-08-01-03; per exam, never
+///      repeats — see `PrepTombstone.noteShownAt`)
+///   5. the exam-prep sweep just created study tasks — the announcement
+///      (same cycle; silent creation is not acceptable per DESIGN.md)
+///   6. the AI Refine rationale — stable all-day context
+///   7. resting — a plain line about the day. NEVER blank: an empty box at
+///      the top of the most-used tab is dead space.
+///
+/// The two prep states sit below the overdue/high-stakes facts (the day's
+/// actionable facts outrank meta-news about the list) and above the
+/// rationale (news beats stable context). A question the user should
+/// settle (the note) outranks an announcement about work already visible
+/// on the list below.
+///
+/// Tone is where DESIGN.md bites hardest: state facts. No verdict on the
+/// user, no promised outcome, no implied failure for missed work.
+enum TasksMessageComposer {
+    static func compose(
+        tasks: [NudgeTask],
+        tappedNudge: TappedNudgeContext?,
+        goals: [NudgeGoal] = [],
+        goalInvite: NudgeGoal? = nil,
+        rationale: String? = nil,
+        aiMessage: TasksMessage? = nil,
+        prepNote: PrepNoteContext? = nil,
+        prepAnnouncement: PrepAnnouncementContext? = nil,
+        commitmentAnnouncement: CommitmentAnnouncementContext? = nil,
+        planOutcome: PlanOutcomeContext? = nil,
+        memo: TasksMessage? = nil,
+        planProposal: PlanProposalContext? = nil,
+        now: Date
+    ) -> TasksMessage {
+        // ── AI SEAM (armed for goal-lapse, cycle 2026-08-04-03) ─────────
+        // An AI-written message takes precedence over every deterministic
+        // state below. The goal-lapse HOOK is its first producer: when the
+        // user arrives from the bait, TasksTabView asks ClaudeService for
+        // the full message and passes it here once it lands; until then —
+        // and whenever it can't (offline, no key, error) — the `.goalLapse`
+        // branch of `nudgeExplanation` below is the deterministic fallback,
+        // which is what keeps this surface safe to make non-deterministic.
+        if let aiMessage {
+            return aiMessage
+        }
+
+        let open = tasks.filter { !$0.isComplete && !$0.isInformationalEvent }
+
+        // 1 — a nudge was just tapped.
+        if let context = tappedNudge {
+            return nudgeExplanation(context: context, tasks: tasks, goals: goals, now: now)
+        }
+
+        // One-time news (prep note, the two announcements, today's planner
+        // outcome) is consumed on first render, so anything that would
+        // always win must yield to it or it never renders.
+        let oneTimeNewsPending = prepNote != nil
+            || prepAnnouncement != nil
+            || commitmentAnnouncement != nil
+            || planOutcome.flatMap(planOutcomeMessage) != nil
+
+        // 1.2 — a plan proposal (cycle 2026-09-16-01): the app built the
+        // steps for something due; Opus's sentence is the headline and the
+        // box renders Yes / No under it. Above the memo because it is a
+        // question waiting on the user; below the tapped nudge and the
+        // one-time news for the same reason those outrank the memo.
+        if let planProposal, !oneTimeNewsPending {
+            return planProposalMessage(planProposal)
+        }
+
+        // 1.5 — the Opus memo (Sep 2026): the box's standing voice. It is
+        // written FROM the same facts the states below narrate (what was
+        // missed, what's coming, what to prepare for, a neglected goal), so
+        // it replaces them, not stacks on them. With no memo (no key,
+        // offline, not yet landed, cap reached) the ladder below is exactly
+        // what it was — byte-identical deterministic fallback.
+        if let memo, !oneTimeNewsPending {
+            return memo
+        }
+
+        // 2 — something is overdue.
+        let overdue = open.filter(\.isOverdue).sorted { $0.sortDeadline < $1.sortDeadline }
+        if let first = overdue.first {
+            let ago = CountdownState.remainingLine(dueDate: first.sortDeadline, now: now) ?? "earlier"
+            let others = overdue.dropFirst()
+            let detail: String? = others.isEmpty ? nil : {
+                let lines = others.prefix(3).map { task -> String in
+                    let when = CountdownState.remainingLine(dueDate: task.sortDeadline, now: now) ?? "earlier"
+                    return "“\(task.title)” (\(when))"
+                }
+                let more = others.count > 3 ? " and \(others.count - 3) more" : ""
+                return "Also past due: " + lines.joined(separator: ", ") + more + "."
+            }()
+            return TasksMessage(
+                headline: "“\(first.title)” was due \(ago).",
+                detail: detail
+            )
+        }
+
+        // 3 — something high-stakes is approaching.
+        let calendar = Calendar.current
+        let approaching = open
+            .filter { $0.stakes == .high && $0.sortDeadline > now }
+            .filter { task in
+                let days = calendar.dateComponents(
+                    [.day],
+                    from: calendar.startOfDay(for: now),
+                    to: calendar.startOfDay(for: task.sortDeadline)
+                ).day ?? .max
+                return days <= NudgeConfig.messageBoxHighStakesHorizonDays
+            }
+            .sorted { $0.sortDeadline < $1.sortDeadline }
+        if let task = approaching.first {
+            let days = calendar.dateComponents(
+                [.day],
+                from: calendar.startOfDay(for: now),
+                to: calendar.startOfDay(for: task.sortDeadline)
+            ).day ?? 0
+            let when = days == 0 ? "due today" : (days == 1 ? "1 day away" : "\(days) days away")
+            let dueLine = CountdownState.dueDateLine(
+                dueDate: task.dueDate, specificTime: task.specificTime
+            )
+            return TasksMessage(
+                headline: "“\(task.title)” is \(when).",
+                detail: dueLine.map { "It's marked high stakes, due \($0)." }
+                    ?? "It's marked high stakes."
+            )
+        }
+
+        // 4 — a study task was deleted: ask once whether they still want
+        // study time for that exam. Factual, no guilt — deleting was a
+        // decision and it stands (the sweep never recreates that day);
+        // this just makes sure it was a decision, not an accident.
+        if let prepNote {
+            return prepNoteMessage(examTitle: prepNote.examTitle, isCommitment: prepNote.isCommitment)
+        }
+
+        // 5 — the sweep created study tasks: say so. The user should never
+        // discover work on their list they can't account for.
+        if let prepAnnouncement {
+            return prepAnnouncementMessage(
+                examTitle: prepAnnouncement.examTitle,
+                daysUntil: prepAnnouncement.daysUntil
+            )
+        }
+
+        // 5.2 — a commitment was expanded into daily tasks: same rule,
+        // same slot (news about generated work, below the day's actionable
+        // facts). The two announcements have separate storage so a same-
+        // morning exam sweep can't overwrite this; whichever survives its
+        // own freshness window renders on later recomposes.
+        if let commitmentAnnouncement {
+            return commitmentAnnouncementMessage(commitmentAnnouncement)
+        }
+
+        // 5.5 — today's Plan-my-day outcome (cycle 2026-08-02-02: a planner
+        // run must never end mute). Below the day's actionable facts and
+        // the one-time prep states, above the stable rationale and resting.
+        // Facts only, per DESIGN.md — a refusal states what IS, never a
+        // verdict on the user.
+        if let planOutcome, let message = planOutcomeMessage(planOutcome) {
+            return message
+        }
+
+        // 6 — the AI Refine rationale (Aug 2026 — folded in
+        // from the banner that used to render separately, so the tab has
+        // one voice in one place). Sits BELOW overdue and high-stakes on
+        // purpose: those are the day's actionable facts, while the
+        // rationale is stable all-day context whose visible result — the
+        // placements — already shows on the timeline. In the common
+        // just-refined case (day freshly planned, nothing overdue pressing)
+        // it surfaces immediately anyway.
+        if let rationale, !rationale.trimmingCharacters(in: .whitespaces).isEmpty {
+            return TasksMessage(
+                headline: "Here's the thinking behind today's plan.",
+                detail: rationale
+            )
+        }
+
+        // 6.5 — the gentle invite (cycle 2026-08-04-03): a goal with
+        // nothing on the list gets a short question, no notification, no
+        // weight. Bottom of the ladder on purpose — it's an ambient offer,
+        // and every day-relevant state above outranks it.
+        if let goalInvite {
+            return goalInviteMessage(goal: goalInvite)
+        }
+
+        // 7 — resting. Never blank.
+        return restingMessage(open: open, allTasks: tasks, now: now)
+    }
+
+    // MARK: Goal states (cycle 2026-08-04-03)
+
+    /// Elapsed phrasing for goal copy: days inside two weeks, weeks inside
+    /// two months, months beyond. "about" keeps the claim honest — the
+    /// point is the size of the gap, not false precision.
+    static func goalElapsedPhrase(from start: Date, to now: Date) -> String {
+        let days = Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: start),
+            to: Calendar.current.startOfDay(for: now)
+        ).day ?? 0
+        if days < 14 { return days == 1 ? "a day" : "\(days) days" }
+        if days < 61 {
+            let weeks = days / 7
+            return weeks == 1 ? "about a week" : "about \(weeks) weeks"
+        }
+        let months = days / 30
+        return months == 1 ? "about a month" : "about \(months) months"
+    }
+
+    /// The gentle invite. A question and an offer — never a verdict; built
+    /// as a standalone static (same reason as the prep states) so the view
+    /// can equality-check that it actually rendered.
+    /// The plan proposal as the box renders it: Opus's one sentence as the
+    /// headline, a deterministic summary of the sessions as the detail.
+    /// Equality against this builder is how the view knows to draw Yes / No.
+    static func planProposalMessage(_ proposal: PlanProposalContext) -> TasksMessage {
+        let fmtIn = DateFormatter()
+        fmtIn.dateFormat = "yyyyMMdd"
+        fmtIn.locale = Locale(identifier: "en_US_POSIX")
+        let fmtOut = DateFormatter()
+        fmtOut.dateFormat = "MMM d"
+        let days = proposal.sessions.compactMap { fmtIn.date(from: $0.dayStamp) }.sorted()
+        let count = proposal.sessions.count
+        let avg = count == 0 ? 0 : proposal.sessions.map(\.minutes).reduce(0, +) / count
+        var detail = "\(count) session\(count == 1 ? "" : "s")"
+        if let first = days.first, let last = days.last {
+            detail += first == last
+                ? " on \(fmtOut.string(from: first))"
+                : ", \(fmtOut.string(from: first)) to \(fmtOut.string(from: last))"
+        }
+        if avg > 0 { detail += ", about \(avg) minutes each" }
+        if let firstTitle = proposal.sessions.first?.title {
+            detail += ". First one: \(firstTitle)."
+        } else {
+            detail += "."
+        }
+        return TasksMessage(headline: proposal.reason, detail: detail)
+    }
+
+    static func goalInviteMessage(goal: NudgeGoal) -> TasksMessage {
+        TasksMessage(
+            headline: "Nothing on the list points at “\(goal.title)” right now.",
+            detail: "Want to add one small thing toward it today? Tap the bubble and tell me, a first step can be tiny."
+        )
+    }
+
+    // MARK: Exam-prep states
+
+    /// Built as standalone statics (not inline in `compose`) so the view
+    /// can compare the composed message against them by equality — that
+    /// comparison is how it knows the state actually RENDERED, which is
+    /// what starts the note's never-repeat clock and the announcement's
+    /// freshness window.
+
+    static func prepNoteMessage(examTitle: String, isCommitment: Bool = false) -> TasksMessage {
+        if isCommitment {
+            return TasksMessage(
+                headline: "Do you still want daily time for “\(examTitle)”?",
+                detail: "A day's task for it was removed, that day won't be re-added. "
+                    + "The other days are still on your list; delete them too "
+                    + "if you'd rather drop it."
+            )
+        }
+        return TasksMessage(
+            headline: "Do you still want study time for “\(examTitle)”?",
+            detail: "A study task for it was removed, that day won't be re-added. "
+                + "Any other study days are still on your list; delete them too "
+                + "if you'd rather plan it yourself."
+        )
+    }
+
+    static func prepAnnouncementMessage(examTitle: String, daysUntil: Int) -> TasksMessage {
+        let when = daysUntil == 1 ? "tomorrow" : "in \(daysUntil) days"
+        let span = daysUntil == 1 ? "for today" : "each day until then"
+        return TasksMessage(
+            headline: "Your “\(examTitle)” is \(when), I've added study time \(span).",
+            detail: "One study task per day, through the day before. "
+                + "Delete any you don't want, removed days stay removed."
+        )
+    }
+
+    static func commitmentAnnouncementMessage(_ context: CommitmentAnnouncementContext) -> TasksMessage {
+        // "daysUntilEnd" counts from today to the LAST generated day —
+        // 0 = today only. When the series starts tomorrow (the user's
+        // answer, or a captured-too-late-today default), say so.
+        let span: String
+        if context.startsTomorrow {
+            span = context.daysUntilEnd <= 1
+                ? "for tomorrow"
+                : "from tomorrow through the next \(context.daysUntilEnd) days"
+        } else {
+            switch context.daysUntilEnd {
+            case 0:  span = "for today"
+            case 1:  span = "for today and tomorrow"
+            default: span = "for the next \(context.daysUntilEnd + 1) days"
+            }
+        }
+        let perDay: String
+        if let minutes = context.dailyMinutes {
+            perDay = "\(durationPhrase(minutes: minutes)) a day"
+        } else if let count = context.dailyCount {
+            perDay = "\(count) a day"
+        } else {
+            perDay = "one task a day"
+        }
+        return TasksMessage(
+            headline: "“\(context.title)” is set up \(span), \(perDay).",
+            detail: "One task per day, on your list and ready to place. "
+                + "Delete any day you don't want, removed days stay removed."
+        )
+    }
+
+    /// "60" → "an hour", "90" → "1.5 hours", "30" → "30 minutes".
+    private static func durationPhrase(minutes: Int) -> String {
+        if minutes == 60 { return "an hour" }
+        if minutes % 60 == 0 { return "\(minutes / 60) hours" }
+        if minutes > 60 {
+            let hours = Double(minutes) / 60
+            return String(format: "%g hours", hours)
+        }
+        return "\(minutes) minutes"
+    }
+
+    // MARK: Plan-outcome state
+
+    /// The message for today's planner outcome, or nil when this outcome
+    /// kind has nothing to say (a manual success — the placements on the
+    /// timeline are the feedback; narrating them would be noise).
+    private static func planOutcomeMessage(_ outcome: PlanOutcomeContext) -> TasksMessage? {
+        switch outcome.kind {
+        case .planned:
+            let bandNote = bandRefusalSentence(outcome)
+            // An automatic run announces itself — the user didn't ask, so
+            // the plan explains where it came from.
+            if outcome.isAuto, outcome.placedCount > 0 {
+                let titles = outcome.placedTitles.prefix(4)
+                    .map { "“\($0)”" }.joined(separator: ", ")
+                let displaced = outcome.displacedTitles.isEmpty
+                    ? ""
+                    : " To make room, "
+                        + outcome.displacedTitles.map { "“\($0)”" }.joined(separator: " and ")
+                        + " went back to Unscheduled, re-place it wherever suits you."
+                return TasksMessage(
+                    headline: "I set up today, \(outcome.placedCount) task\(outcome.placedCount == 1 ? "" : "s") placed into free time.",
+                    detail: "Placed: \(titles). Tap any timeline block to move or remove it, "
+                        + "placements you made yourself weren't touched." + displaced
+                        + (bandNote.map { " " + $0 } ?? "")
+                )
+            }
+            // A manual run's placements are their own feedback and the
+            // context is normally cleared before this renders — EXCEPT
+            // when a task was refused for its hours (cycle 2026-08-04-01
+            // item 1): that refusal is invisible on the timeline, so it's
+            // the one part of a manual success that must be narrated.
+            if let bandNote {
+                let headline = outcome.outOfBandTitles.count == 1
+                    ? "“\(outcome.outOfBandTitles[0])” didn't fit today's hours."
+                    : "\(outcome.outOfBandTitles.count) tasks didn't fit today's hours."
+                return TasksMessage(headline: headline, detail: bandNote)
+            }
+            return nil
+        case .noCandidates:
+            return TasksMessage(
+                headline: "Nothing to plan right now.",
+                detail: "Everything open is either finished or already on today's timeline."
+            )
+        case .noRoom:
+            // Equal-stakes contention (item 4): a session would fit if
+            // something placed moved, but nothing placed matters less than
+            // it does. The app proposes, the user decides — name the
+            // contention, evict nothing.
+            if let contention = outcome.contentionTitle {
+                return TasksMessage(
+                    headline: "Today is full, “\(contention)” didn't fit.",
+                    detail: "Everything placed today matters as much as it does, so nothing was moved. "
+                        + "If you want it today, move or remove a timeline block and it can take that spot."
+                )
+            }
+            // Zero placed AND at least one band refusal: the leading fact
+            // is the rule, not the calendar — "your calendar is full" would
+            // be wrong when the free time simply sits outside the hours the
+            // task fits.
+            if let bandNote = bandRefusalSentence(outcome) {
+                let headline = outcome.outOfBandTitles.count == 1
+                    ? "“\(outcome.outOfBandTitles[0])” didn't fit today's hours."
+                    : "Nothing placed, the free time is outside the hours these tasks fit."
+                return TasksMessage(headline: headline, detail: bandNote)
+            }
+            return TasksMessage(
+                headline: "No room left today, your calendar is full.",
+                detail: "Events, the buffers around them, and existing placements take the rest of today. "
+                    + "Unplaced tasks stay in the Unscheduled tab."
+            )
+        case .windowCollapsed:
+            return TasksMessage(
+                headline: "No planning window left today.",
+                detail: "Planning runs between wake (+30 min) and bedtime (−1 hour). "
+                    + "If this shows during the day, check your wake time and bedtime in Settings."
+            )
+        }
+    }
+
+    /// One sentence naming the band-refused task(s), the rule, and the way
+    /// out. Nil when the outcome carries no refusals. Facts only: the rule
+    /// and its escape hatch (manual placement has no band gate), no verdict.
+    private static func bandRefusalSentence(_ outcome: PlanOutcomeContext) -> String? {
+        guard !outcome.outOfBandTitles.isEmpty else { return nil }
+        let shown = outcome.outOfBandTitles.prefix(2).map { "“\($0)”" }.joined(separator: " and ")
+        let overflow = outcome.outOfBandTitles.count - 2
+        let names = overflow > 0 ? "\(shown) and \(overflow) more" : shown
+        let single = outcome.outOfBandTitles.count == 1
+        let band = bandPhrase(outcome.outOfBandBands.first ?? "")
+        return "\(names) only \(single ? "fits" : "fit") \(band), and today has no free time left there. "
+            + "\(single ? "It stays" : "They stay") in Unscheduled, "
+            + "you can still place \(single ? "it" : "them") on the timeline yourself if now works anyway."
+    }
+
+    /// Human phrase for a `TaskTimeWindow` raw value, hours pulled from
+    /// `NudgeConfig` so the copy can't drift from the rule it describes.
+    private static func bandPhrase(_ raw: String) -> String {
+        switch TaskTimeWindow.parse(raw) {
+        case .businessHours:
+            return "business hours (weekdays \(hourLabel(NudgeConfig.businessHoursStartHour))–\(hourLabel(NudgeConfig.businessHoursEndHour)))"
+        case .daytime:
+            return "daytime hours (\(hourLabel(NudgeConfig.daytimeStartHour))–\(hourLabel(NudgeConfig.daytimeEndHour)))"
+        case .anytime, nil:
+            return "its hours"
+        }
+    }
+
+    /// 9 → "9 AM", 17 → "5 PM".
+    private static func hourLabel(_ hour: Int) -> String {
+        let twelve = hour % 12 == 0 ? 12 : hour % 12
+        return "\(twelve) \(hour < 12 ? "AM" : "PM")"
+    }
+
+    // MARK: Tapped-nudge explanations
+
+    /// Per-kind explanation of the nudge the user just tapped — more room
+    /// than a banner, still just facts about why it fired.
+    private static func nudgeExplanation(
+        context: TappedNudgeContext,
+        tasks: [NudgeTask],
+        goals: [NudgeGoal] = [],
+        now: Date = Date()
+    ) -> TasksMessage {
+        let task = context.taskID.flatMap { id in tasks.first(where: { $0.id == id }) }
+
+        switch context.kind {
+        case .eventBlock:
+            return TasksMessage(
+                headline: "That was a heads-up before your next block of events.",
+                detail: "Event reminders go out about an hour before a stretch of calendar events begins, so the first one doesn't start without you."
+            )
+        case .idle:
+            return TasksMessage(
+                headline: "That check-in asks whether today has gotten started.",
+                detail: "It goes out a few hours after wake when no session has been started and nothing has been checked off yet."
+            )
+        // `.getAhead` survives for rows written before the Aug 2026 split;
+        // `.prep` is its direct descendant and shares the explanation.
+        case .getAhead, .prep:
+            if let task {
+                let dueLine = CountdownState.dueDateLine(
+                    dueDate: task.dueDate, specificTime: task.specificTime
+                )
+                return TasksMessage(
+                    headline: "That nudge was about “\(task.title).”",
+                    detail: "It fires when starting now still leaves room before the deadline"
+                        + (dueLine.map { ", “\(task.title)” is due \($0)." } ?? ".")
+                )
+            }
+            return TasksMessage(
+                headline: "That nudge was about getting ahead of a deadline.",
+                detail: "It fires when starting now still leaves room before a task's due date."
+            )
+        case .dueSoon:
+            if let task {
+                let dueLine = CountdownState.dueDateLine(
+                    dueDate: task.dueDate, specificTime: task.specificTime
+                )
+                return TasksMessage(
+                    headline: "That was a heads-up that a deadline is close.",
+                    detail: "Due-soon reminders go out about two hours before something is due"
+                        + (dueLine.map { ", “\(task.title)” is due \($0)." } ?? ".")
+                )
+            }
+            return TasksMessage(
+                headline: "That was a heads-up that a deadline is close.",
+                detail: "Due-soon reminders go out about two hours before something is due. Things due within the same hour share one reminder."
+            )
+        case .floater:
+            if let task {
+                return TasksMessage(
+                    headline: "That check-in was about “\(task.title),” which has no deadline.",
+                    detail: "Undated tasks never turn urgent on their own, so the check-in points one out when the day has room."
+                )
+            }
+            return TasksMessage(
+                headline: "That check-in was about an open task with no deadline.",
+                detail: "Undated tasks never turn urgent on their own, so the check-in points one out when the day has room."
+            )
+        case .morningPrompt:
+            // Morning-prompt taps land in Home chat, not here — but the kind
+            // is handled so a routing change can't leave the box speechless.
+            return TasksMessage(
+                headline: "That was the morning check-in.",
+                detail: "It names the biggest thing on your list as the day starts."
+            )
+        case .comeBack:
+            // Forward-looking here too: explain what the nudge points at,
+            // never the quiet days that preceded it (DESIGN.md never-shame).
+            return TasksMessage(
+                headline: "That was a look at what's coming up.",
+                detail: "It points out the next thing on your calendar or list. Everything here is where you left it."
+            )
+        case .placementLead:
+            if let task {
+                return TasksMessage(
+                    headline: "That was a heads-up about “\(task.title)”, its planned slot is starting.",
+                    detail: "Timeline heads-ups go out a few minutes before a planned slot. Slots close together share one."
+                )
+            }
+            return TasksMessage(
+                headline: "That was a heads-up that a planned slot is starting.",
+                detail: "Timeline heads-ups go out a few minutes before a planned slot. Slots close together share one."
+            )
+        case .placementMissed:
+            // Factual about the plan, never a verdict on the user
+            // (DESIGN.md never-shame) — the slot time is the fact, and
+            // "still open" is app state, not judgment.
+            if let task, let slot = task.plannedStartDate {
+                return TasksMessage(
+                    headline: "That was about “\(task.title),” which was set for \(slot.formatted(date: .omitted, time: .shortened)).",
+                    detail: "When a planned slot passes and the task is still open, a reminder repeats a few times through the day until it's started or moved."
+                )
+            }
+            return TasksMessage(
+                headline: "That was about a task whose planned slot has passed.",
+                detail: "When a planned slot passes and the task is still open, a reminder repeats a few times through the day until it's started or moved."
+            )
+        case .goalLapse:
+            // The HOOK's deterministic form — what shows when the AI
+            // message hasn't landed (or can't). This is where the weight
+            // belongs, and the plan's tone note governs: the elapsed time
+            // is a fact and it's allowed to sting; no verdict; and it must
+            // end in something small and actionable. The zero case ("you
+            // set this N ago") never implies a lapse that never started.
+            if let goal = context.goalID.flatMap({ id in goals.first(where: { $0.id == id }) }) {
+                if let last = goal.lastActivityAt {
+                    let phrase = goalElapsedPhrase(from: last, to: now)
+                    return TasksMessage(
+                        headline: "It's been \(phrase) since “\(goal.title)” last got any time.",
+                        detail: "That's a goal you told me matters. One small step today counts, want me to put something toward it on the list? Tap the bubble and say the word."
+                    )
+                }
+                let phrase = goalElapsedPhrase(from: goal.createdAt, to: now)
+                return TasksMessage(
+                    headline: "You set “\(goal.title)” \(phrase) ago.",
+                    detail: "Nothing toward it has made it onto the list yet, which is exactly when a first small step helps most. Want one for today? Tap the bubble and say the word."
+                )
+            }
+            // Goal gone (removed since the bait was scheduled) — say
+            // something honest rather than nothing.
+            return TasksMessage(
+                headline: "That note was about one of your goals.",
+                detail: "It goes out when a goal has gone about a month without any time. The Goals tab shows where each one stands."
+            )
+        }
+    }
+
+    // MARK: Resting state
+
+    private static func restingMessage(
+        open: [NudgeTask],
+        allTasks: [NudgeTask],
+        now: Date
+    ) -> TasksMessage {
+        let calendar = Calendar.current
+        let eventsToday = allTasks.filter { task in
+            guard task.isInformationalEvent, !task.isComplete,
+                  let start = task.specificTime else { return false }
+            return calendar.isDate(start, inSameDayAs: now)
+        }
+
+        guard !open.isEmpty else {
+            let detail = eventsToday.isEmpty
+                ? nil
+                : "\(eventsToday.count) event\(eventsToday.count == 1 ? "" : "s") on the calendar today."
+            return TasksMessage(headline: "Your list is clear right now.", detail: detail)
+        }
+
+        let comparator = TaskSortComparator()
+        let next = open.min { comparator.compare($0, $1) }
+        let dueToday = open.filter { task in
+            task.sortDeadline != .distantFuture
+                && calendar.isDate(task.sortDeadline, inSameDayAs: now)
+        }
+
+        var parts: [String] = []
+        if !dueToday.isEmpty {
+            parts.append("Due today: \(dueToday.count).")
+        } else {
+            parts.append("Nothing due today.")
+        }
+        if !eventsToday.isEmpty {
+            parts.append("\(eventsToday.count) event\(eventsToday.count == 1 ? "" : "s") on the calendar.")
+        }
+
+        let headline: String
+        if let next {
+            headline = "\(open.count) task\(open.count == 1 ? "" : "s") open. Next up: “\(next.title).”"
+        } else {
+            headline = "\(open.count) task\(open.count == 1 ? "" : "s") open."
+        }
+        return TasksMessage(headline: headline, detail: parts.joined(separator: " "))
+    }
+}
+
+// MARK: - Character slot
+
+/// What face the character wears (cycle 2026-08-03-05). Three cases on
+/// purpose — every case is art someone has to draw:
+///   • `neutral` — the resting face; the collapsed box and idle shell.
+///   • `asking`  — a question is on the table (the shell's whole reason
+///     to exist; the one state that must read differently at a glance).
+///   • `pleased` — an answer just landed; the acknowledgment beat.
+/// Deliberately NO worried/disappointed case: a character that looks
+/// concerned about the user's list is `DESIGN.md`'s never-shame rule
+/// violated in art instead of copy.
+enum MessageBoxExpression: String, CaseIterable {
+    /// The one expression the box renders since the shell went read-only
+    /// (Sep 2026); `asking` and `pleased` went with the prototype's
+    /// question. Add a case back when a surface actually needs it.
+    case neutral
+
+    /// THE mapping — the one place real art lands later. Nil for now
+    /// (grey placeholder); when assets exist this becomes
+    /// `Image("pigeon-\(rawValue)")` and no call site changes.
+    var image: Image? {
+        switch self {
+        case .neutral: return nil
+        }
+    }
+}
+
+/// The square on the box's left where a character lands — a messenger
+/// pigeon, eventually one per surface. 56×56: exactly twice the task row's
+/// 28pt leading checkbox, big enough for an illustration to read as a
+/// character rather than an icon. The box's minimum height follows from
+/// this (slot + vertical padding) — the deliberate break from task-row
+/// height; the box is the app's voice, not a list item. Until an asset
+/// exists it renders a plain grey placeholder from the theme.
+///
+/// Takes an EXPRESSION, not an image (cycle 2026-08-03-05): call sites
+/// say what the character feels; `MessageBoxExpression.image` is the one
+/// mapping from feeling to art.
+struct MessageBoxCharacterSlot: View {
+    var expression: MessageBoxExpression = .neutral
+
+    var body: some View {
+        Group {
+            if let image = expression.image {
+                image
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(NudgeTheme.textPlaceholder)
+            }
+        }
+        .frame(width: 56, height: 56)
+    }
+}
+
+// MARK: - View
+
+/// The app speaking as a row IN the list, not a banner above it — same
+/// footprint as a task row (padding, corner radius, the shared horizontal
+/// insets), with one difference carrying the distinction: a task row is a
+/// FILLED card, this is an OUTLINED one (`NudgeTheme.border`, no fill).
+///
+/// Height: the 56pt character slot sets the floor (~88pt with padding —
+/// about 1.3× a task row; the box stopped matching row height when the
+/// character moved in). Collapsed, the headline still truncates at two
+/// lines. Expanding GROWS the row in place (same width, same corners) to
+/// the full headline plus detail; tap again to collapse back.
+struct TasksMessageBox: View {
+    let tasks: [NudgeTask]
+    let tappedNudge: TappedNudgeContext?
+    /// Active goals, for the goal-lapse hook's deterministic copy.
+    var goals: [NudgeGoal] = []
+    /// The gentle invite's goal (a goal with nothing on the list), when
+    /// the owner decided one should be offered today.
+    var goalInvite: NudgeGoal? = nil
+    /// The AI-written message riding the composer's top-priority seam —
+    /// today only the goal-lapse hook produces one (owner fetches it
+    /// async; deterministic states cover every moment it's absent).
+    var aiMessage: TasksMessage? = nil
+    /// The daily Opus memo (Sep 2026), once its async fetch (or cache read)
+    /// lands. Nil shows the deterministic ladder, so the box is never blank
+    /// or waiting on the network.
+    var memo: TasksMessage? = nil
+    /// A plan proposal awaiting the user's answer (cycle 2026-09-16-01).
+    /// Rendered with Yes / No; the owner writes on Yes and records a No.
+    var planProposal: PlanProposalContext? = nil
+    var onAnswerPlanProposal: ((PlanProposalContext, Bool) -> Void)? = nil
+    /// Opens with the detail visible — the goal-lapse hook's requirement:
+    /// the full message is the point of the tap, not a teaser behind a
+    /// second tap.
+    var startsExpanded: Bool = false
+    /// Opens the read-only shell (cycle 2026-08-03-04; one surface, TWO
+    /// ways in since -05: the character AND the row/chevron both land
+    /// here). The composed message rides along so the shell shows what the
+    /// box was actually saying in full — the in-place detail expansion is
+    /// superseded by the shell when this is set, so the detail must stay
+    /// reachable through it. Nil (the default) keeps the legacy in-place
+    /// expand/collapse — callers that never opted in behave exactly as
+    /// before.
+    var onOpenShell: ((TasksMessage) -> Void)? = nil
+    var rationale: String? = nil
+    /// One-time "still want study time for X?" note (tombstone-backed).
+    var prepNote: PrepNoteContext? = nil
+    /// "I've added study time" announcement from the exam-prep sweep.
+    var prepAnnouncement: PrepAnnouncementContext? = nil
+    /// "This commitment is set up" announcement from the commitment
+    /// expansion (same sweep, own storage slot).
+    var commitmentAnnouncement: CommitmentAnnouncementContext? = nil
+    /// Today's planner outcome (refusals + the auto-plan announcement).
+    var planOutcome: PlanOutcomeContext? = nil
+    /// Fired when the note state actually RENDERS (not merely exists) —
+    /// the owner stamps `PrepTombstone.noteShownAt`, which is what makes
+    /// the note one-time. A passive display can't know it was read;
+    /// rendering is the honest proxy.
+    var onPrepNoteShown: (() -> Void)? = nil
+    /// Same, for the announcement — starts its freshness window.
+    var onPrepAnnouncementShown: (() -> Void)? = nil
+    /// Same, for the commitment announcement.
+    var onCommitmentAnnouncementShown: (() -> Void)? = nil
+    /// One-tap accept for a goal offer (cycle 2026-08-04-03 item 4): when
+    /// the box is showing the lapse hook or the gentle invite, an inline
+    /// button creates a small task linked to the goal — no form. The owner
+    /// does the creating; the box only knows a goal is on offer.
+    var onAcceptGoalOffer: ((NudgeGoal) -> Void)? = nil
+
+    @State private var isExpanded = false
+
+    /// Shared 60s tick — freshness of the tapped-nudge context and the
+    /// overdue/approaching arithmetic follow the same clock every countdown
+    /// label uses. Computed, not stored, so the memberwise init stays
+    /// internal.
+    private var clock: CountdownClock { CountdownClock.shared }
+
+    var body: some View {
+        let message = TasksMessageComposer.compose(
+            tasks: tasks,
+            tappedNudge: tappedNudge,
+            goals: goals,
+            goalInvite: goalInvite,
+            rationale: rationale,
+            aiMessage: aiMessage,
+            prepNote: prepNote,
+            prepAnnouncement: prepAnnouncement,
+            commitmentAnnouncement: commitmentAnnouncement,
+            planOutcome: planOutcome,
+            memo: memo,
+            planProposal: planProposal,
+            now: clock.now
+        )
+        let expandable = message.detail != nil
+        // The proposal on offer, when the rendered message IS the proposal
+        // (equality against its builder, the goal-invite pattern).
+        let offeredProposal: PlanProposalContext? = planProposal.flatMap { proposal in
+            message == TasksMessageComposer.planProposalMessage(proposal) ? proposal : nil
+        }
+        // The goal on offer, when the rendered message is one of the two
+        // goal states: the lapse hook (identified by the tap context, so
+        // both the deterministic and AI forms qualify) or the invite
+        // (identified by equality, the prep-states pattern).
+        let offeredGoal: NudgeGoal? = {
+            guard onAcceptGoalOffer != nil else { return nil }
+            if tappedNudge?.kind == .goalLapse, let id = tappedNudge?.goalID {
+                return goals.first { $0.id == id }
+            }
+            if let goalInvite,
+               message == TasksMessageComposer.goalInviteMessage(goal: goalInvite) {
+                return goalInvite
+            }
+            return nil
+        }()
+
+        HStack(alignment: .center, spacing: 14) {
+            MessageBoxCharacterSlot()
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(message.headline)
+                    .font(.custom(NudgeTheme.fontMedium, size: 15))
+                    .foregroundColor(NudgeTheme.textPrimary)
+                    .lineLimit(isExpanded ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+
+                if isExpanded, let detail = message.detail {
+                    Text(detail)
+                        .font(.custom(NudgeTheme.fontBody, size: 13))
+                        .foregroundColor(NudgeTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+
+                // The one-tap accept (item 4). Always visible while the
+                // offer is showing — the offer must not hide behind the
+                // expansion, and `.buttonStyle` + the explicit gesture
+                // keep it from also triggering the row's shell tap.
+                if let goal = offeredGoal {
+                    Button {
+                        NudgeHaptics.medium()
+                        onAcceptGoalOffer?(goal)
+                    } label: {
+                        Text("Add a small step for today")
+                            .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background(NudgeTheme.primary)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                    .accessibilityHint("Adds a \(NudgeConfig.goalStepMinutes)-minute task toward this goal. No form.")
+                }
+
+                // The plan's Yes / No (cycle 2026-09-16-01). Always visible
+                // while the proposal is showing; the explicit gestures keep
+                // the buttons from also opening the shell.
+                if let proposal = offeredProposal {
+                    HStack(spacing: 8) {
+                        Button {
+                            NudgeHaptics.medium()
+                            onAnswerPlanProposal?(proposal, true)
+                        } label: {
+                            Text("Yes")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(NudgeTheme.primary)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Adds the sessions to your list and timeline.")
+                        Button {
+                            NudgeHaptics.light()
+                            onAnswerPlanProposal?(proposal, false)
+                        } label: {
+                            Text("No")
+                                .font(.custom(NudgeTheme.fontMedium, size: 13))
+                                .foregroundColor(NudgeTheme.textSecondary)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(NudgeTheme.surfaceAlt)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Nothing changes.")
+                    }
+                    .padding(.top, 4)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // Visibility rule unchanged from today (collapsed state must
+            // show what it shows today) — the chevron appears only when
+            // there's detail; what changed is where it LEADS.
+            if expandable {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(NudgeTheme.textMuted)
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+        }
+        .padding(16)
+        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+        .overlay(
+            RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
+                .stroke(NudgeTheme.border, lineWidth: 1)
+        )
+        // The corner chat bubble that used to straddle the bottom-right
+        // border is gone (Roman, Sep 2026): the box takes no input, so a
+        // "reply" affordance promised something it doesn't do. The row,
+        // character, and chevron still open the read-only shell.
+        .contentShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+        .onTapGesture {
+            // One surface, two ways in (cycle 2026-08-03-05): with a shell
+            // wired, character, chevron, and row all open it — the shell
+            // carries the detail the in-place expansion used to show.
+            // Without one, the legacy in-place expansion stands.
+            if let onOpenShell {
+                NudgeHaptics.light()
+                onOpenShell(message)
+                return
+            }
+            guard expandable else { return }
+            NudgeHaptics.light()
+            withAnimation(NudgeAnimation.standard) {
+                isExpanded.toggle()
+            }
+        }
+        .animation(NudgeAnimation.standard, value: message)
+        // Render-detection for the two exam-prep states: the callbacks
+        // must fire only when the state actually WON the composer's
+        // priority contest, not merely because a pending note exists —
+        // an overdue task can preempt the note for days, and it must
+        // still show later. Equality against the states' own builders is
+        // what makes "did it render" checkable.
+        .onAppear {
+            if startsExpanded { isExpanded = true }
+            reportPrepDisplays(message)
+        }
+        .onChange(of: startsExpanded) { _, newValue in
+            if newValue {
+                withAnimation(NudgeAnimation.standard) { isExpanded = true }
+            }
+        }
+        .onChange(of: message) { _, newMessage in
+            reportPrepDisplays(newMessage)
+        }
+    }
+
+    private func reportPrepDisplays(_ message: TasksMessage) {
+        if let prepNote,
+           message == TasksMessageComposer.prepNoteMessage(
+               examTitle: prepNote.examTitle,
+               isCommitment: prepNote.isCommitment
+           ) {
+            onPrepNoteShown?()
+        }
+        if let prepAnnouncement,
+           message == TasksMessageComposer.prepAnnouncementMessage(
+               examTitle: prepAnnouncement.examTitle,
+               daysUntil: prepAnnouncement.daysUntil
+           ) {
+            onPrepAnnouncementShown?()
+        }
+        if let commitmentAnnouncement,
+           message == TasksMessageComposer.commitmentAnnouncementMessage(commitmentAnnouncement) {
+            onCommitmentAnnouncementShown?()
+        }
+    }
+}
+
+// MARK: - Read-only shell (cycles 2026-08-03-04/-05, made talk-only Sep 2026)
+
+/// The expanded surface behind the box's tap targets: a dimmed backdrop
+/// (tap to collapse) with a card holding the message in full. It TALKS
+/// ONLY. Roman's ruling for this surface (Sep 14 2026): it reads and
+/// interprets data, never writes, takes no input, so there are no reply
+/// options and no text field here. Home owns capture. The prototype's fake
+/// question, canned replies, and free-text field were removed with that
+/// ruling; what survived: the expression enum driving the header portrait
+/// and the seeding from the box's real composed message.
+struct MessageBoxChatShell: View {
+    /// What the collapsed box was saying when opened — shown in full.
+    var seed: TasksMessage? = nil
+    let onDismiss: () -> Void
+
+    private var lines: [String] {
+        guard let seed else { return [] }
+        var result = [seed.headline]
+        if let detail = seed.detail, !detail.isEmpty {
+            result.append(detail)
+        }
+        return result
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            // Backdrop — tapping outside collapses.
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+                .onTapGesture { onDismiss() }
+
+            // The surface. Anchored near the top, where the collapsed box
+            // lives, so opening reads as the box unfolding.
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    MessageBoxCharacterSlot(expression: .neutral)
+                    Text("Nudge")
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 16))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                    Spacer()
+                }
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                            chatBubble(line)
+                        }
+                    }
+                }
+                .frame(maxHeight: 360)
+            }
+            .padding(16)
+            .background(NudgeTheme.background)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet))
+            .overlay(
+                RoundedRectangle(cornerRadius: NudgeTheme.radiusSheet)
+                    .stroke(NudgeTheme.border, lineWidth: 1)
+            )
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+        }
+    }
+
+    /// Text appears immediately — deliberately NO typewriter reveal.
+    private func chatBubble(_ text: String) -> some View {
+        HStack {
+            Text(text)
+                .font(.custom(NudgeTheme.fontBody, size: 15))
+                .foregroundColor(NudgeTheme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(NudgeTheme.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

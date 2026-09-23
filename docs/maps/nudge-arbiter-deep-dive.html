@@ -1,0 +1,367 @@
+<title>Inside the Arbiter</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .byline { margin:12px 0 0; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+  figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px 18px 14px; overflow-x:auto; }
+  figure svg { display:block; min-width:680px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption { font-size:13px; color:var(--muted); border-top:1px solid var(--line); margin-top:16px; padding-top:12px; max-width:74ch; }
+  figcaption .fig { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); margin-right:6px; }
+  svg { color: var(--ink); }
+  svg text { font-family:"Lexend",sans-serif; font-size:12.5px; fill:var(--ink); }
+  svg text.m { font-family:"IBM Plex Mono",monospace; font-size:11.5px; }
+  svg text.s { font-size:10.5px; fill:var(--muted); }
+  svg text.lab { font-size:10.5px; fill:var(--muted); }
+  svg text.acct { fill:var(--accent); }
+  svg text.warnt { fill:var(--warn); }
+  svg text.goodt { fill:var(--good); }
+  svg text.dngt { fill:var(--danger); }
+  svg .box { fill:var(--panel-2); stroke:currentColor; stroke-width:1.2; }
+  svg .soft { fill:var(--panel); stroke:var(--line); stroke-width:1; }
+  svg .accb { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.2; }
+  svg .warnb { fill:var(--warn-soft); stroke:var(--warn); stroke-width:1.2; }
+  svg .goodb { fill:var(--good-soft); stroke:var(--good); stroke-width:1.2; }
+  svg .wire { stroke:currentColor; stroke-width:1.2; fill:none; }
+  svg .wire.acc { stroke:var(--accent); }
+  svg .wire.warn { stroke:var(--warn); }
+  svg .wire.good { stroke:var(--good); }
+  svg .wire.dng { stroke:var(--danger); }
+  svg .wire.dash { stroke-dasharray:5 4; }
+  .note { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:4px; padding:12px 16px; font-size:14px; max-width:74ch; margin:18px 0 0; }
+  .note .why { color:var(--muted); }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <div class="name">
+      <h1>Inside the Arbiter</h1>
+      <p class="sub">The decision engine that owns every notification. It never edits anything — on each run it erases its world and rebuilds it from data, so a notification exists only while the data justifies it.</p>
+      <p class="byline">Roman DeBlase · Nudge</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-ARB-02</span></div>
+      <div><span class="k">Subject</span><span class="v">NudgeArbiter.swift</span></div>
+      <div><span class="k">Revision</span><span class="v">2026-09-13</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 THE LOOP ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>The loop — erase, rebuild, defend, choose</h2>
+    <p class="lede">Anything that changes the data calls <code>reevaluate(reason:)</code>. Time-based triggers (app open, background wake) are <strong>debounced 60&nbsp;seconds</strong>; data changes always run. The run itself is five steps, always in the same order.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 360" role="img" aria-label="The arbiter's five-step loop: triggers pass a debounce, then cancel owned requests, rebuild candidates, gate them, pick winners, and schedule — each scheduled request also writing a pending outcome row.">
+        <defs>
+          <marker id="a1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- triggers -->
+        <rect class="soft" x="10" y="20" width="180" height="88" rx="5"/>
+        <text x="100" y="42" text-anchor="middle" font-weight="500">Triggers</text>
+        <text class="s" x="100" y="60" text-anchor="middle">app launch · foreground</text>
+        <text class="s" x="100" y="74" text-anchor="middle">background task (~6 am)</text>
+        <text class="s" x="100" y="88" text-anchor="middle">any data mutation</text>
+
+        <rect class="box" x="240" y="34" width="130" height="58" rx="5"/>
+        <text x="305" y="58" text-anchor="middle" font-weight="500">Debounce</text>
+        <text class="s" x="305" y="76" text-anchor="middle">60 s, time-triggered only</text>
+
+        <line class="wire" x1="190" y1="63" x2="236" y2="63" marker-end="url(#a1)"/>
+        <line class="wire" x1="370" y1="63" x2="430" y2="63" marker-end="url(#a1)"/>
+        <text class="lab" x="400" y="54" text-anchor="middle">run</text>
+
+        <!-- five steps -->
+        <rect class="box" x="430" y="20" width="200" height="56" rx="5"/>
+        <text x="530" y="42" text-anchor="middle" font-weight="500">1 · Cancel everything owned</text>
+        <text class="s m" x="530" y="60" text-anchor="middle">IDs prefixed nudge.arb.*</text>
+
+        <rect class="box" x="430" y="92" width="200" height="56" rx="5"/>
+        <text x="530" y="114" text-anchor="middle" font-weight="500">2 · Rebuild candidates</text>
+        <text class="s" x="530" y="132" text-anchor="middle">the 10 builders — see SYS-BLD-03</text>
+
+        <rect class="accb" x="430" y="164" width="200" height="56" rx="5"/>
+        <text x="530" y="186" text-anchor="middle" font-weight="500">3 · Gate</text>
+        <text class="s" x="530" y="204" text-anchor="middle">4 shared checks — §2.0</text>
+
+        <rect class="box" x="430" y="236" width="200" height="56" rx="5"/>
+        <text x="530" y="258" text-anchor="middle" font-weight="500">4 · Pick winners</text>
+        <text class="s" x="530" y="276" text-anchor="middle">budget 10/day · 90 m spacing</text>
+
+        <rect class="goodb" x="430" y="308" width="200" height="44" rx="5"/>
+        <text x="530" y="335" text-anchor="middle" font-weight="500">5 · Schedule with iOS</text>
+
+        <line class="wire" x1="530" y1="76" x2="530" y2="88" marker-end="url(#a1)"/>
+        <line class="wire" x1="530" y1="148" x2="530" y2="160" marker-end="url(#a1)"/>
+        <line class="wire" x1="530" y1="220" x2="530" y2="232" marker-end="url(#a1)"/>
+        <line class="wire" x1="530" y1="292" x2="530" y2="304" marker-end="url(#a1)"/>
+
+        <!-- side annotations -->
+        <rect class="warnb" x="680" y="20" width="230" height="72" rx="5"/>
+        <text class="s warnt" x="694" y="42" font-weight="600">WHY CANCEL FIRST MATTERS</text>
+        <text class="s" x="694" y="60">A builder that fails to rebuild something</text>
+        <text class="s" x="694" y="74">has DELETED it. Silence is a decision here.</text>
+        <line class="wire warn dash" x1="680" y1="48" x2="634" y2="48"/>
+
+        <rect class="soft" x="680" y="130" width="230" height="60" rx="5"/>
+        <text class="s" x="694" y="152">Owned IDs are tracked in a synchronous</text>
+        <text class="s" x="694" y="166">App-Group ledger — never the async OS</text>
+        <text class="s" x="694" y="180">query, which raced fresh schedules.</text>
+        <line class="wire dash" x1="680" y1="48" x2="680" y2="48"/>
+
+        <rect class="soft" x="680" y="300" width="230" height="52" rx="5"/>
+        <text class="s" x="694" y="322">Every scheduled request also writes a</text>
+        <text class="s" x="694" y="336">pending NudgeOutcome row — §3.0</text>
+        <line class="wire dash" x1="676" y1="326" x2="634" y2="326" marker-end="url(#a1)" transform="rotate(180 655 326)"/>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>The loop is <em>declarative</em>: there is no "update this notification" anywhere. Change the data, run the loop, and the correct set of notifications simply exists. Every past bug where a nudge vanished traces to step 2 failing to rebuild something step 1 had erased.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 2.0 GATES ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>The gates — four questions, asked about the fire moment</h2>
+    <p class="lede">A candidate that survives building must pass four checks — and every one asks about the candidate's <strong>fire date</strong>, never about right now. A gate keyed on "now" silently kills tomorrow's nudge because of something happening this minute; that bug shipped twice before the rule was made absolute.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 400" role="img" aria-label="A candidate falls through four gates in order — active session, activity cooldown, quiet hours, busy windows — each able to reject it; a fifth gate, per-task fatigue, is drawn disabled. Budget-exempt candidates bypass the entire stack.">
+        <defs>
+          <marker id="a2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+          <marker id="a2d" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--danger)"/>
+          </marker>
+          <marker id="a2g" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--good)"/>
+          </marker>
+        </defs>
+
+        <text class="m" x="240" y="26" text-anchor="middle" font-weight="600">discretionary candidate</text>
+        <line class="wire" x1="240" y1="34" x2="240" y2="52" marker-end="url(#a2)"/>
+
+        <rect class="accb" x="90" y="56" width="300" height="52" rx="5"/>
+        <text x="104" y="78" font-weight="500">1 · Active session</text>
+        <text class="s" x="104" y="96">would it ARRIVE during a running focus session?</text>
+
+        <rect class="accb" x="90" y="124" width="300" height="52" rx="5"/>
+        <text x="104" y="146" font-weight="500">2 · Activity cooldown</text>
+        <text class="s" x="104" y="164">inside the 90 m window after a session start?</text>
+
+        <rect class="accb" x="90" y="192" width="300" height="52" rx="5"/>
+        <text x="104" y="214" font-weight="500">3 · Quiet hours</text>
+        <text class="s" x="104" y="232">user's do-not-interrupt window · degenerate → fails OPEN</text>
+
+        <rect class="accb" x="90" y="260" width="300" height="52" rx="5"/>
+        <text x="104" y="282" font-weight="500">4 · Busy windows</text>
+        <text class="s" x="104" y="300">merged calendar events + buffers</text>
+
+        <rect class="soft" x="90" y="328" width="300" height="52" rx="5" stroke-dasharray="5 4"/>
+        <text x="104" y="350" font-weight="500" fill="var(--faint)">5 · Per-task fatigue</text>
+        <text class="s warnt" x="104" y="368">DISABLED — outcomes are recorded, not yet consumed</text>
+
+        <line class="wire" x1="240" y1="108" x2="240" y2="120" marker-end="url(#a2)"/>
+        <line class="wire" x1="240" y1="176" x2="240" y2="188" marker-end="url(#a2)"/>
+        <line class="wire" x1="240" y1="244" x2="240" y2="256" marker-end="url(#a2)"/>
+        <line class="wire dash" x1="240" y1="312" x2="240" y2="324"/>
+
+        <!-- rejects -->
+        <line class="wire dng dash" x1="390" y1="82" x2="470" y2="82" marker-end="url(#a2d)"/>
+        <line class="wire dng dash" x1="390" y1="150" x2="470" y2="150" marker-end="url(#a2d)"/>
+        <line class="wire dng dash" x1="390" y1="218" x2="470" y2="218" marker-end="url(#a2d)"/>
+        <line class="wire dng dash" x1="390" y1="286" x2="470" y2="286" marker-end="url(#a2d)"/>
+        <text class="dngt" x="480" y="90" font-size="11">rejected — not scheduled this run</text>
+        <text class="s" x="480" y="106">(the next reevaluate may rebuild it —</text>
+        <text class="s" x="480" y="120">rejection is per-run, never permanent)</text>
+
+        <!-- pass -->
+        <line class="wire good" x1="240" y1="380" x2="240" y2="392" />
+        <polyline class="wire good" points="240,392 620,392" marker-end="url(#a2g)"/>
+        <text class="goodt" x="430" y="384" text-anchor="middle" font-size="11">passes → winner selection</text>
+
+        <!-- bypass -->
+        <polyline class="wire warn" points="700,26 700,340 700,392" fill="none"/>
+        <polyline class="wire warn" points="700,392 660,392" fill="none" marker-end="url(#a2g)"/>
+        <text class="m warnt" x="712" y="30" font-weight="600">budget-exempt lane</text>
+        <text class="s" x="712" y="50">event blocks · morning prompt · dueSoon</text>
+        <text class="s" x="712" y="70">skip ALL shared gates. Each self-gates in</text>
+        <text class="s" x="712" y="84">its builder: per-kind toggle, day-fullness,</text>
+        <text class="s" x="712" y="98">its own dedupe markers.</text>
+        <text class="s" x="712" y="122">A pre-class reminder must fire even if</text>
+        <text class="s" x="712" y="136">you're mid-session — it's a fact, not</text>
+        <text class="s" x="712" y="150">a suggestion.</text>
+
+        <text class="s m" x="90" y="44">every check evaluates the candidate's FIRE DATE — never `now`</text>
+      </svg>
+      <figcaption><span class="fig">FIG 2</span>The gate stack applies only to budget-counting candidates. Note the failure directions: an unresolvable quiet-hours window fails <em>open</em> (better an extra nudge than a silent day) — a rule learned from a midnight-bedtime bug that silently suppressed every nudge, all day.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 3.0 WINNERS ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>Winner selection — facts are seeded, suggestions compete</h2>
+    <p class="lede">Survivors don't all get scheduled. Exempt candidates are <strong>seeded into the winner set first</strong>; then discretionary candidates fill in under a daily budget of 10 and a minimum spacing of 90&nbsp;minutes. That ordering has a visible consequence: a suggestion too close to an event's reminder loses its slot to it.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 250" role="img" aria-label="A day strip showing winner selection: an idle nudge at 11:00 survives; a class reminder at 13:00 is seeded as a fact; a floater check-in at 14:00 is evicted because it falls within the 90-minute spacing of the seeded reminder.">
+        <defs>
+          <marker id="a3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- axis -->
+        <line class="wire" x1="40" y1="150" x2="880" y2="150" marker-end="url(#a3)"/>
+        <g>
+          <line class="wire" x1="120" y1="146" x2="120" y2="154"/><text class="s m" x="120" y="172" text-anchor="middle">09:00</text>
+          <line class="wire" x1="280" y1="146" x2="280" y2="154"/><text class="s m" x="280" y="172" text-anchor="middle">11:00</text>
+          <line class="wire" x1="440" y1="146" x2="440" y2="154"/><text class="s m" x="440" y="172" text-anchor="middle">13:00</text>
+          <line class="wire" x1="600" y1="146" x2="600" y2="154"/><text class="s m" x="600" y="172" text-anchor="middle">14:00</text>
+          <line class="wire" x1="760" y1="146" x2="760" y2="154"/><text class="s m" x="760" y="172" text-anchor="middle">16:00</text>
+        </g>
+
+        <!-- spacing halo around seeded event -->
+        <rect x="320" y="132" width="240" height="36" rx="4" fill="var(--warn-soft)" opacity="0.65"/>
+        <text class="s warnt" x="440" y="212" text-anchor="middle">± 90 m minimum spacing radiates from the seeded fact</text>
+        <line class="wire warn dash" x1="440" y1="168" x2="440" y2="202"/>
+
+        <!-- candidates -->
+        <rect class="goodb" x="230" y="60" width="100" height="46" rx="5"/>
+        <text x="280" y="79" text-anchor="middle" font-weight="500" font-size="12">idle 11:00</text>
+        <text class="s" x="280" y="96" text-anchor="middle">counts · WINS</text>
+        <line class="wire good" x1="280" y1="106" x2="280" y2="144" marker-end="url(#a3)"/>
+
+        <rect class="warnb" x="385" y="26" width="110" height="46" rx="5"/>
+        <text x="440" y="45" text-anchor="middle" font-weight="500" font-size="12">class heads-up</text>
+        <text class="s" x="440" y="62" text-anchor="middle">13:00 · exempt · SEEDED</text>
+        <line class="wire warn" x1="440" y1="72" x2="440" y2="144" marker-end="url(#a3)"/>
+
+        <rect class="soft" x="548" y="60" width="104" height="46" rx="5"/>
+        <text x="600" y="79" text-anchor="middle" font-weight="500" font-size="12" fill="var(--faint)">floater 14:00</text>
+        <text class="s dngt" x="600" y="96" text-anchor="middle">EVICTED — spacing</text>
+        <line class="wire dng dash" x1="600" y1="106" x2="600" y2="144"/>
+        <line class="wire dng" x1="590" y1="118" x2="610" y2="132" stroke-width="2"/>
+        <line class="wire dng" x1="610" y1="118" x2="590" y2="132" stroke-width="2"/>
+
+        <text class="s" x="40" y="30">Winner set fills in two passes: exempt facts first, then discretionary by score under budget (10/day) and spacing (90 m).</text>
+      </svg>
+      <figcaption><span class="fig">FIG 3</span>This is why the floater check-in rarely fires on busy days: its wake+6h anchor lands mid-afternoon, where a class's own reminder — seeded first — evicts it on spacing. A known tuning question, deliberately parked until floater outcome data exists to tune against.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 4.0 OUTCOMES ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>After the nudge — every notification leaves a record</h2>
+    <p class="lede">Scheduling writes a <code>pending</code> outcome row. What happens to that row depends on the user — and on time. This is the system's memory: today it only records; the fatigue gate that would consume it is deliberately off until enough baseline data exists.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 300" role="img" aria-label="Outcome lifecycle: a pending row either resolves synchronously when the user taps or dismisses, or is resolved later by the classifier into acted, engaged, or ignored based on the response window. Cancel keeps past-due pending rows and deletes future ones.">
+        <defs>
+          <marker id="a4" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect class="accb" x="20" y="110" width="130" height="56" rx="5"/>
+        <text class="m" x="85" y="133" text-anchor="middle" font-weight="600">pending</text>
+        <text class="s" x="85" y="151" text-anchor="middle">written at schedule</text>
+
+        <rect class="soft" x="230" y="110" width="130" height="56" rx="5"/>
+        <text x="295" y="133" text-anchor="middle" font-weight="500">delivered</text>
+        <text class="s" x="295" y="151" text-anchor="middle">fire time passes</text>
+        <line class="wire" x1="150" y1="138" x2="226" y2="138" marker-end="url(#a4)"/>
+
+        <!-- sync path -->
+        <rect class="goodb" x="470" y="30" width="200" height="62" rx="5"/>
+        <text x="570" y="52" text-anchor="middle" font-weight="500">user touches it</text>
+        <text class="s m" x="570" y="70" text-anchor="middle">tappedOpen · tappedStart</text>
+        <text class="s m" x="570" y="84" text-anchor="middle">dismissed</text>
+        <polyline class="wire good" points="360,124 415,124 415,61 466,61" fill="none" marker-end="url(#a4)"/>
+        <text class="lab goodt" x="418" y="50">synchronous — the delegate writes it</text>
+
+        <!-- classifier path -->
+        <rect class="box" x="470" y="180" width="200" height="86" rx="5"/>
+        <text x="570" y="202" text-anchor="middle" font-weight="500">user never touches it</text>
+        <text class="s" x="570" y="222" text-anchor="middle">classifier sweeps on foreground,</text>
+        <text class="s" x="570" y="236" text-anchor="middle">after the response window closes:</text>
+        <text class="s m" x="570" y="256" text-anchor="middle">acted · engaged · ignored</text>
+        <polyline class="wire" points="360,152 415,152 415,223 466,223" fill="none" marker-end="url(#a4)"/>
+        <text class="lab" x="418" y="176">later — inferred from behavior</text>
+
+        <!-- consumers -->
+        <rect class="warnb" x="740" y="118" width="170" height="70" rx="5"/>
+        <text class="s warnt" x="754" y="140" font-weight="600">RECORDING ONLY</text>
+        <text class="s" x="754" y="158">fatigue gate off · nothing</text>
+        <text class="s" x="754" y="172">reads 👎 feedback yet</text>
+        <line class="wire dash" x1="670" y1="61" x2="736" y2="130" marker-end="url(#a4)"/>
+        <line class="wire dash" x1="670" y1="223" x2="736" y2="170" marker-end="url(#a4)"/>
+
+        <!-- cancelAll rule -->
+        <text class="s m" x="20" y="230" font-weight="600">cancelAll on every run:</text>
+        <text class="s" x="20" y="250">· FUTURE pending rows → deleted (they mirror requests just cancelled)</text>
+        <text class="s" x="20" y="268">· PAST pending rows → kept (sole evidence a nudge fired; the classifier resolves them)</text>
+        <text class="s" x="20" y="286">· anything older than 14 days → purged</text>
+      </svg>
+      <figcaption><span class="fig">FIG 4</span>One nuance keeps the data honest: <code>ignored</code> means "never opened the app in the window," which only implies failure when success <em>requires</em> the app. A pre-class reminder succeeds by the user going to class — so kinds like it are flagged and skipped by any future fatigue logic.</figcaption>
+    </figure>
+
+    <div class="note"><strong>Why the fatigue gate stays off:</strong> <span class="why">the arbiter is being run in record-only mode until enough outcome rows exist per kind to tune against. Arming consumption before the baseline exists would suppress exactly the signals being measured — the floater check-in has produced almost no rows yet, and it is the kind stakes-weighting would penalize first.</span></div>
+  </section>
+
+  <footer>
+    Companion documents: SYS-MAP-01 (system map) · SYS-BLD-03 (the ten builders) · census source: docs/plan/CONTEXT.md, stamped 2026-09-03
+  </footer>
+</div>

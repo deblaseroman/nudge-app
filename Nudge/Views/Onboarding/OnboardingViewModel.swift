@@ -196,5 +196,10 @@ final class OnboardingViewModel {
     func completeOnboarding(_ modelContext: ModelContext) {
         guard let profile = try? modelContext.fetch(FetchDescriptor<UserProfile>()).first else { return }
         profile.onboardingComplete = true
+        // Land the first post-onboarding screen on the Goals tab, showing
+        // the goals just captured. MainTabView consumes and clears this.
+        SharedModelContainer.appGroupDefaults.set(
+            true, forKey: MainTabView.landOnGoalsAfterOnboardingKey
+        )
     }
 }

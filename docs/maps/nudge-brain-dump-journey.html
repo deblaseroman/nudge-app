@@ -1,0 +1,279 @@
+<title>Journey of a Brain Dump</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .byline { margin:12px 0 0; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+  .sentence { font-size:21px; font-weight:500; background:var(--panel);
+    border:1px solid var(--line); border-left:4px solid var(--accent);
+    border-radius:6px; padding:18px 22px; margin:0 0 8px; }
+  .sentence .m { font-family:"IBM Plex Mono",monospace; }
+  figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px 18px 14px; overflow-x:auto; }
+  figure svg { display:block; min-width:680px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption { font-size:13px; color:var(--muted); border-top:1px solid var(--line); margin-top:16px; padding-top:12px; max-width:74ch; }
+  figcaption .fig { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); margin-right:6px; }
+  svg { color: var(--ink); }
+  svg text { font-family:"Lexend",sans-serif; font-size:12.5px; fill:var(--ink); }
+  svg text.m { font-family:"IBM Plex Mono",monospace; font-size:11px; }
+  svg text.s { font-size:10.5px; fill:var(--muted); }
+  svg text.acct { fill:var(--accent); }
+  svg text.warnt { fill:var(--warn); }
+  svg text.goodt { fill:var(--good); }
+  svg .box { fill:var(--panel-2); stroke:currentColor; stroke-width:1.2; }
+  svg .soft { fill:var(--panel); stroke:var(--line); stroke-width:1; }
+  svg .accb { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.2; }
+  svg .warnb { fill:var(--warn-soft); stroke:var(--warn); stroke-width:1.2; }
+  svg .goodb { fill:var(--good-soft); stroke:var(--good); stroke-width:1.2; }
+  svg .wire { stroke:currentColor; stroke-width:1.2; fill:none; }
+  svg .wire.acc { stroke:var(--accent); }
+  svg .wire.warn { stroke:var(--warn); }
+  svg .wire.good { stroke:var(--good); }
+  svg .wire.dash { stroke-dasharray:5 4; }
+  .steps { counter-reset: step; list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .steps li { counter-increment: step; background:var(--panel); border:1px solid var(--line);
+    border-radius:6px; padding:12px 16px 12px 54px; position:relative; font-size:14px; }
+  .steps li::before { content: counter(step); position:absolute; left:16px; top:12px;
+    width:24px; height:24px; border-radius:50%; background:var(--accent-soft); color:var(--accent);
+    font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+    display:flex; align-items:center; justify-content:center; }
+  .steps li strong { font-weight:500; }
+  .steps li .why { color:var(--muted); }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <div class="name">
+      <h1>Journey of a Brain Dump</h1>
+      <p class="sub">One typed sentence, followed end-to-end through every system in Nudge — from a thumb on a keyboard to a notification five days later, and into the app's memory after that.</p>
+      <p class="byline">Roman DeBlase · Nudge</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-JRN-06</span></div>
+      <div><span class="k">Form</span><span class="v">PROCESS MAP</span></div>
+      <div><span class="k">Revision</span><span class="v">2026-09-14</span></div>
+    </div>
+  </div>
+
+  <p class="sentence">"i need to pick up my friend from the airport <span class="m">5 days from now</span> at <span class="m">3pm</span>"</p>
+  <p class="lede">Typed on a Sunday. Every box this sentence passes through below is a system documented in the companion maps — this page shows them <strong>composing</strong>: the router's economics, the model's judgment, the schema's honesty, the day-glue, the deterministic scheduler, and the outcome record that closes the loop.</p>
+
+  <!-- ════════ 1.0 THE FIRST FIVE SECONDS ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>The first five seconds — from language to a fact</h2>
+
+    <figure>
+      <svg viewBox="0 0 920 330" role="img" aria-label="The sentence passes the router gate because it contains digits, is read by the capture model which classifies it as an event using the date table, and is validated and written to the store as an event on Saturday at 3pm with a three-hour-earlier heads-up implied.">
+        <defs>
+          <marker id="j1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect class="soft" x="10" y="40" width="150" height="60" rx="5"/>
+        <text x="85" y="66" text-anchor="middle" font-weight="500">typed &amp; sent</text>
+        <text class="s" x="85" y="84" text-anchor="middle">Home chat · Sunday</text>
+
+        <rect class="box" x="200" y="40" width="160" height="60" rx="5"/>
+        <text x="280" y="62" text-anchor="middle" font-weight="500">router gate</text>
+        <text class="s" x="280" y="80" text-anchor="middle">contains "5", "3" → not</text>
+        <text class="s" x="280" y="93" text-anchor="middle">chitchat; pays the Opus toll</text>
+        <line class="wire" x1="160" y1="70" x2="196" y2="70" marker-end="url(#j1)"/>
+
+        <rect class="accb" x="400" y="30" width="200" height="80" rx="5"/>
+        <text class="m" x="500" y="54" text-anchor="middle" font-weight="600">Opus 5 · effort low</text>
+        <text class="s" x="500" y="72" text-anchor="middle">"with another person, fixed</text>
+        <text class="s" x="500" y="85" text-anchor="middle">time → EVENT"; "5 days" looked</text>
+        <text class="s" x="500" y="98" text-anchor="middle">up in the 21-day date table</text>
+        <line class="wire acc" x1="360" y1="70" x2="396" y2="70" marker-end="url(#j1)"/>
+
+        <rect class="box" x="640" y="40" width="130" height="60" rx="5"/>
+        <text x="705" y="62" text-anchor="middle" font-weight="500">validated write</text>
+        <text class="s" x="705" y="80" text-anchor="middle">drop-traced; count</text>
+        <text class="s" x="705" y="93" text-anchor="middle">reconciled</text>
+        <line class="wire" x1="600" y1="70" x2="636" y2="70" marker-end="url(#j1)"/>
+
+        <rect class="goodb" x="640" y="150" width="270" height="70" rx="5"/>
+        <text class="m" x="775" y="174" text-anchor="middle" font-weight="600">NudgeTask · isEvent</text>
+        <text class="s" x="775" y="192" text-anchor="middle">specificTime = Saturday 3:00 PM</text>
+        <text class="s" x="775" y="207" text-anchor="middle">estimatedMinutes from spans if stated</text>
+        <line class="wire good" x1="705" y1="100" x2="740" y2="146" marker-end="url(#j1)"/>
+
+        <rect class="soft" x="200" y="150" width="360" height="70" rx="5"/>
+        <text x="380" y="172" text-anchor="middle" font-weight="500">the reply, ~4 seconds after send</text>
+        <text class="s" x="380" y="192" text-anchor="middle">"Airport pickup is locked in for Saturday at 3 PM —</text>
+        <text class="s" x="380" y="207" text-anchor="middle">your friend's in good hands."</text>
+        <line class="wire dash" x1="620" y1="185" x2="564" y2="185" marker-end="url(#j1)"/>
+
+        <text class="s warnt" x="10" y="270">WHAT DID NOT HAPPEN — each a shipped bug once, each now structurally impossible:</text>
+        <text class="s" x="10" y="290">· no deadline was minted (an event's time is its time; a task would have needed dueKind "deadline")</text>
+        <text class="s" x="10" y="306">· no silent drop (every discard logs a reason; returned = inserted + dropped is checked)</text>
+        <text class="s" x="10" y="322">· no date arithmetic by the model (it copies from a generated table — it once computed "next Thursday" wrong)</text>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>Language becomes a validated fact in one call: the deterministic gate spends no AI deciding which AI to use, the model's one judgment call (event, not task) is the kind models are for, and the write path assumes the model is fallible — logging, reconciling, and refusing rather than trusting.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 2.0 FIVE QUIET DAYS ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>Five quiet days — glued to Saturday, visible everywhere, touched by nothing</h2>
+
+    <figure>
+      <svg viewBox="0 0 920 300" role="img" aria-label="A five-day band from Sunday to Saturday: the event shows in the calendar, events list, and week lens the whole time, while the planner, morning prompt, and idle nudge are blocked from touching it; on Saturday it appears on the timeline strip.">
+        <defs>
+          <marker id="j2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- day band -->
+        <line class="wire" x1="40" y1="60" x2="880" y2="60" marker-end="url(#j2)"/>
+        <g>
+          <text class="s m" x="70"  y="46" text-anchor="middle">SUN</text><line class="wire" x1="70" y1="54" x2="70" y2="66"/>
+          <text class="s m" x="205" y="46" text-anchor="middle">MON</text><line class="wire" x1="205" y1="54" x2="205" y2="66"/>
+          <text class="s m" x="340" y="46" text-anchor="middle">TUE</text><line class="wire" x1="340" y1="54" x2="340" y2="66"/>
+          <text class="s m" x="475" y="46" text-anchor="middle">WED</text><line class="wire" x1="475" y1="54" x2="475" y2="66"/>
+          <text class="s m" x="610" y="46" text-anchor="middle">THU</text><line class="wire" x1="610" y1="54" x2="610" y2="66"/>
+          <text class="s m" x="745" y="46" text-anchor="middle">FRI</text><line class="wire" x1="745" y1="54" x2="745" y2="66"/>
+          <text class="s m warnt" x="850" y="46" text-anchor="middle" font-weight="600">SAT</text><line class="wire warn" x1="850" y1="52" x2="850" y2="68" stroke-width="2"/>
+        </g>
+
+        <!-- visible surfaces -->
+        <rect class="goodb" x="40" y="92" width="840" height="44" rx="5"/>
+        <text class="m goodt" x="56" y="110" font-weight="600">VISIBLE ALL WEEK</text>
+        <text class="s" x="56" y="126">calendar month view (stone dot, Saturday) · Events tab · This-week lens once inside 7 days · tap-to-edit any time</text>
+
+        <!-- protected from -->
+        <rect class="warnb" x="40" y="152" width="840" height="58" rx="5"/>
+        <text class="m warnt" x="56" y="172" font-weight="600">UNTOUCHABLE — DAY-INTEGRITY GLUE</text>
+        <text class="s" x="56" y="189">Plan-my-day cannot seat it into today's gaps · the morning prompt won't name it · the idle nudge won't suggest it ·</text>
+        <text class="s" x="56" y="203">its 3 PM is a busy window only on Saturday — "an event's time is a fact the rest of the app flows around" (Roman's rule)</text>
+
+        <!-- saturday -->
+        <rect class="accb" x="640" y="230" width="240" height="56" rx="5"/>
+        <text class="m" x="760" y="252" text-anchor="middle" font-weight="600">Saturday morning</text>
+        <text class="s" x="760" y="270" text-anchor="middle">draws on the timeline strip at 3 PM —</text>
+        <text class="s" x="760" y="283" text-anchor="middle">even if 3 PM is outside wake–bed hours</text>
+        <line class="wire warn dash" x1="850" y1="68" x2="800" y2="226" marker-end="url(#j2)"/>
+      </svg>
+      <figcaption><span class="fig">FIG 2</span>The quiet days are the design working hardest: six "what should I do now" code paths each individually refuse to touch a future-day item. That glue exists because one bug report — a task intended days out getting pulled into today's plan — was fixed as a category, with one shared rule every path consumes.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 3.0 SATURDAY ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>Saturday — the machine does its one job, then remembers</h2>
+
+    <figure>
+      <svg viewBox="0 0 920 320" role="img" aria-label="On Saturday the arbiter builds a heads-up for 2pm in the exempt lane, iOS delivers it, the user goes to the airport without opening the app, and the outcome classifier records the silence correctly as not-a-failure.">
+        <defs>
+          <marker id="j3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect class="box" x="10" y="40" width="190" height="66" rx="5"/>
+        <text x="105" y="62" text-anchor="middle" font-weight="500">arbiter reevaluates</text>
+        <text class="s" x="105" y="80" text-anchor="middle">event-block builder emits a</text>
+        <text class="s" x="105" y="93" text-anchor="middle">candidate: fire 2:00 PM (T−60m)</text>
+
+        <rect class="warnb" x="250" y="40" width="180" height="66" rx="5"/>
+        <text x="340" y="62" text-anchor="middle" font-weight="500">exempt lane</text>
+        <text class="s" x="340" y="80" text-anchor="middle">a FACT: skips budget &amp; gates,</text>
+        <text class="s" x="340" y="93" text-anchor="middle">seeded into winners first</text>
+        <line class="wire" x1="200" y1="73" x2="246" y2="73" marker-end="url(#j3)"/>
+
+        <rect class="soft" x="480" y="40" width="180" height="66" rx="5"/>
+        <text x="570" y="62" text-anchor="middle" font-weight="500">2:00 PM — it fires</text>
+        <text class="s" x="570" y="80" text-anchor="middle">"Pick up friend from airport</text>
+        <text class="s" x="570" y="93" text-anchor="middle">in 1 hour." Exact time, no AI copy.</text>
+        <line class="wire warn" x1="430" y1="73" x2="476" y2="73" marker-end="url(#j3)"/>
+
+        <rect class="goodb" x="710" y="40" width="200" height="66" rx="5"/>
+        <text x="810" y="62" text-anchor="middle" font-weight="500">the user just… goes</text>
+        <text class="s" x="810" y="80" text-anchor="middle">reads it on the lock screen,</text>
+        <text class="s" x="810" y="93" text-anchor="middle">drives to the airport, app never opens</text>
+        <line class="wire" x1="660" y1="73" x2="706" y2="73" marker-end="url(#j3)"/>
+
+        <rect class="accb" x="250" y="180" width="420" height="90" rx="5"/>
+        <text class="m" x="460" y="204" text-anchor="middle" font-weight="600">the loop closes — NudgeOutcome</text>
+        <text class="s" x="460" y="224" text-anchor="middle">pending row survives delivery; days later the classifier reads the silence.</text>
+        <text class="s" x="460" y="240" text-anchor="middle">For event reminders, "never opened the app" is SUCCESS-shaped, not failure —</text>
+        <text class="s" x="460" y="256" text-anchor="middle">the kind is flagged, so no future fatigue logic will ever punish this task.</text>
+        <line class="wire dash" x1="810" y1="106" x2="600" y2="176" marker-end="url(#j3)"/>
+
+        <text class="s" x="20" y="300">Roman, on which notifications actually work: "I like the event reminders — that's it." The one kind anchored to something real.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 3</span>The payoff is deliberately boring: a reminder at the right moment, computed by arithmetic, delivered without ceremony. The subtle craft is in the last box — the app records what happened <em>and knows what the silence means</em>, so its future learning can't mislearn from its best feature.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 4.0 THE STEPS ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>The whole journey, numbered</h2>
+    <ol class="steps">
+      <li><strong>Typed.</strong> <span class="why">One sentence in Home chat, Sunday afternoon.</span></li>
+      <li><strong>Routed.</strong> <span class="why">The deterministic gate sees digits — this is work, not chitchat. Costs nothing to decide.</span></li>
+      <li><strong>Understood.</strong> <span class="why">Opus 5 (effort low, ~6¢, ~4s): fixed time + another person = an event; "5 days from now" copied from the generated date table, never computed.</span></li>
+      <li><strong>Written, distrustfully.</strong> <span class="why">Schema-validated, every potential drop logged, counts reconciled. The model is treated as a talented, fallible colleague.</span></li>
+      <li><strong>Confirmed.</strong> <span class="why">A one-line reply naming the day and time — the user can catch a misread immediately.</span></li>
+      <li><strong>Glued.</strong> <span class="why">For five days: visible on the calendar, Events tab, and week lens; untouchable by every "what should I do now" path.</span></li>
+      <li><strong>Drawn.</strong> <span class="why">Saturday: a stone block at 3 PM on the timeline strip — which stretches to show it even outside waking hours.</span></li>
+      <li><strong>Scheduled.</strong> <span class="why">The arbiter's event-block builder emits the T−60m heads-up in the exempt lane: facts skip budgets and gates.</span></li>
+      <li><strong>Fired.</strong> <span class="why">2:00 PM, exact clock time in the body, no AI in the delivery path.</span></li>
+      <li><strong>Remembered, correctly.</strong> <span class="why">The outcome row records the delivery; the classifier knows that for this kind, silence ≠ ignored. The feedback loop stays honest.</span></li>
+    </ol>
+  </section>
+
+  <footer>
+    Companions: SYS-MAP-01 · SYS-ARB-02 · SYS-BLD-03 · SYS-TIME-04 · SYS-AI-05 &nbsp;·&nbsp; the classification and reply in FIG 1 are from the Sep 14 model bake-off, verbatim
+  </footer>
+</div>

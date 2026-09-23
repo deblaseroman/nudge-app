@@ -90,7 +90,7 @@ struct CalendarImportStepView: View {
                 let granted = await service.requestCalendarAccess()
                 if granted {
                     // Reset the rolling cursor so first-time connection always
-                    // imports the full 3-week window via the rolling path.
+                    // imports the full horizon via the rolling path.
                     service.resetRollingWindowCursor()
                     let result = await service.refreshRollingWindow(modelContext: modelContext)
                         ?? CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [])
@@ -100,7 +100,7 @@ struct CalendarImportStepView: View {
                     )
                 } else {
                     await viewModel.addMascotMessage(
-                        "No worries — you can connect your calendar later in Settings.",
+                        "No worries, you can connect your calendar later in Settings.",
                         delay: 0.3
                     )
                 }

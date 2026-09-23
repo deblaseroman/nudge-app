@@ -1,0 +1,7 @@
+{
+  "message": "Airport pickup is locked in for Saturday at 3 PM — your friend's in good hands.",
+  "new_tasks": [
+    {"title": "Pick up friend from airport", "isEvent": true, "priority": "high", "category": "personal", "stakes": "high", "estimatedMinutes": null, "dueDate": "2026-09-19", "dueTime": "3:00 PM", "dueKind": null, "sequenceIndex": null, "prepLeadDays": null, "timeWindow": null, "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
+  ],
+  "task_updates": []
+}

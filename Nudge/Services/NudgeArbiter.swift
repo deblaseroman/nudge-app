@@ -118,6 +118,37 @@ struct NudgeCandidate {
     /// event blocks (no task duration to estimate).
     let estimatedMinutes: Int?
 
+    /// The task this nudge's COPY names, when that isn't the same thing as
+    /// the task it's *about*.
+    ///
+    /// Only the morning prompt uses it. That candidate keeps `taskID == nil`
+    /// on purpose — `taskID` feeds the fatigue system, and pointing it at
+    /// the user's highest-stakes task would make an ignored morning prompt
+    /// count against exactly the wrong item the day `fatigueGateEnabled`
+    /// flips (see the comment in `buildMorningPromptCandidates`). This field
+    /// is inert by construction: nothing reads it but the morning prompt's
+    /// own named-task history, so it can carry the attribution `taskID`
+    /// must not.
+    ///
+    /// A `var` with a default purely so the synthesised memberwise init
+    /// keeps working at the five call sites that don't set it.
+    var namedTaskID: UUID? = nil
+
+    /// Goal-lapse only: the `NudgeGoal.id` the bait is about. Stamped into
+    /// userInfo so the tap context can hand the message box the right goal,
+    /// and read by `schedule()` for the per-goal delivered-history write.
+    /// Same `var`-with-default convention as `namedTaskID`.
+    var goalID: UUID? = nil
+
+    /// TRUE when the fire time derives from a time the USER set: an event's
+    /// start, a task's due time, or a placement the user made by hand
+    /// (`plannedIsAuto == false`). Roman's ruling, Sep 23 2026: the app
+    /// never plans inside the quiet window on its own (`DayWindow` stops
+    /// at bedtime), so anything sitting there is the user's choice and is
+    /// treated like a daytime candidate. The quiet-hours gate skips these;
+    /// every other gate still applies to the budget-counting ones.
+    var anchoredToUserTime: Bool = false
+
     /// Within-slot ranking. `pow(urgency, 1.1) * pow(importance, 0.9)` —
     /// urgency exponent slightly higher to favor time-pressure breaking ties.
     var score: Double {
@@ -162,6 +193,20 @@ final class NudgeArbiter: NudgeArbitering {
     private var lastReevaluatedAt: Date?
     private let debounceWindow: TimeInterval = 60
 
+    #if DEBUG
+    /// What the last `reevaluate` saw, recorded for the eval harness
+    /// (`EvalHarness`, `eval/run.sh`): every raw candidate the builders
+    /// produced, the subset that passed the gates, and the winners. Written
+    /// once per run, right before scheduling; read-only for everyone else.
+    /// DEBUG-only so the tool cannot become an input to anything shipped.
+    struct DebugRunSnapshot {
+        let raw: [NudgeCandidate]
+        let eligible: [NudgeCandidate]
+        let scheduled: [NudgeCandidate]
+    }
+    private(set) var lastRunSnapshot: DebugRunSnapshot?
+    #endif
+
     /// Synchronous in-memory record of every notification ID we've handed to
     /// the system. We use THIS for cancellation rather than the async
     /// `pendingNotificationRequests()` round-trip — that round-trip was
@@ -176,6 +221,35 @@ final class NudgeArbiter: NudgeArbitering {
         set {
             SharedModelContainer.appGroupDefaults
                 .set(Array(newValue), forKey: scheduledIDsKey)
+        }
+    }
+
+    /// App Group key for "which task did the morning prompt name on which
+    /// day". Backs `morningPromptMaxConsecutiveDays`.
+    private let morningPromptHistoryKey = "nudge.arb.morningPromptHistory"
+
+    /// Day stamp (`yyyyMMdd`, the same format candidate IDs embed) → the
+    /// UUID string of the task the morning prompt named for that day.
+    ///
+    /// Written in `schedule()` rather than in the builder, mirroring
+    /// `eventReminderHistory`: the builder runs many times a day and its
+    /// output can still be dropped downstream, so "what we actually handed
+    /// to the OS" is the only honest thing to record. Re-scheduling the same
+    /// day's prompt overwrites the same key with the same value, so repeated
+    /// reevaluates are idempotent.
+    ///
+    /// Pruned alongside `eventReminderHistory` in `cancelAll`. Stamp keys
+    /// sort lexicographically in date order, which is what makes the prune a
+    /// string comparison.
+    private var morningPromptHistory: [String: String] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: morningPromptHistoryKey)?
+                .compactMapValues { $0 as? String } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: morningPromptHistoryKey)
         }
     }
 
@@ -194,6 +268,75 @@ final class NudgeArbiter: NudgeArbitering {
         set {
             SharedModelContainer.appGroupDefaults
                 .set(newValue, forKey: eventReminderHistoryKey)
+        }
+    }
+
+    /// App Group key for the due-soon "already scheduled once" map — the
+    /// same delivered-marker pattern as `eventReminderHistory`, for the same
+    /// reason: `cancelAll` wipes a pending request that has already been
+    /// delivered, and without a marker the next reevaluate re-adds it with
+    /// the same ID and refires via the ASAP fallback. This is what makes
+    /// the due-soon reminder ONCE per task.
+    private let dueSoonHistoryKey = "nudge.arb.dueSoonHistory"
+
+    /// Candidate ID → epoch fire time we last handed to the OS. Written in
+    /// `schedule()`, checked in `buildDueSoonCandidates`, pruned in
+    /// `cancelAll` alongside the event map.
+    private var dueSoonHistory: [String: TimeInterval] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: dueSoonHistoryKey)?
+                .compactMapValues { $0 as? TimeInterval } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: dueSoonHistoryKey)
+        }
+    }
+
+    /// App Group key for the missed-placement delivered markers — the same
+    /// pattern as `dueSoonHistory`, needed for the same reason: the
+    /// catch-up path in `buildPlacementMissedCandidates` fires ASAP for a
+    /// slot that passed with no attempt delivered, and without a marker
+    /// every reevaluate after a delivery would re-add the same ID and
+    /// refire through it.
+    private let placementMissedHistoryKey = "nudge.arb.placementMissedHistory"
+
+    /// Attempt ID → epoch fire time last handed to the OS. Written in
+    /// `schedule()`, read in `buildPlacementMissedCandidates`, pruned in
+    /// `cancelAll` alongside the other marker maps.
+    private var placementMissedHistory: [String: TimeInterval] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: placementMissedHistoryKey)?
+                .compactMapValues { $0 as? TimeInterval } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: placementMissedHistoryKey)
+        }
+    }
+
+    /// App Group key for the goal-lapse per-goal delivered map — goal UUID
+    /// string → epoch fire time last handed to the OS. Unlike the maps
+    /// above it is keyed by GOAL, not candidate ID: its job is the
+    /// at-most-monthly-per-goal cap (`goalLapseMinDaysBetweenPerGoal`),
+    /// not just refire protection for one delivered request.
+    private let goalLapseHistoryKey = "nudge.arb.goalLapseHistory"
+
+    /// Goal UUID string → epoch fire time. Written in `schedule()`, read
+    /// in `buildGoalLapseCandidates`, pruned in `cancelAll` on its own
+    /// longer horizon (`goalLapseHistoryRetentionDays` — the shared 2-day
+    /// cutoff would erase the monthly cap).
+    private var goalLapseHistory: [String: TimeInterval] {
+        get {
+            SharedModelContainer.appGroupDefaults
+                .dictionary(forKey: goalLapseHistoryKey)?
+                .compactMapValues { $0 as? TimeInterval } ?? [:]
+        }
+        set {
+            SharedModelContainer.appGroupDefaults
+                .set(newValue, forKey: goalLapseHistoryKey)
         }
     }
 
@@ -236,20 +379,48 @@ final class NudgeArbiter: NudgeArbitering {
         // 1. Build candidate set
         var candidates: [NudgeCandidate] = []
         candidates.append(contentsOf: buildEventBlockCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildMorningPromptCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildIdleCandidates(profile: profile, modelContext: modelContext))
-        candidates.append(contentsOf: buildGetAheadCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildPrepCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildDueSoonCandidates(profile: profile, modelContext: modelContext))
         candidates.append(contentsOf: buildFloaterCheckInCandidates(profile: profile, modelContext: modelContext))
-        candidates.append(contentsOf: buildBreakItDownCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildComeBackCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildPlacementLeadCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildPlacementMissedCandidates(profile: profile, modelContext: modelContext))
+        candidates.append(contentsOf: buildGoalLapseCandidates(profile: profile, modelContext: modelContext))
         #if DEBUG
-        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + idle + getAhead + floater + breakDown).")
+        print("[NudgeArbiter] Built \(candidates.count) raw candidates (events + morning + idle + prep + dueSoon + floater + comeBack + placementLead + placementMissed + goalLapse).")
         #endif
 
         // 2. Run gates
         let now = Date()
-        let gateContext = GateContext(profile: profile, modelContext: modelContext, now: now)
+        let placementIntervals: [(taskID: UUID, start: Date, end: Date)] = {
+            var descriptor = FetchDescriptor<NudgeTask>(
+                predicate: #Predicate<NudgeTask> {
+                    !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate != nil
+                }
+            )
+            descriptor.fetchLimit = 100
+            return ((try? modelContext.fetch(descriptor)) ?? []).compactMap { task in
+                guard let start = task.plannedStartDate else { return nil }
+                let minutes = task.plannedDurationMinutes ?? task.estimatedMinutes ?? 30
+                return (task.id, start, start.addingTimeInterval(Double(minutes) * 60))
+            }
+        }()
+        let gateContext = GateContext(
+            profile: profile,
+            modelContext: modelContext,
+            now: now,
+            placementIntervals: placementIntervals
+        )
         let eligible = candidates.filter { passesGates($0, context: gateContext) }
         #if DEBUG
         print("[NudgeArbiter] \(eligible.count) candidates passed the gates.")
+        debugStakesImpact(all: candidates, eligible: eligible, context: gateContext)
+        debugQuietHoursImpact(all: candidates, context: gateContext)
+        debugMorningPromptImpact(all: candidates, profile: profile, context: gateContext)
+        debugRecentActivityImpact(all: candidates, context: gateContext)
+        debugActiveSessionImpact(all: candidates, context: gateContext)
         #endif
 
         // 3. Pick winners — exactly one discretionary nudge per fire-time
@@ -257,6 +428,7 @@ final class NudgeArbiter: NudgeArbitering {
         //    bypass the budget.
         let scheduled = pickWinners(from: eligible, context: gateContext)
         #if DEBUG
+        lastRunSnapshot = DebugRunSnapshot(raw: candidates, eligible: eligible, scheduled: scheduled)
         print("[NudgeArbiter] Scheduling \(scheduled.count) winner(s).")
         for w in scheduled {
             // Quadrant printout is currently diagnostic only — step 6 will
@@ -273,13 +445,81 @@ final class NudgeArbiter: NudgeArbitering {
             let s = String(format: "%.3f", w.score)
             print("  • \(w.kind.rawValue) [u=\(u) i=\(i) score=\(s) → \(q)] @ \(w.fireDate) — \(w.title): \(w.body.prefix(60))")
         }
+        debugFloaterImpact(
+            all: candidates,
+            eligible: eligible,
+            scheduled: scheduled,
+            profile: profile,
+            context: gateContext
+        )
+        debugPlacementImpact(
+            all: candidates,
+            eligible: eligible,
+            scheduled: scheduled,
+            context: gateContext
+        )
+        debugBudgetImpact(
+            eligible: eligible,
+            scheduled: scheduled,
+            profile: profile,
+            context: gateContext
+        )
+        debugGoalLapseImpact(
+            all: candidates,
+            eligible: eligible,
+            scheduled: scheduled,
+            context: gateContext
+        )
         #endif
 
         // 4. Schedule
         for cand in scheduled {
             schedule(cand, modelContext: modelContext)
         }
+
+        #if DEBUG
+        debugDumpPendingCensus()
+        #endif
     }
+
+    #if DEBUG
+    /// Item-4 instrumentation (cycle 2026-08-03-03): what is ACTUALLY
+    /// pending with the OS after a reevaluate — count, spread by day, the
+    /// furthest fire date, and headroom against the iOS 64-pending limit
+    /// (the system keeps the 64 soonest-firing requests and silently drops
+    /// the rest, so overflow eats the far tail first). The async hop is
+    /// read-only and prints after `schedule()`'s synchronous adds have been
+    /// handed to the center.
+    private func debugDumpPendingCensus() {
+        Task { @MainActor in
+            let pending = await center.pendingNotificationRequests()
+            let ours = pending.filter { $0.identifier.hasPrefix(prefix) }
+            let now = Date()
+            let fireDates = ours.compactMap {
+                ($0.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
+            }
+            let calendar = Calendar.current
+            var byDay: [Int: Int] = [:]
+            for date in fireDates {
+                let days = calendar.dateComponents(
+                    [.day],
+                    from: calendar.startOfDay(for: now),
+                    to: calendar.startOfDay(for: date)
+                ).day ?? 0
+                byDay[days, default: 0] += 1
+            }
+            let furthest = fireDates.max()
+            let spread = byDay.keys.sorted()
+                .map { "+\($0)d: \(byDay[$0] ?? 0)" }
+                .joined(separator: "  ")
+            print("[NudgeArbiter] PENDING CENSUS: \(ours.count) arbiter-owned of \(pending.count) total (iOS keeps the soonest-firing 64; headroom \(64 - pending.count)).")
+            print("  by day: \(spread)")
+            if let furthest {
+                print("  furthest: \(furthest)")
+            }
+        }
+    }
+    #endif
 
     // MARK: - Cancel
 
@@ -303,15 +543,101 @@ final class NudgeArbiter: NudgeArbitering {
             eventReminderHistory = pruned
         }
 
-        // Also drop any pending NudgeOutcome audit rows from previous runs
-        // so per-task fatigue and stats don't inflate over time.
-        let descriptor = FetchDescriptor<NudgeOutcome>(
-            predicate: #Predicate<NudgeOutcome> { $0.resultRaw == "pending" }
+        // Same prune for the due-soon delivered markers — same map shape,
+        // same growth problem.
+        let prunedDueSoon = dueSoonHistory.filter { $0.value > cutoff }
+        if prunedDueSoon.count != dueSoonHistory.count {
+            dueSoonHistory = prunedDueSoon
+        }
+
+        // And for the missed-placement attempt markers. Placements
+        // themselves die at midnight (`PlacementRollover`), so 2 days
+        // comfortably outlives every marker's usefulness.
+        let prunedPlacement = placementMissedHistory.filter { $0.value > cutoff }
+        if prunedPlacement.count != placementMissedHistory.count {
+            placementMissedHistory = prunedPlacement
+        }
+
+        // Goal-lapse per-goal markers live on their OWN horizon — they back
+        // the at-most-monthly cap, so the shared 2-day cutoff would erase
+        // the cap the day after it fired.
+        let goalLapseCutoff = Date()
+            .addingTimeInterval(-Double(NudgeConfig.goalLapseHistoryRetentionDays) * 24 * 60 * 60)
+            .timeIntervalSinceReferenceDate
+        let prunedGoalLapse = goalLapseHistory.filter { $0.value > goalLapseCutoff }
+        if prunedGoalLapse.count != goalLapseHistory.count {
+            goalLapseHistory = prunedGoalLapse
+        }
+
+        // Same treatment for the morning prompt's named-task history. Kept
+        // for a week rather than 2 days: the rule reads the days immediately
+        // before the FIRE day, and that fire day can be tomorrow, so the
+        // window has to outlast the lookback by a comfortable margin.
+        let historyCutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date())
+            .map { stamp($0) } ?? ""
+        let prunedMorning = morningPromptHistory.filter { $0.key >= historyCutoff }
+        if prunedMorning.count != morningPromptHistory.count {
+            morningPromptHistory = prunedMorning
+        }
+
+        // Pending NudgeOutcome rows split into two populations, and only
+        // ONE of them is garbage. This used to delete both, which is why
+        // `.ignored` had no writer and the fatigue gate could never trip:
+        // the evidence was destroyed on the very next reevaluate, minutes
+        // after the notification went out.
+        //
+        //   • fireDate in the FUTURE — the request we removed above was
+        //     still pending with the OS, so it never reached the user. The
+        //     row is an artifact of this rebuild and is deleted here; the
+        //     rebuild below re-inserts a row for whatever it schedules.
+        //     This is what keeps the declarative rebuild honest — the set
+        //     of future pending rows always mirrors the set of scheduled
+        //     notifications, exactly as before.
+        //
+        //   • fireDate in the PAST — the OS already DELIVERED this
+        //     notification and the user simply hasn't answered it. This row
+        //     is the only record that the nudge happened, so it survives
+        //     until `NudgeOutcomeClassifier` resolves it into
+        //     acted / engaged / ignored once the grace period elapses.
+        //     (A tap resolves it sooner, via the delegate.)
+        let now = Date()
+        let futurePendingDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> {
+                $0.resultRaw == "pending" && $0.scheduledFor > now
+            }
         )
-        if let pending = try? modelContext.fetch(descriptor), !pending.isEmpty {
-            for row in pending { modelContext.delete(row) }
+        if let futurePending = try? modelContext.fetch(futurePendingDescriptor),
+           !futurePending.isEmpty {
+            for row in futurePending { modelContext.delete(row) }
             try? modelContext.save()
         }
+
+        // Prune outcomes older than the 14-day fatigue window. Without
+        // this, every resolved row persisted forever, so the database grew
+        // monotonically and `taskFatigueCount` reloaded ever-larger result
+        // sets into the shared SwiftData identity map on every reevaluate.
+        // This was a confirmed contributor to the rapid-cycling memory
+        // jetsam.
+        //
+        // Cleanup rule (chosen to keep fatigue tracking correct):
+        //   - Cutoff: 14 days ago (same window the fatigue fetch uses).
+        //   - Delete: ANY outcome with `scheduledFor` older than the
+        //     cutoff, pending included. Pending is no longer excluded
+        //     because past-due pending rows now SURVIVE the block above —
+        //     without this they'd be the one population with no ceiling.
+        //     In practice the classifier resolves them within 90 minutes;
+        //     this is the backstop for rows that somehow never got swept.
+        //   - Keep: ALL outcomes within the last 14 days, so the per-task
+        //     fatigue counter sees complete recent history.
+        //
+        // Uses `delete(model:where:)` so rows are removed by predicate
+        // without first loading them into the context.
+        let staleCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
+        try? modelContext.delete(
+            model: NudgeOutcome.self,
+            where: #Predicate<NudgeOutcome> { $0.scheduledFor < staleCutoff }
+        )
+        try? modelContext.save()
 
         #if DEBUG
         print("[NudgeArbiter] cancelAll removed \(ids.count) pending notification(s).")
@@ -323,10 +649,22 @@ final class NudgeArbiter: NudgeArbitering {
     /// Event-block reminders: one notification per block of events spaced
     /// within `eventBlockGapHours` of each other, fired
     /// `eventReminderLeadMinutes` before the FIRST event of the block.
+    ///
+    /// Budget-exempt, so — like the morning prompt — `passesGates` skips the
+    /// shared quiet-hours/busy gates for these and the per-kind toggle has to
+    /// be checked here. `eventReminderNotificationsEnabled` was added Jul
+    /// 2026; this was the last builder with no switch of its own, so the only
+    /// way to stop event heads-ups was the master `notificationsEnabled`.
     private func buildEventBlockCandidates(
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
+        guard profile.eventReminderNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] event: SKIP — eventReminderNotificationsEnabled is off.")
+            #endif
+            return []
+        }
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: Date())
         let horizonEnd = calendar.date(byAdding: .day, value: 14, to: todayStart) ?? .distantFuture
@@ -378,11 +716,16 @@ final class NudgeArbiter: NudgeArbitering {
                 let firstID = firstEvent?.id.uuidString ?? UUID().uuidString
                 let candidateID = "\(prefix)event.\(stamp(day)).\(firstID)"
 
-                // Skip if we already scheduled this event-block reminder
-                // today. The marker means cancelAll wiped the pending
-                // request (because it was already delivered) and we
-                // shouldn't re-add a duplicate.
-                if eventReminderHistory[candidateID] != nil { continue }
+                // Skip only if this block's reminder was already DELIVERED
+                // (stored fire time in the past) — re-adding it would
+                // duplicate-fire via the ASAP fallback above. A marker with
+                // a future fire time means cancelAll wiped a still-PENDING
+                // request at the start of this reevaluate; that candidate
+                // must be rebuilt, or the reminder never fires at all.
+                if let markedFire = eventReminderHistory[candidateID],
+                   Date(timeIntervalSinceReferenceDate: markedFire) <= now {
+                    continue
+                }
 
                 let body = NudgeArbiter.eventBlockBody(block: block)
                 let tier = tier(for: firstEvent, fireDate: fireDate)
@@ -400,19 +743,32 @@ final class NudgeArbiter: NudgeArbitering {
                     importance: 1.0,
                     receptivity: 1.0,
                     countsAgainstBudget: false,
-                    estimatedMinutes: nil
+                    estimatedMinutes: nil,
+                    anchoredToUserTime: true
                 ))
             }
         }
         return candidates
     }
 
-    /// Clusters today's events into blocks. Public-ish (internal static)
-    /// so it can be unit-tested.
+    /// Clusters (task, date) pairs into blocks by chained gap. Public-ish
+    /// (internal static) so it can be unit-tested. The no-gap overload uses
+    /// the event-block gap; `buildDueSoonCandidates` reuses the same
+    /// chaining with `dueSoonBatchWindowMinutes` to batch same-hour
+    /// deadlines. (An overload, not a default argument: a default-value
+    /// expression is a nonisolated autoclosure, so it can't read the
+    /// main-actor-isolated `NudgeConfig` — the overload's body can.)
     static func clusterEvents(_ sorted: [(NudgeTask, Date)]) -> [[(NudgeTask, Date)]] {
+        clusterEvents(sorted, gapSeconds: NudgeConfig.eventBlockGapHours * 60 * 60)
+    }
+
+    static func clusterEvents(
+        _ sorted: [(NudgeTask, Date)],
+        gapSeconds: TimeInterval
+    ) -> [[(NudgeTask, Date)]] {
         guard !sorted.isEmpty else { return [] }
         var blocks: [[(NudgeTask, Date)]] = [[sorted[0]]]
-        let gap = NudgeConfig.eventBlockGapHours * 60 * 60
+        let gap = gapSeconds
         for i in 1..<sorted.count {
             let prevStart = blocks[blocks.count - 1].last!.1
             let currStart = sorted[i].1
@@ -430,7 +786,10 @@ final class NudgeArbiter: NudgeArbitering {
         fmt.dateFormat = "h:mm a"
         guard let first = block.first else { return "" }
         let firstTime = fmt.string(from: first.1)
-        let noun = eventNoun(for: first.0)
+        // The event's own name (Roman, Sep 17 2026): "Interview in 1 hour",
+        // not "Work shift in 1 hour". The category noun is only the
+        // fallback for a nameless row.
+        let noun = eventName(for: first.0)
 
         switch block.count {
         case 1:
@@ -438,16 +797,26 @@ final class NudgeArbiter: NudgeArbitering {
         case 2:
             let second = block[1]
             let secondTime = fmt.string(from: second.1)
-            return "\(noun) in 1 hour (\(firstTime)). You've also got \(second.0.title) at \(secondTime) — your morning's booked."
+            return "\(noun) in 1 hour (\(firstTime)). You've also got \(second.0.title) at \(secondTime), so your morning's booked."
         default:
             let after = block.count - 1
-            return "\(noun) in 1 hour (\(firstTime)). You've got \(after) more back-to-back after that — wrap anything else first."
+            return "\(noun) in 1 hour (\(firstTime)). You've got \(after) more back-to-back after that, so wrap anything else first."
         }
     }
 
-    /// Picks the noun for an event-block notification based on the first
-    /// event's category. Without this the body always said "Class" — wrong
-    /// when the event was a work shift or appointment.
+    /// What the event-block notification calls the event: its title,
+    /// trimmed, capitalized at the start. Falls back to the category noun
+    /// only when the title is empty, so the body never reads "in 1 hour"
+    /// with nothing in front of it.
+    private static func eventName(for task: NudgeTask) -> String {
+        let title = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstChar = title.first else { return eventNoun(for: task) }
+        return firstChar.uppercased() + title.dropFirst()
+    }
+
+    /// Category noun, the fallback for a nameless event. Before Sep 2026
+    /// this was the whole body's subject, so an "Interview" filed under
+    /// work announced itself as a work shift.
     private static func eventNoun(for task: NudgeTask) -> String {
         switch task.taskCategory {
         case .school: return "Class"
@@ -459,15 +828,482 @@ final class NudgeArbiter: NudgeArbitering {
         }
     }
 
+    /// Morning prompt — the day-opening statement of the biggest thing on
+    /// the user's list. Tapping it lands in the Home chat, where anything
+    /// they type flows through the normal brain-dump capture.
+    ///
+    /// ── IT USED TO ASK A QUESTION ─────────────────────────────────────
+    /// Until Jul 2026 the body was "What do you want to get done today?
+    /// Tell me and I'll set it up." — an open question that costs attention
+    /// and returns nothing the app can use, in the best delivery slot it
+    /// has (budget-exempt, highest morning capacity). It now names the
+    /// user's highest-stakes open task instead, so the slot carries the
+    /// day's most consequential item. **If no open task qualifies it does
+    /// not fire at all**: a contentless morning notification is worse than
+    /// silence.
+    ///
+    /// Replaces the fixed `NotificationScheduler` morning kickoff so the
+    /// decision runs through the arbiter's declarative rebuild instead of a
+    /// repeating clock trigger that fires no matter what the day looks like.
+    ///
+    /// Budget-exempt like event blocks — it's the daily anchor, not a
+    /// discretionary nudge. That also means `passesGates` skips the shared
+    /// quiet-hours/busy gates for it (they're keyed on
+    /// `countsAgainstBudget`), so this builder does its own checks:
+    ///   1. Per-kind toggle (`morningCheckInNotificationsEnabled` — the
+    ///      same Settings switch that gated the old kickoff).
+    ///   2. Day-fullness: skip when the fire day's awake window is already
+    ///      ≥ `morningPromptBusyDayThreshold` committed to events — a
+    ///      packed day doesn't need an open-ended planning ask on top.
+    ///   3. Fire-moment: skip when the fire time itself lands inside a
+    ///      busy window (early class overlapping wake+30).
+    ///
+    /// Fire time is the end of the post-wake quiet period, today if still
+    /// ahead, else tomorrow — so after delivery the next reevaluate rolls
+    /// to tomorrow's stamp-dated ID and never re-fires today's. Suppression
+    /// is evaluated against the FIRE day, not "today": an evening
+    /// reevaluate assesses tomorrow with whatever events are known now,
+    /// and the 6 AM background task re-runs it with the morning's data.
+    private func buildMorningPromptCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.morningCheckInNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — morningCheckInNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        var todayComps = calendar.dateComponents([.year, .month, .day], from: Date())
+        todayComps.hour = wakeComps.hour
+        todayComps.minute = wakeComps.minute
+        guard let todaysWake = calendar.date(from: todayComps) else { return [] }
+
+        var fireDate = todaysWake.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
+        if fireDate <= Date() {
+            fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
+        }
+
+        if let load = BusyWindowResolver.shared.dayLoad(
+            on: fireDate,
+            wake: wake,
+            bedtime: profile.bedtime,
+            modelContext: modelContext
+        ), load.busyFraction >= NudgeConfig.morningPromptBusyDayThreshold {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — fire day is \(Int(load.busyFraction * 100))% committed (threshold \(Int(NudgeConfig.morningPromptBusyDayThreshold * 100))%).")
+            #endif
+            return []
+        }
+
+        if BusyWindowResolver.shared.isBusy(at: fireDate, modelContext: modelContext) {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — fire time \(fireDate) lands inside a busy window.")
+            #endif
+            return []
+        }
+
+        // The content gate, and the only one that can silence this nudge on
+        // a completely free day: with nothing open there is nothing to name.
+        guard let named = morningPromptRanking(
+            fireDate: fireDate,
+            modelContext: modelContext
+        ).first else {
+            #if DEBUG
+            print("[NudgeArbiter] morning: SKIP — no open task to name.")
+            #endif
+            return []
+        }
+
+        #if DEBUG
+        print("[NudgeArbiter] morning: OK — will schedule morning prompt at \(fireDate) "
+            + "naming '\(named.task.title)' "
+            + "(stakes=\(named.stakes?.rawValue ?? "unclassified"), "
+            + "urgency=\(String(format: "%.2f", named.urgency))).")
+        #endif
+        return [NudgeCandidate(
+            id: "\(prefix)morning.\(stamp(calendar.startOfDay(for: fireDate)))",
+            kind: .morningPrompt,
+            fireDate: fireDate,
+            title: "Good morning",
+            body: NudgeArbiter.morningPromptBody(for: named.task, fireDate: fireDate),
+            categoryID: .morningPrompt,
+            interruption: .active,
+            // ── taskID STAYS NIL, deliberately ───────────────────────────
+            // The plan for this change asked whether setting it is free
+            // because of the classifier. In `performedAction` it IS: the
+            // `row.kind == .morningPrompt` branch returns before the
+            // `guard let taskID`, so a non-nil taskID would not change one
+            // classification.
+            //
+            // It is NOT free for the remaining `taskID` consumer, which
+            // sits inside the fatigue system that `CLAUDE.md` work order
+            // items 2 and 3 are deliberately keeping unarmed:
+            // `passesGates`' per-task fatigue check exempts kinds by
+            // `successIsObservableInApp`, and `.morningPrompt` passes that
+            // predicate — so the named task would start accumulating
+            // fatigue from a nudge that is not a push to work on it, and
+            // the user's HIGHEST-STAKES task would be the first one the
+            // gate silences.
+            //
+            // Inert while `fatigueGateEnabled` is off, which is exactly
+            // what makes setting taskID a landmine rather than a bug: it
+            // would change behaviour on the day that flag flips, for the
+            // one task least able to afford it. Attribution for this nudge
+            // comes from `debugMorningPromptImpact` instead.
+            taskID: nil,
+            tier: .normal,
+            urgency: 1.0,
+            importance: 1.0,
+            receptivity: 1.0,
+            countsAgainstBudget: false,
+            estimatedMinutes: nil,
+            namedTaskID: named.task.id
+        )]
+    }
+
+    /// One ranked row of the morning prompt's selection: the task, the
+    /// stakes it was ranked on, and the deadline-proximity tie-break.
+    private struct MorningPromptChoice {
+        let task: NudgeTask
+        let stakes: TaskStakes?
+        let urgency: Double
+    }
+
+    /// Every open task the morning prompt could name, best first.
+    ///
+    /// **Primary key is `NudgeTask.stakes`, read DIRECTLY.** `CLAUDE.md`
+    /// work order item 1 keeps stakes out of `EisenhowerScorer.importance`
+    /// until the floater baseline exists; this reads the field without
+    /// touching that call site, so scoring is bit-identical to before.
+    ///
+    /// **Ties break on deadline proximity**, via the existing logistic
+    /// urgency curve rather than a second hand-rolled ranking — evaluated
+    /// AT the fire date, matching `buildGetAheadCandidates`. A task with no
+    /// deadline scores 0: undated is the least proximate thing there is.
+    /// (Note this is NOT the floater's 0.6 undated fallback. That number
+    /// exists to let an undated task compete against OTHER KINDS inside
+    /// `pickWinners`; here the comparison is only ever within one stakes
+    /// tier, where "no deadline" should lose to "deadline".)
+    ///
+    /// **A task that has been named on the last
+    /// `morningPromptMaxConsecutiveDays` mornings running steps aside**, so
+    /// the next one down gets the slot. Stakes is a stable property of a
+    /// task, so without this the same item wins every morning until it's
+    /// done — and a notification that never changes is one the user learns
+    /// to swipe without reading.
+    ///
+    /// **The step-aside is capped at one stakes tier.** Rotation is only
+    /// worth having between tasks that could plausibly both be "the biggest
+    /// thing"; handing the slot from a high-stakes task to a `.low` one
+    /// produces "Biggest thing on your list: Clean my desk" while something
+    /// that actually matters sits open, which is the app contradicting its
+    /// own ranking in the slot the user reads first. **A repeat is better
+    /// than a false claim**, so past one tier the incumbent keeps the slot
+    /// and the notification simply repeats.
+    ///
+    /// Split out of the builder the same way `floaterTargets` was, so
+    /// `debugMorningPromptImpact` prints the REAL selection instead of a
+    /// paraphrase that can drift from it. `includeRepeatNamed: true` asks
+    /// for the pre-rule ranking, which is what makes the before/after dump
+    /// a comparison rather than an assertion.
+    private func morningPromptRanking(
+        fireDate: Date,
+        includeRepeatNamed: Bool = false,
+        modelContext: ModelContext
+    ) -> [MorningPromptChoice] {
+        // Same eligibility as every other task-naming builder: open, and
+        // not an informational calendar event. No day-scoping — "the day's
+        // biggest task" is the biggest thing on the list as of that
+        // morning, which for an undated high-stakes item is still it.
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
+        )
+        descriptor.fetchLimit = 50
+        let fetched = (try? modelContext.fetch(descriptor)) ?? []
+        // Day-integrity glue (cycle 2026-09-13-01): "the day's biggest
+        // task" must be biggest among things DOABLE that day — naming a
+        // high-stakes airport pickup five days early would spend the app's
+        // best delivery slot on something the user can't act on.
+        let open = fetched.filter { !$0.intentIsFuture(asOf: fireDate) }
+        guard !open.isEmpty else { return [] }
+
+        // The ranking with no no-repeat rule applied at all. Its first entry
+        // is the INCUMBENT — the task pure stakes says should be named.
+        let unconstrained = rankPool(open, fireDate: fireDate, modelContext: modelContext)
+        guard !includeRepeatNamed else { return unconstrained }
+        guard let incumbent = unconstrained.first else { return [] }
+
+        // ── The no-repeat rule ───────────────────────────────────────────
+        // The incumbent steps aside only if it has held the slot for
+        // `morningPromptMaxConsecutiveDays` mornings running AND there is
+        // something close enough in stakes to hand it to.
+        guard wasNamedOnRecentMornings(incumbent.task, before: fireDate) else {
+            return unconstrained
+        }
+        let fresh = open.filter { !wasNamedOnRecentMornings($0, before: fireDate) }
+        let alternatives = rankPool(fresh, fireDate: fireDate, modelContext: modelContext)
+
+        // FALLBACK ONE: nothing left to name. One open task, named twice —
+        // the rule stands down rather than letting the day's anchor go
+        // silent on the user who has exactly one thing on their list, which
+        // is the user who needs it most.
+        guard let replacement = alternatives.first else { return unconstrained }
+
+        // FALLBACK TWO: the replacement is more than one stakes tier below
+        // the incumbent. Then it isn't a replacement, it's a contradiction —
+        // "Biggest thing on your list: Clean my desk" while a high-stakes
+        // task sits open is the app arguing with its own ranking in the one
+        // slot the user reads first. A repeat is better than a false claim,
+        // so the incumbent keeps the slot.
+        //
+        // One tier, measured on `morningStakesRank`, which is why `nil`
+        // sitting between `.medium` and `.low` matters here and not just in
+        // the sort: high↔medium and nil↔low can rotate, high↔nil cannot.
+        let gap = NudgeArbiter.morningStakesRank(incumbent.stakes)
+            - NudgeArbiter.morningStakesRank(replacement.stakes)
+        guard gap <= 1 else { return unconstrained }
+
+        return alternatives
+    }
+
+    /// Ranks a pool of open tasks the morning prompt could name, best first:
+    /// top stakes tier only, ordered by deadline proximity, UUID last for
+    /// determinism.
+    ///
+    /// Split out of `morningPromptRanking` so the no-repeat rule can rank
+    /// two pools — everything, and everything-not-recently-named — with one
+    /// implementation. Comparing the two is what makes the rule's decision
+    /// checkable rather than assertable.
+    private func rankPool(
+        _ pool: [NudgeTask],
+        fireDate: Date,
+        modelContext: ModelContext
+    ) -> [MorningPromptChoice] {
+        // Only the top stakes tier can win, so the tie-break is computed for
+        // that tier alone — `DurationModel.estimate` is a SwiftData lookup
+        // and this builder previously did none.
+        let ranked = pool.map { ($0, NudgeArbiter.morningStakesRank($0.stakes)) }
+        guard let topRank = ranked.map(\.1).max() else { return [] }
+        let contenders = ranked.filter { $0.1 == topRank }.map(\.0)
+
+        return contenders
+            .map { task -> MorningPromptChoice in
+                MorningPromptChoice(
+                    task: task,
+                    stakes: task.stakes,
+                    urgency: morningDeadlineUrgency(
+                        for: task,
+                        at: fireDate,
+                        modelContext: modelContext
+                    )
+                )
+            }
+            // Final key is the UUID string — not a preference, just
+            // determinism. Without it two equally-urgent tasks swap places
+            // between runs on fetch order alone, and a notification that
+            // names a different task each reevaluate is indistinguishable
+            // from a bug.
+            .sorted {
+                $0.urgency != $1.urgency
+                    ? $0.urgency > $1.urgency
+                    : $0.task.id.uuidString < $1.task.id.uuidString
+            }
+    }
+
+    /// Whether the morning prompt named `task` on EVERY one of the
+    /// `morningPromptMaxConsecutiveDays` days immediately before
+    /// `fireDate`'s day.
+    ///
+    /// Deliberately "every one of the last N", not "any of the last N": the
+    /// rule is about an unbroken run of identical mornings. A task named
+    /// Monday and Wednesday isn't the failure mode — the user saw something
+    /// else on Tuesday.
+    ///
+    /// A missing day counts as a break, which is the forgiving reading and
+    /// the right one: a day with no prompt (busy day, quiet hours, phone
+    /// off) is not evidence the user saw this task, so it shouldn't count
+    /// toward suppressing it.
+    ///
+    /// Deadline-horizon alternative, and why this instead: a horizon would
+    /// not have solved the stated problem. Undated tasks have to stay
+    /// nameable (they're the ones most likely to rot), and they have no
+    /// deadline for a horizon to bite on — so the exact case that motivated
+    /// the rule would have been the one it couldn't reach. A horizon also
+    /// doesn't make anything *vary*: a task due in four days still wins four
+    /// mornings running.
+    private func wasNamedOnRecentMornings(_ task: NudgeTask, before fireDate: Date) -> Bool {
+        let window = NudgeConfig.morningPromptMaxConsecutiveDays
+        guard window > 0 else { return false }
+        let history = morningPromptHistory
+        guard !history.isEmpty else { return false }
+
+        let calendar = Calendar.current
+        let fireDay = calendar.startOfDay(for: fireDate)
+        let taskID = task.id.uuidString
+
+        for daysBack in 1...window {
+            guard let day = calendar.date(byAdding: .day, value: -daysBack, to: fireDay) else {
+                return false
+            }
+            if history[stamp(day)] != taskID { return false }
+        }
+        return true
+    }
+
+    /// Deadline proximity for the morning prompt's tie-break. 0 for an
+    /// undated task — see `morningPromptRanking`.
+    private func morningDeadlineUrgency(
+        for task: NudgeTask,
+        at fireDate: Date,
+        modelContext: ModelContext
+    ) -> Double {
+        guard let deadline = task.specificTime ?? task.dueDate else { return 0 }
+        let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
+        return EisenhowerScorer.urgency(
+            hoursUntilDue: deadline.timeIntervalSince(fireDate) / 3600,
+            effortHoursRemaining: Double(estimatedMinutes) / 60.0
+        )
+    }
+
+    /// Sort key for `TaskStakes` in the morning prompt's selection.
+    ///
+    /// `nil` deliberately sorts ABOVE `.low`. Nil means "never classified"
+    /// — the absence of evidence — while `.low` is a positive statement
+    /// that this one is minor, which is the strongest possible argument
+    /// against handing it the day's best delivery slot. Ranking nil last
+    /// would also be the common case rather than an edge case: stakes is
+    /// only written by the capture/import path, so most existing tasks
+    /// carry nil and the slot would go to whatever hobby item happened to
+    /// get labelled.
+    private static func morningStakesRank(_ stakes: TaskStakes?) -> Int {
+        switch stakes {
+        case .high:   return 3
+        case .medium: return 2
+        case .none:   return 1
+        case .low:    return 0
+        }
+    }
+
+    /// The morning prompt's body: a statement of what the day's biggest item
+    /// is, and when it's due.
+    ///
+    /// `DESIGN.md` tone rules this is written against — it's the first thing
+    /// the user reads each day, so all three bite at once:
+    ///   • **State the fact, don't ask.** The old copy asked a question and
+    ///     spent the slot on it.
+    ///   • **Propose, never promise.** No "do this and you'll be fine".
+    ///   • **Never imply failure — but never hide the situation either.**
+    ///     Until Aug 2026 the deadline clause was dropped entirely for
+    ///     anything already past due at the fire time, on the accusation
+    ///     reasoning — but a device pass showed the result: the prompt
+    ///     named a task due the previous day with no deadline clause at
+    ///     all, hiding a fact the user needs. The clause is now a neutral
+    ///     past-tense marker ("was due yesterday" / "was due Tuesday"):
+    ///     factual, no verdict, no clock time rubbed in.
+    private static func morningPromptBody(for task: NudgeTask, fireDate: Date) -> String {
+        let base = "Biggest thing on your list: \"\(task.title)\""
+        guard let phrase = morningDeadlinePhrase(for: task, fireDate: fireDate) else {
+            return base + "."
+        }
+        return base + ", \(phrase)."
+    }
+
+    /// "due today at 5:00 PM" / "due tomorrow" / "due Thu at 9:00 AM" /
+    /// "due Aug 14" — and, since Aug 2026, past tense for a deadline that
+    /// has already passed: "was due earlier today" / "was due yesterday" /
+    /// "was due Tuesday" / "was due Jul 20". Nil only when the task has no
+    /// deadline at all.
+    ///
+    /// The past-tense marker replaced total silence (cycle 2026-08-01-03).
+    /// Dropping the clause was designed to avoid an accusation before the
+    /// user is out of bed, but it hid a fact the user needs — the last
+    /// device pass named a task due the previous day with no clause at
+    /// all. `DESIGN.md`'s honest-about-the-situation rule is the spec:
+    /// state the fact, never the judgment. Past tense, no verdict — and
+    /// deliberately NO clock time on past phrases ("was due yesterday at
+    /// 5:00 PM" is precision in service of nothing; the plan's own
+    /// examples carry none).
+    ///
+    /// A clock time is only ever shown (on FUTURE phrases) when the task
+    /// carries a `specificTime`; a bare `dueDate` is a day, and rendering
+    /// its midnight as "at 12:00 AM" would invent a precision the task
+    /// doesn't have.
+    private static func morningDeadlinePhrase(for task: NudgeTask, fireDate: Date) -> String? {
+        guard let deadline = task.specificTime ?? task.dueDate else { return nil }
+
+        let calendar = Calendar.current
+        // "Already passed" is measured at the deadline's OWN granularity.
+        // A bare `dueDate` is a DAY, and its `Date` is that day's midnight —
+        // so an instant comparison calls anything due today "overdue" from
+        // 00:01 onwards, which would put "was due earlier today" on the
+        // single most common case there is while its day is still in
+        // progress. Only a `specificTime` gets compared as an instant.
+        let stillAhead = task.specificTime != nil
+            ? deadline > fireDate
+            : calendar.startOfDay(for: deadline) >= calendar.startOfDay(for: fireDate)
+
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "h:mm a"
+        timeFmt.locale = Locale(identifier: "en_US_POSIX")
+        let clock = task.specificTime.map { " at \(timeFmt.string(from: $0))" } ?? ""
+
+        let days = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: fireDate),
+            to: calendar.startOfDay(for: deadline)
+        ).day ?? 0
+
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "EEEE"
+        dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        let dateFmt = DateFormatter()
+        dateFmt.dateFormat = "MMM d"
+        dateFmt.locale = Locale(identifier: "en_US_POSIX")
+
+        guard stillAhead else {
+            // Same granularity ladder as the future branch, past tense,
+            // no clock.
+            switch days {
+            case 0:        return "was due earlier today"
+            case -1:       return "was due yesterday"
+            case -6...(-2): return "was due \(dayFmt.string(from: deadline))"
+            default:       return "was due \(dateFmt.string(from: deadline))"
+            }
+        }
+
+        switch days {
+        case 0:  return "due today\(clock)"
+        case 1:  return "due tomorrow\(clock)"
+        case 2...6:
+            return "due \(dayFmt.string(from: deadline))\(clock)"
+        default:
+            return "due \(dateFmt.string(from: deadline))"
+        }
+    }
+
     /// Idle / paralysis nudge — fires at wake+idleThreshold and asks "Have
     /// you gotten started on anything today?" with yes/no buttons.
     ///
-    /// Suppressed when ANY of the following happened in the 3-hour window
-    /// leading up to the fire time:
+    /// Suppressed when EITHER of the following happened in the 3-hour
+    /// window leading up to the fire time:
     ///   1. A focus session was started
     ///   2. A task was completed (CompletedTaskRecord row in window)
-    ///   3. A calendar event happened (informational event with
-    ///      specificTime in window)
+    ///
+    /// Both measure something the user actually DID. A third check — "a
+    /// calendar event falls in the window" — was removed (Jul 2026): an
+    /// event's existence is not evidence of activity, and with any morning
+    /// class inside wake→wake+3h it suppressed the check-in on every
+    /// school day — exactly the days a student needs it. After the
+    /// day-rollover below it was worse still: TOMORROW'S class suppressed
+    /// tomorrow's nudge during today's reevaluate, which the two real
+    /// activity signals can't do (sessions and completions only exist in
+    /// the past). "Don't fire during or right before class" was never this
+    /// check's to enforce — the busy-window gate in `passesGates` does
+    /// that against the candidate's fire date.
     ///
     /// Also suppressed for the rest of today if the user already tapped
     /// "Yes, I'm good" on a prior idle nudge — see `idleDismissedToday`.
@@ -475,7 +1311,12 @@ final class NudgeArbiter: NudgeArbitering {
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
-        guard profile.sessionStarterNotificationsEnabled else { return [] }
+        guard profile.sessionStarterNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — sessionStarterNotificationsEnabled is off.")
+            #endif
+            return []
+        }
         let calendar = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
         let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
@@ -488,18 +1329,43 @@ final class NudgeArbiter: NudgeArbitering {
         if fireDate <= Date() {
             fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
         }
+        #if DEBUG
+        print("[NudgeArbiter] idle: wake=\(wake) → fireDate=\(fireDate) (wake + \(NudgeConfig.idleThresholdHours)h).")
+        #endif
 
         // Suppress if user already said "Yes, I'm good" earlier today.
-        if idleDismissedToday(for: fireDate) { return [] }
+        if idleDismissedToday(for: fireDate) {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — user already tapped 'Yes, I'm good' today.")
+            #endif
+            return []
+        }
 
-        // Three-condition window check — if the user has clearly been
-        // active in the 3 hours leading up to the fire time, don't ask
-        // the question at all.
+        // Activity window check — if the user has clearly been active in
+        // the 3 hours leading up to the fire time, don't ask the question
+        // at all. Both checks measure things the user actually did.
         let windowStart = fireDate.addingTimeInterval(-NudgeConfig.idleThresholdHours * 60 * 60)
         let windowEnd = fireDate
-        if hadSessionStarted(in: windowStart...windowEnd) { return [] }
-        if hadTaskCompletion(in: windowStart...windowEnd, modelContext: modelContext) { return [] }
-        if hadCalendarEvent(in: windowStart...windowEnd, modelContext: modelContext) { return [] }
+        if hadSessionStarted(in: windowStart...windowEnd) {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — a focus session started in the pre-fire window.")
+            #endif
+            return []
+        }
+        if hadTaskCompletion(in: windowStart...windowEnd, modelContext: modelContext) {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — a task was completed in the pre-fire window.")
+            #endif
+            return []
+        }
+        #if DEBUG
+        // Before/after seam for the removed event-window rule (work-order
+        // item 5): replay the old check and say when the two rules would
+        // have disagreed, without letting it decide anything.
+        if hadCalendarEvent(in: windowStart...windowEnd, modelContext: modelContext) {
+            print("[NudgeArbiter] idle: BEFORE/AFTER — old event-window rule would have SUPPRESSED this candidate; new rule builds it (busy-window gate still applies at the fire moment).")
+        }
+        #endif
 
         // Find the highest-priority unstarted task to attach to the
         // outcome row. The notification copy itself doesn't name the task
@@ -512,17 +1378,32 @@ final class NudgeArbiter: NudgeArbitering {
             predicate: #Predicate { !$0.isComplete && !$0.isInformationalEvent }
         )
         unstartedDescriptor.fetchLimit = 50
-        let unstarted = (try? modelContext.fetch(unstartedDescriptor)) ?? []
-        guard let target = unstarted.sorted(by: { TaskSortComparator().compare($0, $1) }).first else {
+        let fetched = (try? modelContext.fetch(unstartedDescriptor)) ?? []
+        // Day-integrity glue (cycle 2026-09-13-01): a task intended for a
+        // day after the FIRE day is not "what should I start" material —
+        // keyed on the fire date like every arbiter decision, so a rolled-
+        // to-tomorrow idle nudge judges eligibility against tomorrow.
+        let unstarted = fetched.filter { !$0.intentIsFuture(asOf: fireDate) }
+        // The comparator is plan-first: the plan's next item (lowest
+        // sequenceIndex) IS the answer to "what should I start?" when a
+        // plan exists; deadline buckets rank the rest.
+        let comparator = TaskSortComparator()
+        guard let target = unstarted.min(by: { comparator.compare($0, $1) }) else {
+            #if DEBUG
+            print("[NudgeArbiter] idle: SKIP — no incomplete non-event task to attach to (add a task first).")
+            #endif
             return []
         }
+        #if DEBUG
+        print("[NudgeArbiter] idle: OK — will schedule idle nudge for '\(target.title)' at \(fireDate).")
+        #endif
 
         let estimatedMinutes = DurationModel.shared.estimate(for: target, modelContext: modelContext)
         let isDeepWork = StartByPlanner.isDeepWork(
             category: target.taskCategory,
             effortMinutes: estimatedMinutes
         )
-        let signals = NudgeIntelligence.shared.intelligence(for: target, modelContext: modelContext)
+        let signals = NudgeIntelligence.shared.cachedIntelligence(for: target, modelContext: modelContext)
 
         // Idle nudge urgency is evaluated AT the fire date, not now —
         // otherwise the score swings as the user opens the app earlier in
@@ -541,7 +1422,9 @@ final class NudgeArbiter: NudgeArbitering {
             category: target.taskCategory,
             isDeepWork: isDeepWork,
             statedUrgency: signals.statedUrgency,
-            hasDependencies: target.dependsOnTaskId != nil
+            hasDependencies: target.dependsOnTaskId != nil,
+            hasDueDate: target.hasDeadline,
+            isDueToday: target.hasDeadline && Calendar.current.isDateInToday(target.sortDeadline)
         )
 
         let idleTier = tier(for: target, fireDate: fireDate)
@@ -587,6 +1470,10 @@ final class NudgeArbiter: NudgeArbitering {
         return !hits.isEmpty
     }
 
+    #if DEBUG
+    /// DEBUG-only since Jul 2026: survives solely as the before/after seam
+    /// for the removed idle event-window rule. Nothing may consult it for a
+    /// real decision — an event's existence is not evidence of activity.
     private func hadCalendarEvent(
         in window: ClosedRange<Date>,
         modelContext: ModelContext
@@ -600,6 +1487,7 @@ final class NudgeArbiter: NudgeArbitering {
             return window.contains(start)
         }
     }
+    #endif
 
     /// True if the user already tapped "Yes, I'm good" on today's idle
     /// nudge — the marker lives in shared UserDefaults and is keyed by
@@ -626,7 +1514,28 @@ final class NudgeArbiter: NudgeArbitering {
 
     /// Get-ahead nudge — for each open task with a `recommendedStartBy` in
     /// the future, schedule a nudge at that time.
-    private func buildGetAheadCandidates(
+    /// "Start early" — the prep nudge. Fires days ahead of a deadline, on
+    /// the day `StartByPlanner` picks, at the wake+`prepAnchorHoursAfterWake`
+    /// hour. Discretionary in every dimension: counts against budget,
+    /// respects quiet hours, spacing, and fatigue (when armed). One per
+    /// task per day at most — the builder emits at most one candidate per
+    /// task, and the anchor walk lands it on a single day.
+    ///
+    /// Emitted `.getAhead` until Aug 2026, when that kind split into
+    /// `.prep` (this builder, the direct descendant) and `.dueSoon`
+    /// (`buildDueSoonCandidates` — "this is landing", ~2h before the
+    /// deadline). One builder had been serving both jobs and doing
+    /// neither well: the anchor walk meant a task due tomorrow morning
+    /// often got NO nudge at all (no anchor slot left before the due
+    /// time), while the "get ahead" framing was wrong for anything
+    /// imminent.
+    ///
+    /// Keeps `taskDueSoonNotificationsEnabled` deliberately — that toggle
+    /// has always gated this code path, so a user who turned it off was
+    /// turning off exactly these pushes. The field name now lies (the
+    /// due-soon kind reads `dueSoonReminderNotificationsEnabled`); see the
+    /// note on `UserProfile`.
+    private func buildPrepCandidates(
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
@@ -646,12 +1555,28 @@ final class NudgeArbiter: NudgeArbitering {
             guard let plan = StartByPlanner.plan(for: task, modelContext: modelContext, now: now) else {
                 continue
             }
-            let fireDate = plan.startBy
-            guard fireDate > now else { continue }
             guard let due = task.dueDate else { continue }
+            // The planner picks the DAY; `prepFireDate` picks the hour
+            // within it. Using `plan.startBy` directly is what put these
+            // nudges at 21:59–23:59 — see the note on
+            // `NudgeConfig.prepAnchorHoursAfterWake`.
+            guard let fireDate = prepFireDate(
+                startBy: plan.startBy,
+                due: due,
+                profile: profile,
+                now: now
+            ) else {
+                #if DEBUG
+                print("[NudgeArbiter] prep: SKIP '\(task.title)' — no anchored slot left before due \(due) (startBy was \(plan.startBy)).")
+                #endif
+                continue
+            }
+            #if DEBUG
+            print("[NudgeArbiter] prep: '\(task.title)' startBy=\(plan.startBy) → fire=\(fireDate) (deep=\(plan.isDeepWork), due=\(due)).")
+            #endif
 
             let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
-            let signals = NudgeIntelligence.shared.intelligence(for: task, modelContext: modelContext)
+            let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
 
             // Urgency is evaluated AT the fire date — i.e., "how urgent will
             // this be when we ask the user to start?" Picking `now` would
@@ -675,7 +1600,9 @@ final class NudgeArbiter: NudgeArbitering {
                 category: task.taskCategory,
                 isDeepWork: plan.isDeepWork,
                 statedUrgency: signals.statedUrgency,
-                hasDependencies: task.dependsOnTaskId != nil
+                hasDependencies: task.dependsOnTaskId != nil,
+                hasDueDate: task.hasDeadline,
+                isDueToday: task.hasDeadline && Calendar.current.isDateInToday(task.sortDeadline)
             )
 
             let daysOut = Calendar.current.dateComponents([.day], from: now, to: due).day ?? 0
@@ -684,20 +1611,24 @@ final class NudgeArbiter: NudgeArbitering {
             if plan.isDeepWork && daysOut > 1 {
                 body = "Your deadline is in \(daysOut) days. At one session a day that's maybe \(sessions) real shots at \"\(task.title)\". Start session 1 now?"
             } else {
-                body = "\"\(task.title)\" needs a start. Just \(min(estimatedMinutes, 25)) min — that's it."
+                body = "\"\(task.title)\" needs a start. Just \(min(estimatedMinutes, 25)) min. That's it."
             }
 
-            let getAheadTier = tier(for: task, fireDate: fireDate)
+            let prepTier = tier(for: task, fireDate: fireDate)
             candidates.append(NudgeCandidate(
-                id: "\(prefix)getAhead.\(task.id.uuidString)",
-                kind: .getAhead,
+                // No day stamp, same as the getAhead ID it replaces: the
+                // anchor walk moves the fire date forward day by day under
+                // one stable ID, and the delegate's newest-pending rule
+                // covers the reuse.
+                id: "\(prefix)prep.\(task.id.uuidString)",
+                kind: .prep,
                 fireDate: fireDate,
                 title: "Time to get ahead",
                 body: body,
-                categoryID: .getAhead,
-                interruption: getAheadTier.interruption,
+                categoryID: .prep,
+                interruption: prepTier.interruption,
                 taskID: task.id,
-                tier: getAheadTier,
+                tier: prepTier,
                 urgency: urgency,
                 importance: importance,
                 receptivity: 1.0,
@@ -708,63 +1639,328 @@ final class NudgeArbiter: NudgeArbitering {
         return candidates
     }
 
-    /// Mid-day check-in for OPEN UNDATED tasks. Get-ahead nudges require a
-    /// `dueDate` (the planner derives `startBy` from it), so chat-captured
-    /// tasks like "study for biology" never produce any get-ahead candidate.
+    /// "This is landing" — the due-soon reminder. Fires
+    /// `dueSoonLeadMinutes` (~2h) before a task's deadline, once per task.
+    /// Factual, low-pressure copy: a deadline is a fact, not a suggestion.
+    ///
+    /// **Budget-exempt like event blocks** — which also means every shared
+    /// gate in `passesGates` skips it (they're keyed on
+    /// `countsAgainstBudget`): quiet hours included, so a 4 AM deadline
+    /// produces a 2 AM reminder. Accepted deliberately in cycle
+    /// 2026-08-01-03 — the deadline exists at 4 AM whether or not the app
+    /// mentions it, and the per-kind toggle is the opt-out.
+    ///
+    /// **Batching is the one rule it must NOT skip**: tasks due within
+    /// `dueSoonBatchWindowMinutes` of each other share ONE notification
+    /// ("3 things due by 11:59 PM: …"), via the same chained clustering
+    /// event blocks use. Per-task banners bypassing spacing is the
+    /// swipe-dismiss training the arbiter was designed against.
+    ///
+    /// **Once per task** is enforced the way event blocks enforce it: a
+    /// delivered-marker map (`dueSoonHistory`) keyed by candidate ID, which
+    /// embeds the due day's stamp. `cancelAll` wipes delivered-but-pending
+    /// requests on every reevaluate; without the marker the rebuild would
+    /// re-add the same ID and refire through the ASAP fallback.
+    private func buildDueSoonCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.dueSoonReminderNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] dueSoon: SKIP — dueSoonReminderNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        var openDescriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
+        )
+        openDescriptor.fetchLimit = 50
+        let open = (try? modelContext.fetch(openDescriptor)) ?? []
+        let now = Date()
+        let calendar = Calendar.current
+        let horizonEnd = calendar.date(byAdding: .day, value: 14, to: now) ?? .distantFuture
+
+        // Dated, not yet due, inside the scheduling horizon. `sortDeadline`
+        // is the effective deadline: the explicit clock time when one
+        // exists, else end-of-day for bare due dates.
+        //
+        // Generated daily tasks (`source == "prep"`, Aug 2026; joined by
+        // `source == "commitment"`, cycle 2026-08-03-01) are excluded:
+        // their per-day due dates are self-imposed scaffolding the sweep
+        // invented, not deadlines the world will enforce — and "a
+        // deadline is a fact" is this kind's whole justification for
+        // being budget-exempt. Without this, every study day would end
+        // with a ~10 PM "due soon" banner for a synthetic midnight due.
+        let dated = open
+            .filter { $0.dueDate != nil && $0.source != "prep" && $0.source != "commitment" }
+            .map { ($0, $0.sortDeadline) }
+            .filter { $0.1 > now && $0.1 < horizonEnd }
+            .sorted { $0.1 < $1.1 }
+
+        let clusters = NudgeArbiter.clusterEvents(
+            dated,
+            gapSeconds: Double(NudgeConfig.dueSoonBatchWindowMinutes) * 60
+        )
+
+        var candidates: [NudgeCandidate] = []
+        for cluster in clusters {
+            guard let earliest = cluster.first?.1, let firstTask = cluster.first?.0 else { continue }
+
+            // Fire ahead of the EARLIEST deadline in the batch. If the lead
+            // window has already started but the deadline is still > 5 min
+            // out, fire ASAP — same fallback as event blocks, and for the
+            // same reason (a task captured inside its own lead window would
+            // otherwise get no reminder at all).
+            let leadFireDate = earliest.addingTimeInterval(
+                -Double(NudgeConfig.dueSoonLeadMinutes) * 60
+            )
+            let fireDate: Date
+            if leadFireDate > now {
+                fireDate = leadFireDate
+            } else if earliest.timeIntervalSince(now) > 5 * 60 {
+                fireDate = now.addingTimeInterval(60)
+            } else {
+                continue
+            }
+
+            let candidateID = "\(prefix)dueSoon."
+                + "\(stamp(calendar.startOfDay(for: earliest)))."
+                + firstTask.id.uuidString
+
+            // Once per task: skip a batch whose reminder was already
+            // DELIVERED (marker fire time in the past). A marker with a
+            // future fire time is a still-pending request `cancelAll` just
+            // wiped — that one must be rebuilt or it never fires.
+            if let markedFire = dueSoonHistory[candidateID],
+               Date(timeIntervalSinceReferenceDate: markedFire) <= now {
+                continue
+            }
+
+            #if DEBUG
+            print("[NudgeArbiter] dueSoon: \(cluster.count) task(s), earliest due \(earliest) → fire=\(fireDate).")
+            #endif
+
+            candidates.append(NudgeCandidate(
+                id: candidateID,
+                kind: .dueSoon,
+                fireDate: fireDate,
+                title: "Due soon",
+                body: NudgeArbiter.dueSoonBody(cluster: cluster),
+                categoryID: .dueSoon,
+                // `.normal` tier ON PURPOSE — no 🔴, no ALL CAPS, `.active`
+                // interruption. The urgency-tier escalation exists for
+                // nudges asking the user to act early; this one states a
+                // fact ~2h out, and "factual, low-pressure" is its spec.
+                interruption: NudgeUrgencyTier.normal.interruption,
+                // First task of the batch, like event blocks — the kind is
+                // structurally fatigue-blind (`successIsObservableInApp ==
+                // false`), so this feeds attribution and tap routing only.
+                taskID: firstTask.id,
+                tier: .normal,
+                urgency: 1.0,
+                importance: 1.0,
+                receptivity: 1.0,
+                countsAgainstBudget: false,
+                estimatedMinutes: nil,
+                anchoredToUserTime: true
+            ))
+        }
+        return candidates
+    }
+
+    /// Body copy for a due-soon reminder. Facts only — the deadline and
+    /// the names. No verdict, no "still time if you hurry".
+    static func dueSoonBody(cluster: [(NudgeTask, Date)]) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "h:mm a"
+        guard let first = cluster.first else { return "" }
+
+        if cluster.count == 1 {
+            return "“\(first.0.title)” is due at \(fmt.string(from: first.1))."
+        }
+
+        // Batch: "3 things due by 11:59 PM: A, B, and C." The "by" time is
+        // the LATEST deadline in the batch, so the sentence stays true for
+        // every task it names.
+        let latest = cluster.map(\.1).max() ?? first.1
+        let titles = cluster.map { "“\($0.0.title)”" }
+        let listed: String
+        switch titles.count {
+        case 2:
+            listed = "\(titles[0]) and \(titles[1])"
+        case 3:
+            listed = "\(titles[0]), \(titles[1]), and \(titles[2])"
+        default:
+            let shown = titles.prefix(3).joined(separator: ", ")
+            listed = "\(shown), and \(titles.count - 3) more"
+        }
+        return "\(cluster.count) things due by \(fmt.string(from: latest)): \(listed)."
+    }
+
+    /// Maps `StartByPlanner`'s startBy INSTANT onto a sane hour of the same
+    /// DAY: wake + `prepAnchorHoursAfterWake` on the day the planner
+    /// picked. The planner's day math is untouched — only where in the day
+    /// the nudge lands.
+    ///
+    /// ── ROLLOVER ──────────────────────────────────────────────────────
+    /// `buildMorningPromptCandidates`, `buildIdleCandidates` and
+    /// `buildFloaterCheckInCandidates` all share one idiom: compute
+    /// today's wake-anchored time, and `if fireDate <= now` add exactly
+    /// one day. One day is always enough for them because their anchor day
+    /// is *today* by definition.
+    /// Prep's anchor day is derived from the deadline instead, so this
+    /// generalises the same idiom into a bounded walk forward — same
+    /// behaviour, just able to step more than once.
+    ///
+    /// The walk stops at the due date. Rolling past it would schedule a
+    /// "get ahead" nudge for something already overdue, which is a
+    /// different notification with a different message; returning nil lets
+    /// the caller skip the task rather than send the wrong nudge. In
+    /// practice the loop runs at most twice: any day strictly after today
+    /// has its anchor in the future.
+    private func prepFireDate(
+        startBy: Date,
+        due: Date,
+        profile: UserProfile,
+        now: Date
+    ) -> Date? {
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        let offset = NudgeConfig.prepAnchorHoursAfterWake * 60 * 60
+
+        func anchor(on day: Date) -> Date? {
+            var comps = calendar.dateComponents([.year, .month, .day], from: day)
+            comps.hour = wakeComps.hour
+            comps.minute = wakeComps.minute
+            guard let dayWake = calendar.date(from: comps) else { return nil }
+            return dayWake.addingTimeInterval(offset)
+        }
+
+        let lastDay = calendar.startOfDay(for: due)
+        // `StartByPlanner` already clamps startBy to `now`, so this is
+        // normally a no-op — but the walk's bound reads clearer when the
+        // start can't be in the past regardless of what the planner did.
+        var day = max(calendar.startOfDay(for: startBy), calendar.startOfDay(for: now))
+
+        while day <= lastDay {
+            // `< due` matters on the due date itself: a task due at 08:00
+            // has no useful anchor at wake+2h, and firing after the
+            // deadline would be actively wrong.
+            if let candidate = anchor(on: day), candidate > now, candidate < due {
+                return candidate
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return nil }
+            day = next
+        }
+        return nil
+    }
+
+    /// Mid-day check-in for OPEN UNDATED tasks. Prep and due-soon nudges
+    /// require a `dueDate` (the planner derives `startBy` from it), so
+    /// chat-captured tasks like "study for biology" never produce either.
     /// Without this builder the user gets ONE idle nudge in the morning and
     /// then silence until bedtime — exactly the symptom of "the app doesn't
     /// ask if I'm working on something important."
     ///
-    /// Fires at today's wake + 6 hours for every undated open task; the
-    /// daily budget + min-spacing in `pickWinners` collapses it to the
-    /// top-scoring one.
+    /// Fires at wake + `floaterCheckInHoursAfterWake` for every undated open
+    /// task; the daily budget + min-spacing in `pickWinners` collapses it to
+    /// the top-scoring one.
+    ///
+    /// Emits `.floater`, NOT `.getAhead`. It used to emit `.getAhead` — same
+    /// kind, same category as `buildGetAheadCandidates` — which meant the two
+    /// features' rows were indistinguishable in `NudgeOutcome` and neither
+    /// could be measured. Its toggle was split off the same way: this reads
+    /// `floaterCheckInNotificationsEnabled`, where it used to share
+    /// `taskDueSoonNotificationsEnabled` with get-ahead.
+    ///
+    /// ── ROLLOVER ──────────────────────────────────────────────────────
+    /// Now the same idiom as `buildMorningPromptCandidates` and
+    /// `buildIdleCandidates`: compute today's wake-anchored time, and
+    /// `if fireDate <= now` add one day.
+    /// This builder used to be the odd one out — it gave up with
+    /// `guard fireDate > Date() else { return [] }`, which is why `.floater`
+    /// has never appeared in an outcome dump. `cancelAll` runs FIRST on
+    /// every reevaluate, so any reevaluate past the anchor deleted the
+    /// morning's scheduled check-in and then rebuilt nothing in its place.
+    /// For a user who mostly opens the app in the afternoon or evening the
+    /// nudge was unreachable, not merely rare.
+    ///
+    /// One day is always enough here, same as for morning and idle: the
+    /// anchor day is *today* by definition (unlike prep, whose anchor
+    /// derives from a deadline and so needs the bounded walk in
+    /// `prepFireDate`).
+    ///
+    /// Rolling is safe against double-firing without a delivered-marker like
+    /// `eventReminderHistory`. The candidate ID embeds the FIRE day's stamp,
+    /// so once today's anchor passes the rebuild carries tomorrow's ID —
+    /// it can never re-add the ID the OS already delivered today.
     private func buildFloaterCheckInCandidates(
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
-        guard profile.taskDueSoonNotificationsEnabled else { return [] }
+        guard profile.floaterCheckInNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] floater: SKIP — floaterCheckInNotificationsEnabled is off.")
+            #endif
+            return []
+        }
         let calendar = Calendar.current
-        let wake = profile.wakeTime ?? profile.morningCheckInTime
-        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
-        var todayComps = calendar.dateComponents([.year, .month, .day], from: Date())
-        todayComps.hour = wakeComps.hour
-        todayComps.minute = wakeComps.minute
-        guard let todaysWake = calendar.date(from: todayComps) else { return [] }
-        let fireDate = todaysWake.addingTimeInterval(6 * 60 * 60)
-        guard fireDate > Date() else { return [] }
+        guard var fireDate = floaterAnchor(on: Date(), profile: profile) else { return [] }
+        if fireDate <= Date() {
+            fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
+        }
 
-        var floaterDescriptor = FetchDescriptor<NudgeTask>(
-            predicate: #Predicate<NudgeTask> { task in
-                !task.isComplete && !task.isInformationalEvent && task.dueDate == nil
-            }
+        let targeting = floaterTargets(
+            fireDate: fireDate,
+            excludePlacedOnFireDay: true,
+            modelContext: modelContext
         )
-        floaterDescriptor.fetchLimit = 50
-        let floaters = (try? modelContext.fetch(floaterDescriptor)) ?? []
+        let candidateTasks = targeting.targets
+        guard !candidateTasks.isEmpty else {
+            #if DEBUG
+            if targeting.placedOut.isEmpty {
+                print("[NudgeArbiter] floater: SKIP — no open undated task to check in about.")
+            } else {
+                print("[NudgeArbiter] floater: SKIP — every open undated task is already "
+                    + "placed on the fire day's timeline (\(targeting.placedOut.count)).")
+            }
+            #endif
+            return []
+        }
+        #if DEBUG
+        print("[NudgeArbiter] floater: fireDate=\(fireDate) "
+            + "(wake + \(NudgeConfig.floaterCheckInHoursAfterWake)h) — "
+            + "\(candidateTasks.count) target(s), "
+            + "\(targeting.placedOut.count) excluded as already placed.")
+        #endif
 
         var candidates: [NudgeCandidate] = []
-        for task in floaters {
+        for task in candidateTasks {
             let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
             let isDeepWork = StartByPlanner.isDeepWork(
                 category: task.taskCategory,
                 effortMinutes: estimatedMinutes
             )
-            let signals = NudgeIntelligence.shared.intelligence(for: task, modelContext: modelContext)
+            let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
             let importance = EisenhowerScorer.importance(
                 category: task.taskCategory,
                 isDeepWork: isDeepWork,
                 statedUrgency: signals.statedUrgency,
-                hasDependencies: task.dependsOnTaskId != nil
+                hasDependencies: task.dependsOnTaskId != nil,
+                hasDueDate: task.hasDeadline,
+                isDueToday: task.hasDeadline && Calendar.current.isDateInToday(task.sortDeadline)
             )
 
             let cTier = tier(for: task, fireDate: fireDate)
-            let body = "'\(task.title)' is still open. Just \(min(estimatedMinutes, 25)) min — start there?"
+            let body = "'\(task.title)' is still open. Just \(min(estimatedMinutes, 25)) min. Start there?"
             candidates.append(NudgeCandidate(
                 id: "\(prefix)floater.\(stamp(calendar.startOfDay(for: fireDate))).\(task.id.uuidString)",
-                kind: .getAhead,
+                kind: .floater,
                 fireDate: fireDate,
                 title: "Are you working on something?",
                 body: body,
-                categoryID: .getAhead,
+                categoryID: .floater,
                 interruption: cTier.interruption,
                 taskID: task.id,
                 tier: cTier,
@@ -780,82 +1976,708 @@ final class NudgeArbiter: NudgeArbitering {
         return candidates
     }
 
-    /// Break-it-down offer — only kicks in for a task that's been nudged
-    /// `perTaskMaxNudges` times without action. Replaces further pushes for
-    /// that task.
-    private func buildBreakItDownCandidates(
+    /// The floater check-in's fire-time anchor on `day`: that day's wake
+    /// clock time + `floaterCheckInHoursAfterWake`. Only the hour/minute of
+    /// the profile's wake time are read, so any day can be anchored.
+    private func floaterAnchor(on day: Date, profile: UserProfile) -> Date? {
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        var comps = calendar.dateComponents([.year, .month, .day], from: day)
+        comps.hour = wakeComps.hour
+        comps.minute = wakeComps.minute
+        guard let dayWake = calendar.date(from: comps) else { return nil }
+        return dayWake.addingTimeInterval(
+            NudgeConfig.floaterCheckInHoursAfterWake * 60 * 60
+        )
+    }
+
+    /// Which open undated tasks the floater check-in should target for a
+    /// nudge firing at `fireDate`, plus the ones it deliberately dropped.
+    ///
+    /// Split out of `buildFloaterCheckInCandidates` so the DEBUG before/after
+    /// dump can ask for the OLD targeting (`excludePlacedOnFireDay: false`)
+    /// against the exact code the builder runs, rather than a paraphrase of
+    /// it that can drift.
+    ///
+    /// ── WHY PLACED TASKS ARE EXCLUDED ─────────────────────────────────
+    /// The fetch is `!isComplete && !isInformationalEvent && dueDate == nil
+    /// && intendedDate not today-or-future` (the intent clause is cycle
+    /// 2026-09-03-01) and used to stop there — it never looked at
+    /// `plannedStartDate`. But
+    /// `planMyDay()` places open non-event tasks including undated ones, and
+    /// so does manual placement, so the check-in would announce that a task
+    /// "is still open" at 14:00 when the user has it on the timeline for
+    /// 16:00. A task on the timeline is not floating.
+    ///
+    /// Scoped to the FIRE DAY, not `plannedStartDate != nil`. A placement is
+    /// a slot on one specific day (`PlacementRollover` clears them once that
+    /// day has passed), so the only question that matters is whether the task
+    /// is on the timeline for the day the nudge will actually fire — a
+    /// blanket nil-check would also exclude tasks placed on a DIFFERENT day
+    /// than the one being evaluated.
+    ///
+    /// Exclusion runs BEFORE the plan-next collapse on purpose: picking the
+    /// lowest `sequenceIndex` first and filtering after would return nothing
+    /// whenever the plan's next item happens to be placed, even with other
+    /// unplaced plan floaters available.
+    private func floaterTargets(
+        fireDate: Date,
+        excludePlacedOnFireDay: Bool,
+        modelContext: ModelContext
+    ) -> (targets: [NudgeTask], placedOut: [NudgeTask]) {
+        // "Floating" = no deadline AND no intent day still ahead (cycle
+        // 2026-09-03-01). A task intended for Friday isn't "whenever" work
+        // before Friday — but once its fire-day dawns with the intent day
+        // behind it, the slipped intention is exactly what a check-in is
+        // for. `distantPast` stands in for nil so nil-intent tasks pass the
+        // comparison (the #Predicate macro can't unwrap optionals).
+        let fireDayStart = Calendar.current.startOfDay(for: fireDate)
+        let distantPastSentinel = Date.distantPast
+        var floaterDescriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { task in
+                !task.isComplete && !task.isInformationalEvent
+                    && task.dueDate == nil
+                    && (task.intendedDate ?? distantPastSentinel) < fireDayStart
+            }
+        )
+        floaterDescriptor.fetchLimit = 50
+        let floaters = (try? modelContext.fetch(floaterDescriptor)) ?? []
+
+        let calendar = Calendar.current
+        var eligible = floaters
+        var placedOut: [NudgeTask] = []
+        if excludePlacedOnFireDay {
+            placedOut = floaters.filter { task in
+                guard let placed = task.plannedStartDate else { return false }
+                return calendar.isDate(placed, inSameDayAs: fireDate)
+            }
+            let placedIDs = Set(placedOut.map(\.id))
+            eligible = floaters.filter { !placedIDs.contains($0.id) }
+        }
+
+        // If the user has an ordered plan, the check-in should point at the
+        // plan's NEXT item (lowest sequenceIndex) rather than an arbitrary
+        // undated task. Otherwise fall back to all floaters.
+        let planFloaters = eligible.filter { $0.sequenceIndex != nil }
+        if let planNext = planFloaters.min(by: { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }) {
+            return (targets: [planNext], placedOut: placedOut)
+        }
+        return (targets: eligible, placedOut: placedOut)
+    }
+
+    /// The come-back nudge (cycle 2026-08-03-03): one candidate at
+    /// `lastEngagement + comeBackAfterDays`, wake-anchored. Scheduled on
+    /// EVERY reevaluate — the declarative rebuild is the suppression
+    /// mechanism: any engagement triggers a reevaluate soon after (app
+    /// open, notification response, completion), which cancels and
+    /// re-schedules it another `comeBackAfterDays` out. It only ever FIRES
+    /// when nothing pushed it forward — exactly the user who has been away.
+    ///
+    /// ── AWAY MEANS ────────────────────────────────────────────────────
+    /// No app open (`AppOpenLog`), no notification response (`NudgeOutcome`
+    /// rows with a tapped result — a user acting on nudges without opening
+    /// the app is a user the app is WORKING for), no task checked off
+    /// (`CompletedTaskRecord`, which widget completions also write).
+    /// `.dismissed` deliberately doesn't count: swiping a banner away is
+    /// clearing noise, not the app working. The anchor is computed from
+    /// that evidence, not from "now" — a background-task reevaluate on day
+    /// 2 of an absence must NOT push the fire date out.
+    ///
+    /// ── COPY ──────────────────────────────────────────────────────────
+    /// Factual and forward-looking, about what's COMING — never the
+    /// absence ("Chem quiz Friday" is a reason to come back; "you haven't
+    /// opened Nudge in three days" is a reproach with nothing to act on).
+    /// The template names the next upcoming event or deadline inside
+    /// `comeBackLookaheadDays`; with nothing upcoming it states the open
+    /// count; with no open work at all it stands down (a contentless
+    /// notification is worse than silence — morning-prompt precedent).
+    /// Day names are absolute (weekday), never "today"/"tomorrow": the
+    /// body is baked ~3 days before it fires. Cached AI copy (kind
+    /// `.comeBack`) rides the normal `resolvedBody` swap.
+    ///
+    /// Discretionary (`countsAgainstBudget: true`), so quiet hours, busy
+    /// windows, budget, and spacing all apply. Event-block reminders are
+    /// untouchable by construction: they bypass the budget and pass
+    /// straight through `pickWinners` before any discretionary candidate
+    /// is even considered, so nothing here can suppress them.
+    private func buildComeBackCandidates(
         profile: UserProfile,
         modelContext: ModelContext
     ) -> [NudgeCandidate] {
-        guard profile.deadlinePrepNotificationsEnabled else { return [] }
-        let descriptor = FetchDescriptor<NudgeOutcome>()
-        let outcomes = (try? modelContext.fetch(descriptor)) ?? []
+        guard profile.comeBackNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] comeBack: SKIP — comeBackNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        let now = Date()
+        let calendar = Calendar.current
 
-        var ignoredCountByTask: [UUID: Int] = [:]
-        for outcome in outcomes {
-            guard let taskID = outcome.taskID else { continue }
-            if outcome.result == .ignored || outcome.result == .dismissed {
-                ignoredCountByTask[taskID, default: 0] += 1
-            } else if outcome.result == .tappedStart {
-                // Reset the count on success.
-                ignoredCountByTask[taskID] = 0
+        // Last engagement: the newest of the three signals.
+        var lastEngagement = AppOpenLog.timestamps().last ?? now
+        var completionDescriptor = FetchDescriptor<CompletedTaskRecord>(
+            sortBy: [SortDescriptor(\.completedAt, order: .reverse)]
+        )
+        completionDescriptor.fetchLimit = 1
+        if let completion = (try? modelContext.fetch(completionDescriptor))?.first {
+            lastEngagement = max(lastEngagement, completion.completedAt)
+        }
+        let tappedRaws = [
+            NudgeOutcomeResult.tappedStart.rawValue,
+            NudgeOutcomeResult.tappedOpen.rawValue,
+            NudgeOutcomeResult.tappedSnooze.rawValue
+        ]
+        var responseDescriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> { tappedRaws.contains($0.resultRaw) },
+            sortBy: [SortDescriptor(\.actedAt, order: .reverse)]
+        )
+        responseDescriptor.fetchLimit = 5
+        for row in (try? modelContext.fetch(responseDescriptor)) ?? [] {
+            if let actedAt = row.actedAt {
+                lastEngagement = max(lastEngagement, actedAt)
             }
         }
 
-        let candidates: [NudgeCandidate] = ignoredCountByTask
-            .filter { $0.value >= NudgeConfig.perTaskMaxNudges }
-            .compactMap { (taskID, _) -> NudgeCandidate? in
-                let taskDescriptor = FetchDescriptor<NudgeTask>(
-                    predicate: #Predicate<NudgeTask> { $0.id == taskID }
-                )
-                guard let task = (try? modelContext.fetch(taskDescriptor))?.first,
-                      !task.isComplete else { return nil }
+        // Fire on day lastEngagement + comeBackAfterDays at wake +
+        // comeBackAnchorHoursAfterWake — the same bounded-walk idiom as
+        // `prepFireDate`: if that anchor has already passed (deep absence
+        // + a background-task reevaluate), roll forward to the next one.
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        func anchor(on day: Date) -> Date? {
+            var comps = calendar.dateComponents([.year, .month, .day], from: day)
+            comps.hour = wakeComps.hour
+            comps.minute = wakeComps.minute
+            guard let dayWake = calendar.date(from: comps) else { return nil }
+            return dayWake.addingTimeInterval(NudgeConfig.comeBackAnchorHoursAfterWake * 60 * 60)
+        }
+        guard var day = calendar.date(
+            byAdding: .day,
+            value: NudgeConfig.comeBackAfterDays,
+            to: calendar.startOfDay(for: lastEngagement)
+        ) else { return [] }
+        var fireDate: Date? = nil
+        for _ in 0..<7 {
+            if let candidate = anchor(on: day), candidate > now {
+                fireDate = candidate
+                break
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        guard let fireDate else { return [] }
 
-                let calendar = Calendar.current
-                let wake = profile.wakeTime ?? profile.morningCheckInTime
-                let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
-                var todayComps = calendar.dateComponents([.year, .month, .day], from: Date())
-                todayComps.hour = wakeComps.hour
-                todayComps.minute = wakeComps.minute
-                guard var fireDate = calendar.date(from: todayComps) else { return nil }
-                fireDate = fireDate.addingTimeInterval(4 * 60 * 60)
-                if fireDate <= Date() {
-                    fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
+        // Copy needs only one fact: does open work exist? Roman's ruling
+        // (Sep 2026): the come-back never names a task, and it speaks even
+        // to an empty list — an invitation to plan is still content, so
+        // the old nothing-to-say stand-down is gone with the old copy.
+        var openDescriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
+        )
+        openDescriptor.fetchLimit = 100
+        let openTasks = (try? modelContext.fetch(openDescriptor)) ?? []
+
+        #if DEBUG
+        print("[NudgeArbiter] comeBack: lastEngagement=\(lastEngagement) → fire=\(fireDate)"
+            + " (\(openTasks.isEmpty ? "empty list, plan copy" : "\(openTasks.count) open, tasks copy"))")
+        #endif
+
+        return [NudgeCandidate(
+            id: "\(prefix)comeBack.\(stamp(calendar.startOfDay(for: fireDate)))",
+            kind: .comeBack,
+            fireDate: fireDate,
+            title: "Looking ahead",
+            body: NudgeArbiter.comeBackBody(openCount: openTasks.count),
+            categoryID: .comeBack,
+            interruption: NudgeUrgencyTier.normal.interruption,
+            // No taskID: the nudge is about the whole list, and pointing
+            // the fatigue system at whatever it happens to name would
+            // count an ignored come-back against exactly the wrong task
+            // (the morning prompt's reasoning, same solution).
+            taskID: nil,
+            tier: .normal,
+            urgency: 0.6,
+            importance: 0.6,
+            receptivity: 1.0,
+            countsAgainstBudget: true,
+            estimatedMinutes: nil,
+            namedTaskID: nil
+        )]
+    }
+
+    /// The come-back's body, Roman's words (Sep 2026): short, warm, and it
+    /// NEVER names a task. Two states only. Never AI-swapped (the copy
+    /// cache skips this kind). Edit these strings with Roman, not for him.
+    static func comeBackBody(openCount: Int) -> String {
+        if openCount > 0 {
+            return "Come back, you have some tasks to complete!"
+        }
+        return "Come back! There's got to be something you need to plan."
+    }
+
+
+    /// Goal-lapse bait (cycle 2026-08-04-03) — fires when a personal goal
+    /// has gone `NudgeConfig.goalLapseAfterDays` without activity. The
+    /// notification is deliberately near-contentless BAIT: short, template-
+    /// only, never AI copy, doesn't even name the goal — the weight belongs
+    /// to the message box the tap opens (the hook), which knows the goal
+    /// through the userInfo `goalID`.
+    ///
+    /// Come-back mechanics: the fire date derives from the goal's own
+    /// evidence — `lastActivityAt`, or `createdAt` for the never-started
+    /// zero case — so recorded activity pushes it out on every rebuild and
+    /// it only ever FIRES when a month truly passed. Two wallpaper guards
+    /// on top: the per-goal delivered map (`goalLapseHistory`) enforces
+    /// `goalLapseMinDaysBetweenPerGoal` even when nothing changes, and the
+    /// builder emits ONE candidate per run (the earliest-due goal), so two
+    /// lapsed goals can never land the same day.
+    ///
+    /// Discretionary in every dimension — a month-old lapse has no clock
+    /// urgency; it can wait out quiet hours, busy windows, and the budget.
+    private func buildGoalLapseCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.goalLapseNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] goalLapse: SKIP — goalLapseNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+
+        let now = Date()
+        let calendar = Calendar.current
+        var goalDescriptor = FetchDescriptor<NudgeGoal>(
+            predicate: #Predicate<NudgeGoal> { $0.isActive }
+        )
+        goalDescriptor.fetchLimit = 50
+        let goals = (try? modelContext.fetch(goalDescriptor)) ?? []
+        guard !goals.isEmpty else { return [] }
+
+        let history = goalLapseHistory
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        func anchor(on day: Date) -> Date? {
+            var comps = calendar.dateComponents([.year, .month, .day], from: day)
+            comps.hour = wakeComps.hour
+            comps.minute = wakeComps.minute
+            guard let dayWake = calendar.date(from: comps) else { return nil }
+            return dayWake.addingTimeInterval(NudgeConfig.goalLapseAnchorHoursAfterWake * 60 * 60)
+        }
+
+        // Each goal's earliest legitimate fire instant: a full lapse past
+        // its evidence date AND a full cap interval past its last delivery.
+        var best: (goal: NudgeGoal, fireDate: Date, lapseStart: Date)? = nil
+        for goal in goals {
+            let lapseStart = goal.lastActivityAt ?? goal.createdAt
+            guard var day = calendar.date(
+                byAdding: .day,
+                value: NudgeConfig.goalLapseAfterDays,
+                to: calendar.startOfDay(for: lapseStart)
+            ) else { continue }
+            // The cap binds only once the recorded instant has PASSED —
+            // i.e. the bait was actually delivered. A future marker just
+            // means the pending request `cancelAll` wiped moments ago;
+            // treating that as "sent" would push the fire date another
+            // month on every rebuild and the bait would never fire.
+            if let lastFire = history[goal.id.uuidString],
+               lastFire <= now.timeIntervalSinceReferenceDate {
+                let last = Date(timeIntervalSinceReferenceDate: lastFire)
+                if let capDay = calendar.date(
+                    byAdding: .day,
+                    value: NudgeConfig.goalLapseMinDaysBetweenPerGoal,
+                    to: calendar.startOfDay(for: last)
+                ), capDay > day {
+                    day = capDay
                 }
+            }
+            // Same bounded walk as the come-back: if the anchor already
+            // passed (long-lapsed goal, mid-evening reevaluate), roll to
+            // the next day's anchor rather than firing into the past.
+            var fireDate: Date? = nil
+            for _ in 0..<7 {
+                if let candidate = anchor(on: day), candidate > now {
+                    fireDate = candidate
+                    break
+                }
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
+            }
+            guard let fireDate else { continue }
+            if best == nil || fireDate < best!.fireDate {
+                best = (goal, fireDate, lapseStart)
+            }
+        }
+        guard let (goal, fireDate, lapseStart) = best else { return [] }
 
-                // Break-it-down is intentionally calmer in tone — always
-                // .normal so it doesn't read as urgent pressure. Urgency is
-                // forced low (0.3) so a genuinely-urgent candidate beats
-                // it inside `pickWinners`; importance still comes from the
-                // task's category/dependency/statedUrgency signals so a
-                // stuck exam-prep task outranks a stuck errand at the
-                // same urgency.
-                let signals = NudgeIntelligence.shared.intelligence(for: task, modelContext: modelContext)
-                let importance = EisenhowerScorer.importance(
-                    category: task.taskCategory,
-                    isDeepWork: false,
-                    statedUrgency: signals.statedUrgency,
-                    hasDependencies: task.dependsOnTaskId != nil
+        #if DEBUG
+        let neverWorked = goal.lastActivityAt == nil
+        print("[NudgeArbiter] goalLapse: \"\(goal.title)\" lapseStart=\(lapseStart)"
+            + (neverWorked ? " (never worked — runs from creation)" : "")
+            + " → fire=\(fireDate)"
+            + (history[goal.id.uuidString] != nil ? " (monthly cap applied)" : ""))
+        #endif
+
+        return [NudgeCandidate(
+            id: "\(prefix)goalLapse.\(stamp(calendar.startOfDay(for: fireDate))).\(goal.id.uuidString)",
+            kind: .goalLapse,
+            fireDate: fireDate,
+            // The bait says almost nothing on purpose — no elapsed time,
+            // no goal name, and an explicit nothing's-wrong so an anxious
+            // user doesn't brace for bad news. The message box delivers
+            // the real message.
+            title: "Got a minute?",
+            body: "Nothing's wrong. There's just something worth a look when you have a moment.",
+            categoryID: .goalLapse,
+            interruption: NudgeUrgencyTier.normal.interruption,
+            // No taskID: the nudge is about a goal, not a task, and the
+            // fatigue system must never attribute an ignored bait to
+            // whatever task happens to be linked (morning-prompt rule).
+            taskID: nil,
+            tier: .normal,
+            // No clock urgency; high importance — a stated personal goal
+            // is the definition of the importance axis. Constants, not
+            // scorer-derived (stakes stays unarmed, work order §1).
+            urgency: 0.3,
+            importance: 0.75,
+            receptivity: 1.0,
+            countsAgainstBudget: true,
+            estimatedMinutes: nil,
+            goalID: goal.id
+        )]
+    }
+
+    /// Placement heads-up — the transition warning `placementLeadMinutes`
+    /// before a timeline slot (cycle 2026-08-04-02). Placements close
+    /// together share ONE notification via the same chained clustering
+    /// event blocks use, under placement's own gap constant
+    /// (`placementClusterGapHours` — same value as events today, but
+    /// planner slots pack tighter than calendar events, so the two must be
+    /// tunable apart). Without clustering, a four-task timeline would fire
+    /// four warnings and exhaust the budget before anything else ran.
+    ///
+    /// Discretionary in every dimension (budget, quiet hours, busy
+    /// windows, spacing) — the plan is the app's own proposal, not a fact
+    /// the world enforces, so it doesn't get the event-block exemption.
+    ///
+    /// NO ASAP fallback, deliberately unlike event blocks: a heads-up
+    /// delivered after the slot has started is the wrong message, and
+    /// everything past the slot belongs to `buildPlacementMissedCandidates`.
+    /// That also makes the once-only rule structural — once the fire time
+    /// is in the past the candidate simply isn't rebuilt — so no
+    /// delivered-marker map is needed.
+    private func buildPlacementLeadCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.placementLeadNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] placementLead: SKIP — placementLeadNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> {
+                !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate != nil
+            }
+        )
+        descriptor.fetchLimit = 50
+        let placed = (try? modelContext.fetch(descriptor)) ?? []
+        guard !placed.isEmpty else { return [] }
+
+        let now = Date()
+        let calendar = Calendar.current
+        // Placements are today-or-later by invariant (`PlacementRollover`),
+        // and today-only in practice; grouping by day keeps the builder
+        // correct if a future-day placement path ever appears.
+        let byDay = Dictionary(grouping: placed) { task in
+            calendar.startOfDay(for: task.plannedStartDate ?? .distantFuture)
+        }
+
+        var candidates: [NudgeCandidate] = []
+        for (day, tasks) in byDay {
+            let slots = tasks
+                .compactMap { task -> (NudgeTask, Date)? in
+                    guard let slot = task.plannedStartDate else { return nil }
+                    return (task, slot)
+                }
+                .sorted { $0.1 < $1.1 }
+            let blocks = NudgeArbiter.clusterEvents(
+                slots,
+                gapSeconds: NudgeConfig.placementClusterGapHours * 60 * 60
+            )
+
+            for block in blocks {
+                guard let first = block.first else { continue }
+                let fireDate = first.1.addingTimeInterval(
+                    -Double(NudgeConfig.placementLeadMinutes) * 60
                 )
+                guard fireDate > now else { continue }
+
+                let task = first.0
                 let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
-                return NudgeCandidate(
-                    id: "\(prefix)breakDown.\(task.id.uuidString)",
-                    kind: .breakItDown,
+                let urgency = max(
+                    NudgeConfig.placementUrgencyFloor,
+                    placementDeadlineUrgency(for: task, at: fireDate, estimatedMinutes: estimatedMinutes)
+                )
+                let importance = placementImportance(
+                    for: task,
+                    estimatedMinutes: estimatedMinutes,
+                    modelContext: modelContext
+                )
+                #if DEBUG
+                print("[NudgeArbiter] placementLead: \(block.count) slot(s) from \(first.1) → fire=\(fireDate).")
+                #endif
+                let leadTier = tier(for: task, fireDate: fireDate)
+                candidates.append(NudgeCandidate(
+                    id: "\(prefix)placementLead.\(stamp(day)).\(task.id.uuidString)",
+                    kind: .placementLead,
                     fireDate: fireDate,
-                    title: "Let's break this down",
-                    body: "\"\(task.title)\" has been sitting for a while. It's probably too big in your head. Want me to break it into steps?",
-                    categoryID: .breakDown,
-                    interruption: .active,
+                    title: "Coming up",
+                    body: NudgeArbiter.placementLeadBody(block: block),
+                    categoryID: .placementLead,
+                    interruption: leadTier.interruption,
                     taskID: task.id,
-                    tier: .normal,
-                    urgency: 0.3,
+                    tier: leadTier,
+                    urgency: urgency,
                     importance: importance,
                     receptivity: 1.0,
                     countsAgainstBudget: true,
-                    estimatedMinutes: estimatedMinutes
+                    estimatedMinutes: estimatedMinutes,
+                    anchoredToUserTime: !first.0.plannedIsAuto
+                ))
+            }
+        }
+        return candidates
+    }
+
+    /// Body copy for a placement heads-up. Facts only: the slots and their
+    /// times, exactly as the user (or the planner they accepted) set them.
+    static func placementLeadBody(block: [(NudgeTask, Date)]) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "h:mm a"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        guard let first = block.first else { return "" }
+        let head = "“\(first.0.title)” is set for \(fmt.string(from: first.1))"
+
+        switch block.count {
+        case 1:
+            return head + "."
+        case 2:
+            let second = block[1]
+            return head + ", then “\(second.0.title)” at \(fmt.string(from: second.1))."
+        default:
+            let second = block[1]
+            let more = block.count - 2
+            return head + ", then “\(second.0.title)” at \(fmt.string(from: second.1)) "
+                + "and \(more) more after that."
+        }
+    }
+
+    /// Missed-placement follow-up — a planned slot passed and the task is
+    /// still open (cycle 2026-08-04-02). This is the kind that fixes the
+    /// cycle's originating symptom: two tasks placed on the timeline,
+    /// untouched all day, and the app said nothing — no builder fired on a
+    /// placement passing unstarted (the only notification-path read of
+    /// `plannedStartDate` was the floater EXCLUDING placed tasks).
+    ///
+    /// ── THE SERIES ────────────────────────────────────────────────────
+    /// Attempts are anchored to the SLOT, not to `now`: slot +
+    /// `placementMissedGraceMinutes`, then every
+    /// `placementMissedRepeatMinutes`, capped at
+    /// `placementMissedMaxAttempts` and clipped to the slot's own day.
+    /// The whole series is handed to the OS up front, so it keeps
+    /// delivering when the app never runs again that day — the exact user
+    /// this kind exists for. Every data-driven reevaluate rebuilds it:
+    /// completing or unscheduling the task removes it from the predicate
+    /// and `cancelAll` wipes the pending remainder. `PlacementRollover`
+    /// ends any survivor at midnight by clearing the placement itself.
+    ///
+    /// ── CATCH-UP ──────────────────────────────────────────────────────
+    /// A slot can pass with no attempt ever delivered — placing a task
+    /// onto an already-past slot is the obvious case. If no attempt for
+    /// this task+day has been delivered (the `placementMissedHistory`
+    /// marker map, same delivered-marker pattern as event blocks and
+    /// due-soon), the most recent PAST anchor fires ASAP instead of being
+    /// skipped — unless a future attempt is already inside the spacing
+    /// window, in which case that one carries the message and the catch-up
+    /// would only evict it.
+    ///
+    /// Discretionary everywhere (budget, quiet hours, busy windows,
+    /// spacing) — the most *persistent* kind, not an exempt one. Its
+    /// urgency floor (`placementUrgencyFloor`) is how it competes for the
+    /// budget it's willing to spend.
+    private func buildPlacementMissedCandidates(
+        profile: UserProfile,
+        modelContext: ModelContext
+    ) -> [NudgeCandidate] {
+        guard profile.placementMissedNotificationsEnabled else {
+            #if DEBUG
+            print("[NudgeArbiter] placementMissed: SKIP — placementMissedNotificationsEnabled is off.")
+            #endif
+            return []
+        }
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> {
+                !$0.isComplete && !$0.isInformationalEvent && $0.plannedStartDate != nil
+            }
+        )
+        descriptor.fetchLimit = 50
+        let placed = (try? modelContext.fetch(descriptor)) ?? []
+        guard !placed.isEmpty else { return [] }
+
+        let now = Date()
+        let calendar = Calendar.current
+        let grace = Double(NudgeConfig.placementMissedGraceMinutes) * 60
+        let repeatGap = Double(NudgeConfig.placementMissedRepeatMinutes) * 60
+        let history = placementMissedHistory
+
+        var candidates: [NudgeCandidate] = []
+        for task in placed {
+            guard let slot = task.plannedStartDate else { continue }
+            let day = calendar.startOfDay(for: slot)
+            guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: day) else { continue }
+            let dayStamp = stamp(day)
+
+            func attemptID(_ n: Int) -> String {
+                "\(prefix)placementMissed.\(dayStamp).\(task.id.uuidString).\(n)"
+            }
+
+            // Anchors within the slot's day, split into past and future.
+            var futureAttempts: [(n: Int, anchor: Date)] = []
+            var lastPastAttempt: (n: Int, anchor: Date)?
+            var deliveredAny = false
+            for n in 0..<NudgeConfig.placementMissedMaxAttempts {
+                let anchor = slot.addingTimeInterval(grace + Double(n) * repeatGap)
+                guard anchor < dayEnd else { break }
+                if let marked = history[attemptID(n)],
+                   Date(timeIntervalSinceReferenceDate: marked) <= now {
+                    deliveredAny = true
+                }
+                if anchor > now {
+                    futureAttempts.append((n, anchor))
+                } else {
+                    lastPastAttempt = (n, anchor)
+                }
+            }
+
+            let estimatedMinutes = DurationModel.shared.estimate(for: task, modelContext: modelContext)
+            let importance = placementImportance(
+                for: task,
+                estimatedMinutes: estimatedMinutes,
+                modelContext: modelContext
+            )
+            let body = NudgeArbiter.placementMissedBody(
+                task: task,
+                slot: slot,
+                minutes: task.plannedDurationMinutes ?? estimatedMinutes
+            )
+
+            func makeCandidate(n: Int, fireDate: Date) -> NudgeCandidate {
+                let missedTier = tier(for: task, fireDate: fireDate)
+                return NudgeCandidate(
+                    id: attemptID(n),
+                    kind: .placementMissed,
+                    fireDate: fireDate,
+                    title: "Still open",
+                    body: body,
+                    categoryID: .placementMissed,
+                    interruption: missedTier.interruption,
+                    taskID: task.id,
+                    tier: missedTier,
+                    urgency: max(
+                        NudgeConfig.placementUrgencyFloor,
+                        placementDeadlineUrgency(for: task, at: fireDate, estimatedMinutes: estimatedMinutes)
+                    ),
+                    importance: importance,
+                    receptivity: 1.0,
+                    countsAgainstBudget: true,
+                    estimatedMinutes: estimatedMinutes,
+                    anchoredToUserTime: !task.plannedIsAuto
                 )
             }
+
+            for attempt in futureAttempts {
+                candidates.append(makeCandidate(n: attempt.n, fireDate: attempt.anchor))
+            }
+
+            // Catch-up for a slot that passed with nothing delivered. Skipped
+            // when the next scheduled attempt is close enough to carry the
+            // message itself — an ASAP candidate inside the spacing window
+            // would only evict it in `pickWinners`.
+            if !deliveredAny, let past = lastPastAttempt {
+                let nextSoon = futureAttempts.first.map {
+                    $0.anchor.timeIntervalSince(now) < Double(NudgeConfig.minNudgeSpacingMinutes) * 60
+                } ?? false
+                let fireDate = now.addingTimeInterval(60)
+                if !nextSoon, fireDate < dayEnd {
+                    #if DEBUG
+                    print("[NudgeArbiter] placementMissed: CATCH-UP for '\(task.title)' — slot \(slot) passed with no attempt delivered; firing ASAP.")
+                    #endif
+                    candidates.append(makeCandidate(n: past.n, fireDate: fireDate))
+                }
+            }
+            #if DEBUG
+            if !futureAttempts.isEmpty {
+                let times = futureAttempts.map { "\($0.anchor)" }.joined(separator: ", ")
+                print("[NudgeArbiter] placementMissed: '\(task.title)' slot=\(slot) → \(futureAttempts.count) attempt(s) at \(times).")
+            }
+            #endif
+        }
         return candidates
+    }
+
+    /// Body copy for the missed-placement follow-up. The plan itself is the
+    /// fact stated — "was set for 10:00 AM" — never a verdict on the user
+    /// (`DESIGN.md` never-shame: the reproach reading, "you still haven't
+    /// done laundry", is exactly what this phrasing exists to avoid). The
+    /// minutes figure is the plan's own duration when the slot has one,
+    /// capped the way prep and floater cap theirs to keep the ask small.
+    static func placementMissedBody(task: NudgeTask, slot: Date, minutes: Int) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "h:mm a"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        return "“\(task.title)” was set for \(fmt.string(from: slot)) and is still open. "
+            + "Just \(min(minutes, 25)) min. Start there?"
+    }
+
+    /// Deadline-proximity urgency for a placement candidate, evaluated at
+    /// the fire date like every other builder. 0 for an undated task — the
+    /// caller floors the result at `placementUrgencyFloor`, so the floor IS
+    /// the undated value and a real deadline can only raise it.
+    private func placementDeadlineUrgency(
+        for task: NudgeTask,
+        at fireDate: Date,
+        estimatedMinutes: Int
+    ) -> Double {
+        guard let deadline = task.specificTime ?? task.dueDate else { return 0 }
+        return EisenhowerScorer.urgency(
+            hoursUntilDue: deadline.timeIntervalSince(fireDate) / 3600,
+            effortHoursRemaining: Double(estimatedMinutes) / 60.0
+        )
+    }
+
+    /// Shared importance derivation for both placement builders — the same
+    /// scorer inputs idle, prep, and floater use.
+    private func placementImportance(
+        for task: NudgeTask,
+        estimatedMinutes: Int,
+        modelContext: ModelContext
+    ) -> Double {
+        let isDeepWork = StartByPlanner.isDeepWork(
+            category: task.taskCategory,
+            effortMinutes: estimatedMinutes
+        )
+        let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
+        return EisenhowerScorer.importance(
+            category: task.taskCategory,
+            isDeepWork: isDeepWork,
+            statedUrgency: signals.statedUrgency,
+            hasDependencies: task.dependsOnTaskId != nil,
+            hasDueDate: task.hasDeadline,
+            isDueToday: task.hasDeadline && Calendar.current.isDateInToday(task.sortDeadline)
+        )
     }
 
     // MARK: - Gates
@@ -864,21 +2686,33 @@ final class NudgeArbiter: NudgeArbitering {
         let profile: UserProfile
         let modelContext: ModelContext
         let now: Date
+        /// Other tasks' planned timeline slots (Sep 2026, Roman's overlap
+        /// ruling): a discretionary nudge must not land inside a block the
+        /// user planned for a DIFFERENT task — a prep push for the essay
+        /// arriving mid Python-slot is the app talking over its own plan.
+        /// A candidate about the slot's OWN task (its follow-up) passes.
+        let placementIntervals: [(taskID: UUID, start: Date, end: Date)]
     }
 
     private func passesGates(_ candidate: NudgeCandidate, context: GateContext) -> Bool {
-        // Active session
-        if SessionCoordinator.shared.isSessionActive { return false }
-
-        // Cooldown — recent session start or task completion suppresses
-        // discretionary candidates. Event blocks are factual reminders and
-        // pass anyway.
-        if candidate.countsAgainstBudget && hadRecentActivity(now: context.now) {
+        // Active session — suppresses a nudge only if the nudge would ARRIVE
+        // during the session, and never touches budget-exempt candidates.
+        if candidate.countsAgainstBudget && firesDuringActiveSession(candidate.fireDate) {
             return false
         }
 
-        // Quiet hours
-        if candidate.countsAgainstBudget && !insideAwakeWindow(
+        // Cooldown — a recent session start suppresses discretionary
+        // candidates that would land while it's still running. Event blocks
+        // are factual reminders and pass anyway.
+        if candidate.countsAgainstBudget && firesInsideActivityCooldown(candidate.fireDate) {
+            return false
+        }
+
+        // Quiet hours — the user's own "don't interrupt me" window, which is
+        // NOT the same thing as their sleep schedule (it only defaults to it).
+        // A candidate anchored to a time the user set is exempt here and
+        // only here (`anchoredToUserTime`); it still meets every other gate.
+        if candidate.countsAgainstBudget && !candidate.anchoredToUserTime && !passesQuietHours(
             fireDate: candidate.fireDate,
             profile: context.profile
         ) { return false }
@@ -892,11 +2726,45 @@ final class NudgeArbiter: NudgeArbitering {
             return false
         }
 
+        // Planned-slot gate (Sep 2026, Roman's overlap ruling) — the busy
+        // concept extended to the user's OWN plan: a discretionary nudge
+        // may not land inside a block planned for a different task. The
+        // slot's own follow-ups pass (taskID match); placement heads-ups
+        // fire before slots and pass naturally. Fire-date keyed, like
+        // every gate.
+        if candidate.countsAgainstBudget,
+           context.placementIntervals.contains(where: { interval in
+               interval.taskID != candidate.taskID
+                   && candidate.fireDate >= interval.start
+                   && candidate.fireDate < interval.end
+           }) {
+            #if DEBUG
+            print("[NudgeArbiter] gate: \(candidate.kind.rawValue) suppressed — fires inside another task's planned slot.")
+            #endif
+            return false
+        }
+
         // Per-task fatigue — if this task has been nudged perTaskMaxNudges
-        // times without action, suppress further pushes for it. The break-
-        // it-down offer is the only candidate that's still allowed for that
-        // task at that point.
-        if candidate.kind != .breakItDown,
+        // times without action, suppress further pushes for it. (The
+        // break-it-down offer used to be the escape hatch that survived
+        // this gate; the kind was removed Jul 2026, so past the threshold
+        // the arbiter now simply backs off the task.)
+        //
+        // GATED OFF (`NudgeConfig.fatigueGateEnabled`). The outcome
+        // classifier now writes real `.ignored` rows, which this predicate
+        // already matches — so without the flag, landing the classifier
+        // would have immediately changed which notifications fire. The
+        // recorded classifications get observed first.
+        //
+        // One exemption: `!kind.successIsObservableInApp` (today:
+        // `.eventBlock`) — a CORRECTNESS exemption. Those kinds' success
+        // case produces no app open, so the classifier logs `.ignored` for
+        // a reminder that worked exactly as intended. Counting that as
+        // fatigue would silence event reminders for the user who reads
+        // every one of them and shows up on time. See
+        // `successIsObservableInApp`.
+        if NudgeConfig.fatigueGateEnabled,
+           candidate.kind.successIsObservableInApp,
            let taskID = candidate.taskID,
            taskFatigueCount(taskID: taskID, context: context) >= NudgeConfig.perTaskMaxNudges {
             return false
@@ -905,21 +2773,513 @@ final class NudgeArbiter: NudgeArbitering {
         return true
     }
 
-    private func hadRecentActivity(now: Date) -> Bool {
-        let cutoff = Calendar.current.date(
-            byAdding: .minute,
-            value: -NudgeConfig.recentActivityCooldownMinutes,
-            to: now
-        ) ?? .distantPast
-        if let lastStart = SharedModelContainer.appGroupDefaults
-            .object(forKey: NotificationScheduler.lastFocusSessionStartedAtKey) as? Date,
-           lastStart > cutoff {
-            return true
-        }
-        return false
+    /// Whether `fireDate` lands inside the currently-running focus session.
+    ///
+    /// ── THE THIRD INSTANCE OF ONE BUG ─────────────────────────────────
+    /// This gate used to be `if SessionCoordinator.shared.isSessionActive
+    /// { return false }` — an unconditional bail that dropped EVERY
+    /// candidate in the reevaluate. Two things were wrong with it, and they
+    /// are independent:
+    ///
+    ///   1. **It read the clock, not the candidate.** A session at 14:00
+    ///      killed a nudge scheduled for next Tuesday. Same mistake as
+    ///      `hadRecentActivity`, fixed one line below this one; the session
+    ///      even has a known end time, so there was nothing to approximate.
+    ///   2. **It ignored `countsAgainstBudget`.** Every other gate in
+    ///      `passesGates` exempts factual/anchor nudges through that flag;
+    ///      this one didn't, so a focus session at 14:00 also swallowed the
+    ///      15:00 pre-class heads-up. That is precisely backwards — a
+    ///      factual reminder is what someone heads-down in a session most
+    ///      needs, and it's the one nudge that can't be rebuilt in time if
+    ///      it's dropped near its own fire moment.
+    ///
+    /// Both are now handled at the call site: the `countsAgainstBudget`
+    /// check exempts event blocks (and the morning prompt, which is
+    /// budget-exempt for the same "this is an anchor, not a nudge" reason),
+    /// and this function answers the per-candidate question.
+    ///
+    /// `sessionEnd` is the session's own end instant, so no config constant
+    /// is involved — unlike the cooldown below, the window here is exactly
+    /// as long as the session is. A stale `sessionEnd` left over from a
+    /// finished session is always in the past and therefore inert, and
+    /// `startSession` now sets it BEFORE it triggers its reevaluate so this
+    /// gate never reads a session's end as `.distantPast` while its
+    /// `isSessionActive` is already true.
+    private func firesDuringActiveSession(_ fireDate: Date) -> Bool {
+        guard SessionCoordinator.shared.isSessionActive else { return false }
+        return fireDate < SessionCoordinator.shared.sessionEnd
     }
 
-    private func insideAwakeWindow(fireDate: Date, profile: UserProfile) -> Bool {
+    /// Whether `fireDate` lands inside the cooldown that follows the most
+    /// recent focus-session start.
+    ///
+    /// ── THE RULE, AND WHY THIS ONE ────────────────────────────────────
+    /// The cooldown means "don't nudge someone who just started working."
+    /// It is therefore a property of the MOMENT THE NUDGE ARRIVES, not of
+    /// the moment the arbiter happens to run — so the window it defines is
+    /// `[lastStart, lastStart + recentActivityCooldownMinutes)` and a
+    /// candidate is blocked exactly when its fire date falls inside it.
+    ///
+    /// That is the whole rule. It needs no separate "firing soon"
+    /// threshold: the window is bounded by construction, so anything
+    /// scheduled past its end passes, and in practice only candidates
+    /// within the next `recentActivityCooldownMinutes` can ever be caught.
+    ///
+    /// ── WHAT IT REPLACED ──────────────────────────────────────────────
+    /// This used to be `hadRecentActivity(now:)` — it asked whether a
+    /// session had started within the cooldown of NOW, and if so dropped
+    /// EVERY budget-counting candidate in that reevaluate, including ones
+    /// scheduled for tomorrow that the session has no bearing on. Not fatal
+    /// (the next reevaluate rebuilt them) but it produced intermittent gate
+    /// blocks unrelated to any candidate's own timing, and it was landing
+    /// on the floater check-in — whose anchor is wake+6h — while
+    /// `ROADMAP.md` §1 waits on floater baseline rows. Listed as a known
+    /// bug in `CLAUDE.md` until Jul 2026.
+    ///
+    /// ── WHAT IT STILL CAN'T DO ────────────────────────────────────────
+    /// The app group holds only the MOST RECENT session start, so this can
+    /// only ever reason about one window. A session started this morning is
+    /// invisible once a second one starts. That's accepted, not overlooked:
+    /// building a session log for this gate is explicitly out of scope, and
+    /// the failure direction is permissive (a nudge that should have been
+    /// suppressed gets through), which is the safe one while nothing
+    /// consumes outcome data.
+    private func firesInsideActivityCooldown(_ fireDate: Date) -> Bool {
+        guard let lastStart = SharedModelContainer.appGroupDefaults
+            .object(forKey: NotificationScheduler.lastFocusSessionStartedAtKey) as? Date else {
+            return false
+        }
+        guard let cooldownEnds = Calendar.current.date(
+            byAdding: .minute,
+            value: NudgeConfig.recentActivityCooldownMinutes,
+            to: lastStart
+        ) else { return false }
+        // Half-open on purpose: a candidate firing exactly as the cooldown
+        // expires is outside it, matching the old form's `lastStart > cutoff`
+        // strict comparison at the other end of the same window.
+        return fireDate >= lastStart && fireDate < cooldownEnds
+    }
+
+    // MARK: - Quiet hours
+
+    /// The quiet window as CLOCK MINUTES-OF-DAY (0...1439), not as absolute
+    /// dates on a particular day.
+    ///
+    /// Minutes-of-day rather than `Date`s is the whole fix. The previous
+    /// implementation pinned wake and bedtime onto the fire date's calendar
+    /// day and asked `fire >= wake+30 && fire <= bed−60`. That silently
+    /// assumes the awake window doesn't cross midnight — so a bedtime at or
+    /// past 00:00 put `bed−60` an hour into the PREVIOUS day, made the
+    /// window empty, and the gate failed CLOSED: every discretionary
+    /// candidate suppressed, all day, with no diagnostic.
+    /// `BusyWindowResolver.dayLoad` hits the same degeneracy and returns nil
+    /// so callers fail OPEN; this gate had no such guard.
+    ///
+    /// A wrapping interval has no such blind spot: `start > end` is the
+    /// NORMAL case (quiet 22:00 → 07:30), not an error, and quiet hours that
+    /// sit inside one day (a 13:00–14:00 nap) are just the other branch.
+    private struct QuietWindow {
+        /// Clock minute quiet BEGINS.
+        let startMinute: Int
+        /// Clock minute quiet ENDS.
+        let endMinute: Int
+        /// `"sleep"` or `"custom"` — DEBUG labelling only.
+        let source: String
+
+        /// Whether `date`'s clock time falls inside quiet hours.
+        ///
+        /// Both comparisons are STRICT, so a fire time landing exactly on a
+        /// boundary minute is treated as awake. That's deliberate: the old
+        /// gate's `fire >= quietUntil && fire <= quietFrom` passed both
+        /// boundaries, and this preserves it minute-for-minute so the
+        /// default-configuration before/after is a true no-op.
+        func contains(_ date: Date) -> Bool {
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+            let minute = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+            if startMinute > endMinute {
+                // Wraps midnight — the normal overnight case.
+                return minute > startMinute || minute < endMinute
+            }
+            return minute > startMinute && minute < endMinute
+        }
+
+        var description: String {
+            func hhmm(_ m: Int) -> String { String(format: "%02d:%02d", m / 60, m % 60) }
+            return "\(hhmm(startMinute))→\(hhmm(endMinute)) (\(source)"
+                + (startMinute > endMinute ? ", wraps midnight)" : ")")
+        }
+    }
+
+    private static func minuteOfDay(_ date: Date) -> Int {
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+    }
+
+    /// Wraps a possibly out-of-range minute count back into 0...1439, so
+    /// `bedtime − 60m` off a 00:30 bedtime lands on 23:30 instead of −30.
+    private static func wrapMinute(_ minute: Int) -> Int {
+        ((minute % 1440) + 1440) % 1440
+    }
+
+    /// The quiet window the sleep schedule implies. Also what Settings seeds
+    /// the custom times from, so flipping the toggle alone changes nothing.
+    static func sleepDerivedQuietHours(for profile: UserProfile) -> (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let startMinute = wrapMinute(minuteOfDay(profile.bedtime) - NudgeConfig.preBedtimeQuietMinutes)
+        let endMinute = wrapMinute(minuteOfDay(wake) + NudgeConfig.postWakeQuietMinutes)
+        let today = calendar.startOfDay(for: Date())
+        return (
+            start: calendar.date(byAdding: .minute, value: startMinute, to: today) ?? today,
+            end: calendar.date(byAdding: .minute, value: endMinute, to: today) ?? today
+        )
+    }
+
+    /// Resolves the profile's quiet window, or nil when it can't be
+    /// expressed — which the caller must treat as FAIL OPEN.
+    ///
+    /// The only nil case is a zero-length window (`start == end`), which is
+    /// genuinely ambiguous: it reads equally as "never quiet" and "always
+    /// quiet". Silencing every discretionary nudge on an ambiguous setting
+    /// is the failure mode this whole change exists to remove, so it
+    /// resolves the other way.
+    private func quietWindow(for profile: UserProfile) -> QuietWindow? {
+        let startMinute: Int
+        let endMinute: Int
+        let source: String
+
+        // Custom needs BOTH ends. A half-configured window falls back to the
+        // derived one rather than pairing a user value with a guess.
+        if !profile.quietHoursFollowSleepSchedule,
+           let customStart = profile.quietHoursStartTime,
+           let customEnd = profile.quietHoursEndTime {
+            startMinute = Self.minuteOfDay(customStart)
+            endMinute = Self.minuteOfDay(customEnd)
+            source = "custom"
+        } else {
+            let derived = Self.sleepDerivedQuietHours(for: profile)
+            startMinute = Self.minuteOfDay(derived.start)
+            endMinute = Self.minuteOfDay(derived.end)
+            source = "sleep"
+        }
+
+        guard startMinute != endMinute else { return nil }
+        return QuietWindow(startMinute: startMinute, endMinute: endMinute, source: source)
+    }
+
+    /// Whether `fireDate` is clear of quiet hours. Fails OPEN — an
+    /// unresolvable window permits the nudge.
+    private func passesQuietHours(fireDate: Date, profile: UserProfile) -> Bool {
+        guard let window = quietWindow(for: profile) else {
+            #if DEBUG
+            print("[NudgeArbiter] quiet hours: UNRESOLVABLE (zero-length window) — failing OPEN.")
+            #endif
+            return true
+        }
+        return !window.contains(fireDate)
+    }
+
+    private func taskFatigueCount(taskID: UUID, context: GateContext) -> Int {
+        // Scoped to the fatigue window — without the date bound, this
+        // returns more rows over time forever, and is called once per
+        // gate-evaluated candidate per reevaluate.
+        let fatigueCutoff = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? .distantPast
+        // Rows whose kind can't distinguish success from silence are
+        // excluded at the predicate level, not filtered afterwards — the
+        // fetchLimit below is what keeps this cheap, and post-filtering a
+        // limited fetch would undercount. See `successIsObservableInApp`.
+        let blindKinds = NudgeOutcomeKind.fatigueBlindRawValues
+        var descriptor = FetchDescriptor<NudgeOutcome>(
+            predicate: #Predicate<NudgeOutcome> {
+                $0.taskID == taskID
+                    && $0.scheduledFor >= fatigueCutoff
+                    && !blindKinds.contains($0.kindRaw)
+                    && ($0.resultRaw == "ignored" || $0.resultRaw == "dismissed")
+            }
+        )
+        descriptor.fetchLimit = NudgeConfig.perTaskMaxNudges + 1
+        return (try? context.modelContext.fetch(descriptor))?.count ?? 0
+    }
+
+    // MARK: - DEBUG: stakes impact
+
+    #if DEBUG
+    /// Kinds whose builder hardcodes `importance` instead of deriving it
+    /// from `EisenhowerScorer.importance`. Both pin 1.0: event blocks are
+    /// factual time reminders and the morning prompt is the day's anchor,
+    /// and both are budget-exempt, so neither competes on score. Stakes can
+    /// never move them — no call path would pass it — which is why the
+    /// dump labels them `pinned` rather than comparing.
+    private static let importancePinnedKinds: Set<NudgeOutcomeKind> = [.eventBlock, .morningPrompt]
+
+    /// Prints every candidate's importance / score / quadrant computed BOTH
+    /// with and without the `TaskStakes` term, then the winner set each
+    /// would produce. Read-only — it recomputes into locals and schedules
+    /// nothing.
+    ///
+    /// Exists because `EisenhowerScorer.importance` does not yet receive
+    /// `stakes` from any production call site. This is what the weights in
+    /// `NudgeConfig.stakesImportanceBonus` get validated against before
+    /// they're wired in: the interesting output is not the numbers but
+    /// WHICH nudge wins, since get-ahead candidates now share one fire time
+    /// and min-spacing collapses same-day candidates to a single winner.
+    ///
+    /// The `built` column re-derives the CURRENT importance from the same
+    /// inputs the builder used and should equal the candidate's own value.
+    /// A mismatch means this recomputation has drifted from the builder and
+    /// the comparison can't be trusted — which is why it's printed rather
+    /// than assumed.
+    private func debugStakesImpact(
+        all: [NudgeCandidate],
+        eligible: [NudgeCandidate],
+        context: GateContext
+    ) {
+        let scored = all.map { cand in
+            (cand: cand, inputs: stakesInputs(for: cand, modelContext: context.modelContext))
+        }
+        guard scored.contains(where: { $0.inputs != nil }) else {
+            print("[StakesImpact] No candidate has an associated task — nothing to compare.")
+            return
+        }
+
+        func f(_ v: Double) -> String { String(format: "%.3f", v) }
+        func q(_ quadrant: EisenhowerQuadrant) -> String {
+            switch quadrant {
+            case .startNow:    return "startNow"
+            case .quickWin:    return "quickWin"
+            case .getAhead:    return "getAhead"
+            case .lowPriority: return "lowPri"
+            }
+        }
+
+        print("[StakesImpact] cap=\(f(NudgeConfig.stakesSignalCombinedCap)) "
+            + "high=\(f(NudgeConfig.stakesImportanceBonus[.high] ?? 0)) "
+            + "med=\(f(NudgeConfig.stakesImportanceBonus[.medium] ?? 0)) "
+            + "low=\(f(NudgeConfig.stakesImportanceBonus[.low] ?? 0))")
+        print("  \(padc("KIND", 13))\(padc("STAKES", 8))\(padc("GATE", 6))"
+            + "\(padc("built", 7))\(padc("imp→", 7))\(padc("imp+", 7))"
+            + "\(padc("score→", 8))\(padc("score+", 8))\(padc("quad→", 9))\(padc("quad+", 9))TASK")
+
+        var adjustedByID: [String: Double] = [:]
+        /// Eligible, budget-competing candidates and the stakes term each
+        /// would receive — the raw material for the contest test below.
+        /// Budget-exempt candidates are excluded because they don't compete
+        /// on score at all, and gate-blocked ones because they're already
+        /// out before scoring matters.
+        var contenders: [(fireDate: Date, term: Double, title: String, kind: String)] = []
+        for entry in scored {
+            let cand = entry.cand
+            guard let inputs = entry.inputs else { continue }
+            let gated = eligible.contains { $0.id == cand.id }
+
+            // Kinds whose builder PINS importance never call
+            // `EisenhowerScorer.importance`, so recomputing it from category
+            // disagrees by construction — that is not drift, and flagging it
+            // as such on every run trains the reader to ignore the column.
+            // They also can't be moved by stakes: nothing would pass it.
+            if Self.importancePinnedKinds.contains(cand.kind) {
+                print("  " + padc(cand.kind.rawValue, 13)
+                    + padc(inputs.stakes?.rawValue ?? "—", 8)
+                    + padc(gated ? "pass" : "BLOCK", 6)
+                    + padc("pinned", 7)
+                    + padc(f(cand.importance), 7)
+                    + padc("—", 7)
+                    + padc(f(cand.score), 8)
+                    + padc("—", 8)
+                    + padc(q(cand.quadrant), 9)
+                    + padc("—", 9)
+                    + inputs.title)
+                continue
+            }
+
+            let without = EisenhowerScorer.importance(
+                category: inputs.category,
+                isDeepWork: inputs.isDeepWork,
+                statedUrgency: inputs.statedUrgency,
+                hasDependencies: inputs.hasDependencies
+            )
+            let with = EisenhowerScorer.importance(
+                category: inputs.category,
+                isDeepWork: inputs.isDeepWork,
+                statedUrgency: inputs.statedUrgency,
+                hasDependencies: inputs.hasDependencies,
+                stakes: inputs.stakes
+            )
+            adjustedByID[cand.id] = with
+
+            let scoreWithout = EisenhowerScorer.score(urgency: cand.urgency, importance: without)
+            let scoreWith    = EisenhowerScorer.score(urgency: cand.urgency, importance: with)
+            let quadWithout  = EisenhowerScorer.quadrant(urgency: cand.urgency, importance: without)
+            let quadWith     = EisenhowerScorer.quadrant(urgency: cand.urgency, importance: with)
+
+            let builtMatches = abs(cand.importance - without) < 0.0005
+            let stakesTerm = inputs.stakes.flatMap { NudgeConfig.stakesImportanceBonus[$0] } ?? 0.0
+            if gated && cand.countsAgainstBudget {
+                contenders.append((cand.fireDate, stakesTerm, inputs.title, cand.kind.rawValue))
+            }
+
+            print("  " + padc(cand.kind.rawValue, 13)
+                + padc(inputs.stakes?.rawValue ?? "—", 8)
+                + padc(gated ? "pass" : "BLOCK", 6)
+                + padc(builtMatches ? "ok" : "DRIFT", 7)
+                + padc(f(without), 7)
+                + padc(f(with), 7)
+                + padc(f(scoreWithout), 8)
+                + padc(f(scoreWith), 8)
+                + padc(q(quadWithout), 9)
+                + padc(q(quadWith), 9)
+                + inputs.title)
+            if !builtMatches {
+                print("       ↳ DRIFT: candidate was built with importance "
+                    + "\(f(cand.importance)), this recomputation says \(f(without)).")
+            }
+        }
+
+        // ── Which nudges actually flip ───────────────────────────────────
+        // The only question that matters: same gates, same spacing, same
+        // budget — does a different notification get sent?
+        let adjustedEligible = eligible.map { cand -> NudgeCandidate in
+            guard let newImportance = adjustedByID[cand.id] else { return cand }
+            return NudgeCandidate(
+                id: cand.id, kind: cand.kind, fireDate: cand.fireDate,
+                title: cand.title, body: cand.body, categoryID: cand.categoryID,
+                interruption: cand.interruption, taskID: cand.taskID, tier: cand.tier,
+                urgency: cand.urgency, importance: newImportance,
+                receptivity: cand.receptivity,
+                countsAgainstBudget: cand.countsAgainstBudget,
+                estimatedMinutes: cand.estimatedMinutes
+            )
+        }
+        let winnersNow  = pickWinners(from: eligible, context: context)
+        let winnersWith = pickWinners(from: adjustedEligible, context: context)
+
+        let idsNow  = Set(winnersNow.map(\.id))
+        let idsWith = Set(winnersWith.map(\.id))
+        print("  → winners now  (\(winnersNow.count)): "
+            + winnersNow.map { "\($0.kind.rawValue)/\($0.title)" }.joined(separator: " | "))
+        print("  → winners with (\(winnersWith.count)): "
+            + winnersWith.map { "\($0.kind.rawValue)/\($0.title)" }.joined(separator: " | "))
+        if idsNow == idsWith {
+            // "NO FLIP" is ambiguous on its own: it can mean the weights
+            // are too weak to matter, OR that nothing in today's data could
+            // have moved regardless. Those call for opposite responses, so
+            // say which one this is.
+            //
+            // A non-zero stakes term is NOT enough to make a run
+            // informative, which is what this used to claim. Stakes only
+            // ever changes an outcome by REORDERING two candidates that
+            // contest the same slot — and `pickWinners` only ever compares
+            // candidates within `minNudgeSpacingMinutes` of each other. Four
+            // `.low` floaters at one fire time all shift by the same amount:
+            // their relative order is arithmetically fixed no matter what
+            // the weights are, so "the winner didn't change" was guaranteed
+            // before the data was read. Claiming that as evidence the
+            // weights are too small would be reading a tautology as a
+            // measurement.
+            //
+            // So evidence requires a genuine contest: two eligible,
+            // budget-competing candidates within the spacing window of each
+            // other carrying DIFFERENT terms. ("Different" implies at least
+            // one is non-zero, so that condition is subsumed.)
+            let sorted = contenders.sorted { $0.fireDate < $1.fireDate }
+            var contests: [(String, String)] = []
+            for i in sorted.indices {
+                for j in sorted.index(after: i)..<sorted.endIndex {
+                    let gap = sorted[j].fireDate.timeIntervalSince(sorted[i].fireDate)
+                    // Sorted by fire date, so once one pair is out of range
+                    // every later one is too.
+                    guard gap < Double(NudgeConfig.minNudgeSpacingMinutes) * 60 else { break }
+                    guard abs(sorted[i].term - sorted[j].term) > 0.0005 else { continue }
+                    contests.append((
+                        "\(sorted[i].kind)/\(sorted[i].title) (\(f(sorted[i].term)))",
+                        "\(sorted[j].kind)/\(sorted[j].title) (\(f(sorted[j].term)))"
+                    ))
+                }
+            }
+
+            if contests.isEmpty {
+                let nonZero = contenders.filter { $0.term != 0 }.count
+                let detail: String
+                if nonZero == 0 {
+                    detail = "no eligible budget-competing candidate carries a non-zero "
+                        + "stakes term — every one is medium/unclassified (bonus 0.0), "
+                        + "gate-blocked, or budget-exempt"
+                } else {
+                    detail = "\(nonZero) eligible candidate(s) carry a non-zero stakes term, "
+                        + "but no two candidates within \(NudgeConfig.minNudgeSpacingMinutes)m "
+                        + "of each other carry DIFFERENT terms. Every group that competes "
+                        + "shifts by the same amount, so its internal order can't change at "
+                        + "any weight"
+                }
+                print("  → NO FLIP — but VACUOUSLY: \(detail). This run exercised nothing — "
+                    + "it is not evidence the weights are too small.")
+            } else {
+                print("  → NO FLIP — and this one IS evidence: \(contests.count) real "
+                    + "contest(s) — candidates within \(NudgeConfig.minNudgeSpacingMinutes)m "
+                    + "of each other with different stakes terms — and the winner still "
+                    + "didn't change.")
+                for (a, b) in contests.prefix(5) {
+                    print("       ↳ contested: \(a)  vs  \(b)")
+                }
+            }
+        } else {
+            for lost in winnersNow where !idsWith.contains(lost.id) {
+                print("  → FLIP OUT: \(lost.kind.rawValue) '\(lost.title)' no longer wins.")
+            }
+            for gained in winnersWith where !idsNow.contains(gained.id) {
+                print("  → FLIP IN:  \(gained.kind.rawValue) '\(gained.title)' wins instead.")
+            }
+        }
+    }
+
+    /// The exact importance inputs a builder used for this candidate.
+    ///
+    /// `isDeepWork` is reconstructed the way the builders compute it:
+    /// idle / get-ahead / floater all derive it from
+    /// `StartByPlanner.isDeepWork` over the same `DurationModel` estimate
+    /// the candidate already carries. Getting this wrong would silently
+    /// change the "without" baseline and make the whole comparison lie.
+    private func stakesInputs(
+        for candidate: NudgeCandidate,
+        modelContext: ModelContext
+    ) -> (title: String, category: TaskCategory?, isDeepWork: Bool,
+          statedUrgency: StatedUrgency, hasDependencies: Bool, stakes: TaskStakes?)? {
+        guard let taskID = candidate.taskID else { return nil }
+        var descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { $0.id == taskID }
+        )
+        descriptor.fetchLimit = 1
+        guard let task = (try? modelContext.fetch(descriptor))?.first else { return nil }
+
+        let isDeepWork = StartByPlanner.isDeepWork(
+            category: task.taskCategory,
+            effortMinutes: candidate.estimatedMinutes
+                ?? DurationModel.shared.estimate(for: task, modelContext: modelContext)
+        )
+        let signals = NudgeIntelligence.shared.cachedIntelligence(for: task, modelContext: modelContext)
+        return (
+            title: task.title,
+            category: task.taskCategory,
+            isDeepWork: isDeepWork,
+            statedUrgency: signals.statedUrgency,
+            hasDependencies: task.dependsOnTaskId != nil,
+            stakes: task.stakes
+        )
+    }
+
+    // MARK: - DEBUG: quiet-hours decoupling impact
+
+    /// The gate EXACTLY as it stood before quiet hours were decoupled from
+    /// the sleep schedule. Copied verbatim, not re-expressed — the point of
+    /// the comparison is to catch a difference I didn't intend, and a
+    /// "tidied" baseline can't do that.
+    ///
+    /// Note what it does on a past-midnight bedtime: `bedOnDay` lands at
+    /// e.g. 00:30 on the FIRE day, so `quietFrom` is 23:30 the day BEFORE,
+    /// `quietUntil` is that morning, and `fire >= quietUntil && fire <=
+    /// quietFrom` is unsatisfiable. Every discretionary candidate, blocked,
+    /// every day. That's the failure this reproduces on purpose.
+    private func legacyInsideAwakeWindow(fireDate: Date, profile: UserProfile) -> Bool {
         let calendar = Calendar.current
         let wake = profile.wakeTime ?? profile.morningCheckInTime
         let bedtime = profile.bedtime
@@ -941,23 +3301,706 @@ final class NudgeArbiter: NudgeArbitering {
         return fireDate >= quietUntil && fireDate <= quietFrom
     }
 
-    private func taskFatigueCount(taskID: UUID, context: GateContext) -> Int {
-        let descriptor = FetchDescriptor<NudgeOutcome>(
-            predicate: #Predicate<NudgeOutcome> {
-                $0.taskID == taskID && ($0.resultRaw == "ignored" || $0.resultRaw == "dismissed")
-            }
+    /// Before/after for the quiet-hours decoupling, per the "any change that
+    /// alters what the arbiter does gets a DEBUG comparison on real data"
+    /// rule. Read-only: it re-derives into locals and schedules nothing.
+    ///
+    /// OLD is `legacyInsideAwakeWindow` above. NEW is `passesQuietHours`.
+    /// Only budget-counting candidates are compared, because that's the only
+    /// population the gate has ever been applied to — event blocks and the
+    /// morning prompt are `countsAgainstBudget: false` and skip it entirely,
+    /// so listing them as "unchanged" would pad the diff with rows that
+    /// could never differ.
+    ///
+    /// On a default profile (`quietHoursFollowSleepSchedule == true`, an
+    /// evening bedtime) this MUST print no differences — that is the
+    /// "nothing changes for existing users" claim, checked rather than
+    /// asserted. A diff here on a default profile is a bug in this change.
+    private func debugQuietHoursImpact(all: [NudgeCandidate], context: GateContext) {
+        let profile = context.profile
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE h:mm a"
+
+        let derived = Self.sleepDerivedQuietHours(for: profile)
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        print("[QuietHours] mode=\(profile.quietHoursFollowSleepSchedule ? "sleep schedule" : "custom")"
+            + "  wake=\(fmt.string(from: wake)) bedtime=\(fmt.string(from: profile.bedtime))")
+        print("  OLD rule: awake window = wake+\(NudgeConfig.postWakeQuietMinutes)m → "
+            + "bed−\(NudgeConfig.preBedtimeQuietMinutes)m, pinned to the fire date's own day.")
+        if let window = quietWindow(for: profile) {
+            print("  NEW rule: quiet = \(window.description); everything else passes.")
+        } else {
+            print("  NEW rule: quiet window UNRESOLVABLE (zero-length) — gate fails OPEN.")
+        }
+        print("  derived-from-sleep window would be \(fmt.string(from: derived.start))"
+            + " → \(fmt.string(from: derived.end)) (what Settings seeds custom times with).")
+
+        // Does the OLD rule degenerate on this profile? Answered structurally
+        // rather than inferred from the per-candidate rows, since on a
+        // degenerate window EVERY row blocks and the cause isn't obvious.
+        let bedMinute = Self.wrapMinute(
+            Self.minuteOfDay(profile.bedtime) - NudgeConfig.preBedtimeQuietMinutes
         )
-        return (try? context.modelContext.fetch(descriptor))?.count ?? 0
+        let wakeMinute = Self.wrapMinute(
+            Self.minuteOfDay(wake) + NudgeConfig.postWakeQuietMinutes
+        )
+        if bedMinute <= wakeMinute {
+            print("  ⚠︎ OLD rule DEGENERATE on this profile: bed−\(NudgeConfig.preBedtimeQuietMinutes)m "
+                + "(\(bedMinute / 60):\(String(format: "%02d", bedMinute % 60))) is not after "
+                + "wake+\(NudgeConfig.postWakeQuietMinutes)m "
+                + "(\(wakeMinute / 60):\(String(format: "%02d", wakeMinute % 60))). "
+                + "The awake window is empty and the old gate blocks EVERY discretionary "
+                + "candidate all day. The new rule treats this as a midnight-wrapping quiet "
+                + "window instead.")
+        }
+
+        let discretionary = all.filter(\.countsAgainstBudget)
+        guard !discretionary.isEmpty else {
+            print("  → no budget-counting candidates this run — nothing to compare.")
+            return
+        }
+
+        print("  \(padc("KIND", 13))\(padc("FIRE", 16))\(padc("OLD", 7))\(padc("NEW", 7))TITLE")
+        var flippedOpen = 0
+        var flippedClosed = 0
+        for cand in discretionary.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let old = legacyInsideAwakeWindow(fireDate: cand.fireDate, profile: profile)
+            let new = passesQuietHours(fireDate: cand.fireDate, profile: profile)
+            if old != new { new ? (flippedOpen += 1) : (flippedClosed += 1) }
+            print("  " + padc(cand.kind.rawValue, 13)
+                + padc(fmt.string(from: cand.fireDate), 16)
+                + padc(old ? "pass" : "BLOCK", 7)
+                + padc(new ? "pass" : "BLOCK", 7)
+                + (old == new ? "" : "⇄ ") + cand.title)
+        }
+
+        if flippedOpen == 0 && flippedClosed == 0 {
+            print("  → NO CHANGE across \(discretionary.count) candidate(s). Expected whenever "
+                + "the profile still follows its sleep schedule AND that schedule doesn't "
+                + "cross midnight — the new rule reduces to the old one there, boundaries "
+                + "included.")
+        } else {
+            print("  → \(flippedOpen) candidate(s) NEWLY PASS, \(flippedClosed) newly BLOCKED "
+                + "(of \(discretionary.count)). Note this is the gate verdict only — a newly "
+                + "passing candidate still has to survive the busy-window gate, min-spacing, "
+                + "and the daily budget of \(NudgeConfig.dailyNudgeBudget) before it reaches "
+                + "the user.")
+        }
     }
+
+    // MARK: - DEBUG: active-session gate impact
+
+    /// Before/after for narrowing the active-session gate, per work-order
+    /// item 5.
+    ///
+    /// BEFORE is the old rule, which had exactly one verdict for the whole
+    /// run: session active ⇒ every candidate dropped, budget-exempt or not.
+    /// AFTER is the real gate, per candidate. The rows that matter are the
+    /// event blocks — they were being suppressed by a gate every other rule
+    /// in `passesGates` exempts them from.
+    private func debugActiveSessionImpact(all: [NudgeCandidate], context: GateContext) {
+        guard SessionCoordinator.shared.isSessionActive else {
+            print("[ActiveSession] no session running — gate inert this run, "
+                + "BEFORE and AFTER both pass everything.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        let ends = SessionCoordinator.shared.sessionEnd
+
+        print("[ActiveSession] session running until \(fmt.string(from: ends))")
+        if ends <= context.now {
+            print("  ⚠️  sessionEnd is NOT in the future while isSessionActive is true — "
+                + "the gate will suppress nothing. Expected only in the 3s teardown "
+                + "window inside finishSession; anywhere else this is the ordering bug "
+                + "startSession was fixed for.")
+        }
+        guard !all.isEmpty else {
+            print("  no candidates this run.")
+            return
+        }
+        print("  BEFORE: session active → old rule BLOCKED ALL \(all.count) candidate(s), "
+            + "event blocks included.")
+        var freed = 0
+        for cand in all.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let blocked = cand.countsAgainstBudget && firesDuringActiveSession(cand.fireDate)
+            if !blocked { freed += 1 }
+            let why = blocked
+                ? "BLOCK"
+                : (cand.countsAgainstBudget ? "PASS" : "PASS*")
+            print("      " + padc(why, 7)
+                + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(cand.kind.rawValue, 14)
+                + cand.title)
+        }
+        print("  AFTER : \(freed) of \(all.count) candidate(s) freed. "
+            + "PASS* = budget-exempt, never sees this gate at all.")
+    }
+
+    // MARK: - DEBUG: activity-cooldown gate impact
+
+    /// Before/after gate verdicts for moving the activity cooldown off `now`
+    /// and onto the candidate's fire date, per work-order item 5.
+    ///
+    /// BEFORE is the old rule reproduced exactly — "did a session start
+    /// within `recentActivityCooldownMinutes` of NOW", which was a single
+    /// verdict applied to every budget-counting candidate regardless of when
+    /// it fires. AFTER is the real gate, called per candidate. Read-only.
+    ///
+    /// On a run with no recent session start both columns are all-PASS and
+    /// the dump says so in one line rather than printing a table of
+    /// identical rows — that is the common case and it should be cheap to
+    /// skim past.
+    private func debugRecentActivityImpact(all: [NudgeCandidate], context: GateContext) {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        let lastStart = SharedModelContainer.appGroupDefaults
+            .object(forKey: NotificationScheduler.lastFocusSessionStartedAtKey) as? Date
+        guard let lastStart else {
+            print("[ActivityCooldown] no focus session has ever been started — "
+                + "gate is inert this run, BEFORE and AFTER both pass everything.")
+            return
+        }
+        let cooldown = NudgeConfig.recentActivityCooldownMinutes
+        let cooldownEnds = Calendar.current.date(byAdding: .minute, value: cooldown, to: lastStart)
+            ?? lastStart
+        // The old rule, reproduced: one verdict for the whole run.
+        let blockedEverythingBefore = lastStart > (Calendar.current.date(
+            byAdding: .minute, value: -cooldown, to: context.now
+        ) ?? .distantPast)
+
+        print("[ActivityCooldown] lastSessionStart=\(fmt.string(from: lastStart)) "
+            + "cooldown=\(cooldown)m → window ends \(fmt.string(from: cooldownEnds))")
+
+        let discretionary = all.filter(\.countsAgainstBudget)
+        guard !discretionary.isEmpty else {
+            print("  no budget-counting candidates this run — nothing for either rule to judge.")
+            return
+        }
+        guard blockedEverythingBefore else {
+            print("  BEFORE: last start is older than \(cooldown)m — old rule blocked nothing.")
+            let nowBlocked = discretionary.filter { firesInsideActivityCooldown($0.fireDate) }
+            print("  AFTER : \(nowBlocked.count) blocked. "
+                + (nowBlocked.isEmpty
+                    ? "Identical verdicts this run."
+                    : "NOTE — these fire inside a window the old rule had already exited."))
+            return
+        }
+
+        print("  BEFORE: session started \(Int(context.now.timeIntervalSince(lastStart) / 60))m ago "
+            + "→ old rule BLOCKED ALL \(discretionary.count) budget-counting candidate(s), "
+            + "whatever their fire date.")
+        var freed = 0
+        for cand in discretionary.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let blocked = firesInsideActivityCooldown(cand.fireDate)
+            if !blocked { freed += 1 }
+            print("      " + padc(blocked ? "BLOCK" : "PASS", 7)
+                + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(cand.kind.rawValue, 14)
+                + cand.title)
+        }
+        print("  AFTER : \(freed) of \(discretionary.count) candidate(s) freed — "
+            + "they fire after the cooldown ends and the session has no bearing on them.")
+    }
+
+    // MARK: - DEBUG: morning prompt targeting impact
+
+    /// Before/after for "the morning prompt names the day's biggest task".
+    ///
+    /// This change is a payload change, not a scheduling change — the
+    /// builder's gating (toggle, day-fullness, fire-moment busy) is
+    /// untouched, so the fire time is identical to before. The ONE way it
+    /// can alter what the arbiter does is the new content gate: with no open
+    /// task there is now no candidate at all, where the old open question
+    /// fired regardless. That case prints as `SKIP` below and is the line to
+    /// look for.
+    ///
+    /// Read-only: re-derives into locals, schedules nothing. Calls the real
+    /// `morningPromptRanking` so the printed order cannot drift from the
+    /// order the builder used.
+    private func debugMorningPromptImpact(
+        all: [NudgeCandidate],
+        profile: UserProfile,
+        context: GateContext
+    ) {
+        guard profile.morningCheckInNotificationsEnabled else {
+            print("[MorningPrompt] toggle off — nothing to compare.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        let built = all.first { $0.kind == .morningPrompt }
+        // Reconstruct the fire date the builder would have used, so the
+        // ranking below is evaluated at the same instant even on a run where
+        // the builder bailed out at one of its gates.
+        let calendar = Calendar.current
+        let wake = profile.wakeTime ?? profile.morningCheckInTime
+        let wakeComps = calendar.dateComponents([.hour, .minute], from: wake)
+        var comps = calendar.dateComponents([.year, .month, .day], from: context.now)
+        comps.hour = wakeComps.hour
+        comps.minute = wakeComps.minute
+        guard var fireDate = calendar.date(from: comps) else {
+            print("[MorningPrompt] could not resolve the fire date.")
+            return
+        }
+        fireDate = fireDate.addingTimeInterval(Double(NudgeConfig.postWakeQuietMinutes) * 60)
+        if fireDate <= context.now {
+            fireDate = calendar.date(byAdding: .day, value: 1, to: fireDate) ?? fireDate
+        }
+
+        let ranking = morningPromptRanking(fireDate: fireDate, modelContext: context.modelContext)
+        let unfiltered = morningPromptRanking(
+            fireDate: fireDate,
+            includeRepeatNamed: true,
+            modelContext: context.modelContext
+        )
+
+        print("[MorningPrompt] fire=\(fmt.string(from: fireDate))  (gating unchanged: toggle, day-fullness, fire-moment busy)")
+        print("  BEFORE: \"What do you want to get done today? Tell me and I'll set it up.\"  ← fired with nothing open too")
+        if let built {
+            print("  AFTER : \"\(built.body)\"")
+        } else if ranking.isEmpty {
+            print("  AFTER : SKIP — nothing open to name. THIS is the behaviour change: "
+                + "the old copy would have fired here.")
+        } else {
+            print("  AFTER : no candidate this run — a builder gate (day-fullness or "
+                + "fire-moment busy) stopped it before targeting, same as it would have before.")
+        }
+
+        // ── The no-repeat rule, shown as a comparison ────────────────────
+        // `morningPromptMaxConsecutiveDays` is the reason today's pick can
+        // differ from the pure stakes ranking. Print the last week of named
+        // tasks so "why THAT one" is answerable from the log alone.
+        let history = morningPromptHistory
+        let window = NudgeConfig.morningPromptMaxConsecutiveDays
+        if let incumbent = unfiltered.first {
+            let actuallyNamed = ranking.first
+            let heldTooLong = wasNamedOnRecentMornings(incumbent.task, before: fireDate)
+            if actuallyNamed?.task.id != incumbent.task.id {
+                print("  no-repeat rule BIT: \"\(incumbent.task.title)\" has been named "
+                    + "\(window) morning(s) running → stepped aside for "
+                    + "\"\(actuallyNamed?.task.title ?? "nothing")\".")
+            } else if heldTooLong {
+                // The rule wanted to fire and something stopped it. WHICH
+                // one matters: a tier veto is the design working, an empty
+                // pool is the user having one task, and they read
+                // identically in the output unless named.
+                let fresh = (try? context.modelContext.fetch(
+                    FetchDescriptor<NudgeTask>(
+                        predicate: #Predicate<NudgeTask> { !$0.isComplete && !$0.isInformationalEvent }
+                    )
+                ))?.filter { !wasNamedOnRecentMornings($0, before: fireDate) } ?? []
+                let best = rankPool(fresh, fireDate: fireDate, modelContext: context.modelContext).first
+                if let best {
+                    let gap = NudgeArbiter.morningStakesRank(incumbent.stakes)
+                        - NudgeArbiter.morningStakesRank(best.stakes)
+                    print("  no-repeat rule HELD (tier veto): \"\(incumbent.task.title)\" "
+                        + "(\(incumbent.stakes?.rawValue ?? "unclassified")) has held the slot "
+                        + "\(window) morning(s), but the best alternative "
+                        + "\"\(best.task.title)\" (\(best.stakes?.rawValue ?? "unclassified")) "
+                        + "is \(gap) tier(s) below it. Repeating rather than naming something "
+                        + "the ranking disagrees with.")
+                } else {
+                    print("  no-repeat rule HELD (nothing else open): "
+                        + "\"\(incumbent.task.title)\" is the only thing to name.")
+                }
+            } else if !history.isEmpty {
+                print("  no-repeat rule idle: \"\(incumbent.task.title)\" has not yet been "
+                    + "named \(window) mornings running.")
+            }
+        }
+        if !history.isEmpty {
+            let recent = history.sorted { $0.key > $1.key }.prefix(7)
+            let titles = (try? context.modelContext.fetch(FetchDescriptor<NudgeTask>()))
+                .map { Dictionary(uniqueKeysWithValues: $0.map { ($0.id.uuidString, $0.title) }) }
+                ?? [:]
+            print("  named-task history (most recent first): "
+                + recent.map { "\($0.key)=\(titles[$0.value] ?? "deleted task")" }
+                    .joined(separator: "  "))
+        }
+
+        guard !ranking.isEmpty else { return }
+        print("  ranked \(ranking.count) contender(s) in the top stakes tier "
+            + "(stakes ▸ deadline proximity ▸ id):")
+        let shown = ranking.prefix(8)
+        for choice in shown {
+            let due = (choice.task.specificTime ?? choice.task.dueDate)
+                .map { fmt.string(from: $0) } ?? "undated"
+            print("      " + padc(choice.stakes?.rawValue ?? "unclassified", 14)
+                + padc(String(format: "%.2f", choice.urgency), 6)
+                + padc(due, 18)
+                + choice.task.title)
+        }
+        if ranking.count > shown.count {
+            print("      … \(ranking.count - shown.count) more contender(s) not printed.")
+        }
+    }
+
+    // MARK: - DEBUG: floater rollover impact
+
+    /// Before/after for the floater check-in fix, per the "any change that
+    /// alters what the arbiter does gets a DEBUG comparison on real data"
+    /// rule. Read-only: it re-derives into locals and schedules nothing.
+    ///
+    /// BEFORE is the pre-fix builder: today's anchor only, `guard fireDate >
+    /// Date() else { return [] }`, and no placed-task exclusion. AFTER is
+    /// what actually got built this run. Both call the SAME `floaterTargets`
+    /// so the two columns can't drift apart in their targeting.
+    ///
+    /// The count is the least interesting line. The useful output is the
+    /// verdict at the bottom: a candidate that exists but is gate-blocked or
+    /// spacing-evicted still produces no `.floater` outcome row, and "the
+    /// rollover worked" vs "the rollover worked and it will still never
+    /// fire here" are the two findings worth telling apart.
+    private func debugFloaterImpact(
+        all: [NudgeCandidate],
+        eligible: [NudgeCandidate],
+        scheduled: [NudgeCandidate],
+        profile: UserProfile,
+        context: GateContext
+    ) {
+        guard profile.floaterCheckInNotificationsEnabled else {
+            print("[FloaterImpact] toggle off — nothing to compare.")
+            return
+        }
+        let calendar = Calendar.current
+        let now = context.now
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        guard let todayAnchor = floaterAnchor(on: now, profile: profile) else {
+            print("[FloaterImpact] could not resolve today's anchor.")
+            return
+        }
+        let rolled = todayAnchor <= now
+        let fireDate = rolled
+            ? (calendar.date(byAdding: .day, value: 1, to: todayAnchor) ?? todayAnchor)
+            : todayAnchor
+
+        // BEFORE: old anchor rule + old targeting (no placement exclusion).
+        let beforeCount = rolled
+            ? 0
+            : floaterTargets(
+                fireDate: todayAnchor,
+                excludePlacedOnFireDay: false,
+                modelContext: context.modelContext
+            ).targets.count
+
+        // AFTER: whatever this run actually built.
+        let afterCandidates = all.filter { $0.kind == .floater }
+        let placedOut = floaterTargets(
+            fireDate: fireDate,
+            excludePlacedOnFireDay: true,
+            modelContext: context.modelContext
+        ).placedOut
+
+        print("[FloaterImpact] anchor=wake+\(NudgeConfig.floaterCheckInHoursAfterWake)h "
+            + "today=\(fmt.string(from: todayAnchor)) "
+            + (rolled
+                ? "— PASSED \(Int(now.timeIntervalSince(todayAnchor) / 60))m ago, rolled to \(fmt.string(from: fireDate))"
+                : "— still ahead, no roll needed"))
+        print("  BEFORE (no rollover, no placement filter): \(beforeCount) candidate(s)"
+            + (rolled ? "  ← the bug: builder returned [] and cancelAll had already wiped the morning's copy" : ""))
+        print("  AFTER  (rollover + placement filter)     : \(afterCandidates.count) candidate(s) @ \(fmt.string(from: fireDate))")
+        if !placedOut.isEmpty {
+            print("      excluded \(placedOut.count) already placed on the fire day: "
+                + placedOut.map(\.title).joined(separator: ", "))
+        }
+        for cand in afterCandidates.sorted(by: { $0.score > $1.score }) {
+            print("      • \(String(format: "%.3f", cand.score))  \(cand.body.prefix(50))")
+        }
+
+        // ── Would it actually reach the user? ────────────────────────────
+        guard let best = afterCandidates.max(by: { $0.score < $1.score }) else {
+            print("  → VERDICT: no floater candidate this run "
+                + (rolled ? "(rollover fired, but targeting produced nothing)." : "."))
+            return
+        }
+        if scheduled.contains(where: { $0.id == best.id }) {
+            print("  → VERDICT: SCHEDULED — a `.floater` outcome row will exist for \(fmt.string(from: fireDate)).")
+            return
+        }
+        if !eligible.contains(where: { $0.id == best.id }) {
+            print("  → VERDICT: BLOCKED AT THE GATE — \(floaterGateBlockReason(best, context: context))")
+            return
+        }
+        // Eligible but not scheduled ⇒ pickWinners dropped it. Only two
+        // ways that happens: min-spacing against an already-chosen winner
+        // (event-block reminders are seeded first, so they're the usual
+        // culprit) or the daily budget.
+        let sameDay = scheduled.filter {
+            calendar.isDate($0.fireDate, inSameDayAs: best.fireDate)
+        }
+        let blocker = sameDay.first {
+            abs($0.fireDate.timeIntervalSince(best.fireDate))
+                < Double(NudgeConfig.minNudgeSpacingMinutes) * 60
+        }
+        if let blocker {
+            let gap = Int(abs(blocker.fireDate.timeIntervalSince(best.fireDate)) / 60)
+            print("  → VERDICT: EVICTED BY MIN-SPACING — \(blocker.kind.rawValue) "
+                + "'\(blocker.title)' fires at \(fmt.string(from: blocker.fireDate)), "
+                + "\(gap)m away (needs \(NudgeConfig.minNudgeSpacingMinutes)m).")
+        } else {
+            print("  → VERDICT: NOT PICKED — \(sameDay.count) nudge(s) already chosen for that "
+                + "day against a budget of \(NudgeConfig.dailyNudgeBudget).")
+        }
+    }
+
+    // MARK: - DEBUG: placement lifecycle impact
+
+    /// Before/after for the placement lifecycle kinds (cycle 2026-08-04-02),
+    /// per work-order item 5. BEFORE is the arbiter with no placement
+    /// builders — literally what shipped until this cycle — recomputed as
+    /// the winner set over the same eligible candidates minus the two new
+    /// kinds. AFTER is what this run actually scheduled. Read-only.
+    ///
+    /// The interesting rows are the DISPLACED ones: a placement candidate
+    /// that wins budget or spacing evicts something that used to fire, and
+    /// that eviction is this change altering the arbiter beyond its own
+    /// additions.
+    private func debugPlacementImpact(
+        all: [NudgeCandidate],
+        eligible: [NudgeCandidate],
+        scheduled: [NudgeCandidate],
+        context: GateContext
+    ) {
+        let placementKinds: Set<NudgeOutcomeKind> = [.placementLead, .placementMissed]
+        let built = all.filter { placementKinds.contains($0.kind) }
+        guard !built.isEmpty else {
+            print("[PlacementImpact] no placement candidates this run — nothing on the "
+                + "timeline ahead of now, or both toggles off. BEFORE and AFTER identical.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        print("[PlacementImpact] \(built.count) placement candidate(s) built:")
+        for cand in built.sorted(by: { $0.fireDate < $1.fireDate }) {
+            let gated = eligible.contains { $0.id == cand.id }
+            let won = scheduled.contains { $0.id == cand.id }
+            let verdict = won ? "SCHEDULED" : (gated ? "lost pickWinners" : "gate-BLOCKED")
+            print("      " + padc(cand.kind.rawValue, 17)
+                + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(verdict, 17)
+                + cand.body.prefix(60))
+        }
+
+        // The winner set the pre-placement arbiter would have produced from
+        // this run's data — same gates, same budget, same spacing.
+        let beforeWinners = pickWinners(
+            from: eligible.filter { !placementKinds.contains($0.kind) },
+            context: context
+        )
+        let beforeIDs = Set(beforeWinners.map(\.id))
+        let afterIDs = Set(scheduled.map(\.id))
+        let displaced = beforeWinners.filter { !afterIDs.contains($0.id) }
+        let added = scheduled.filter { !beforeIDs.contains($0.id) }
+        if displaced.isEmpty {
+            print("  → nothing displaced: every pre-placement winner still fires; "
+                + "placement nudges are purely additive on this data.")
+        } else {
+            for lost in displaced {
+                print("  → DISPLACED: \(lost.kind.rawValue) '\(lost.title)' @ "
+                    + "\(fmt.string(from: lost.fireDate)) no longer fires (budget or spacing).")
+            }
+        }
+        for gained in added where placementKinds.contains(gained.kind) {
+            print("  → ADDED: \(gained.kind.rawValue) @ \(fmt.string(from: gained.fireDate)).")
+        }
+    }
+
+    // MARK: - DEBUG: goal-lapse impact
+
+    /// Before/after for the goal-lapse bait (cycle 2026-08-04-03), per
+    /// work-order item 5. BEFORE is the arbiter with no goal-lapse builder
+    /// — what shipped until this cycle — recomputed as the winner set over
+    /// the same eligible candidates minus the new kind. AFTER is what this
+    /// run actually scheduled. Read-only.
+    private func debugGoalLapseImpact(
+        all: [NudgeCandidate],
+        eligible: [NudgeCandidate],
+        scheduled: [NudgeCandidate],
+        context: GateContext
+    ) {
+        let built = all.filter { $0.kind == .goalLapse }
+        guard !built.isEmpty else {
+            print("[GoalLapseImpact] no goal-lapse candidate this run — no active "
+                + "goals, none lapsed a month yet, or the toggle is off. "
+                + "BEFORE and AFTER identical.")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        print("[GoalLapseImpact] \(built.count) goal-lapse candidate(s) built:")
+        for cand in built {
+            let gated = eligible.contains { $0.id == cand.id }
+            let won = scheduled.contains { $0.id == cand.id }
+            let verdict = won ? "SCHEDULED" : (gated ? "lost pickWinners" : "gate-BLOCKED")
+            print("      " + padc(fmt.string(from: cand.fireDate), 18)
+                + padc(verdict, 17)
+                + "goal=\(cand.goalID?.uuidString.prefix(8) ?? "—")")
+        }
+
+        let beforeWinners = pickWinners(
+            from: eligible.filter { $0.kind != .goalLapse },
+            context: context
+        )
+        let beforeIDs = Set(beforeWinners.map(\.id))
+        let afterIDs = Set(scheduled.map(\.id))
+        let displaced = beforeWinners.filter { !afterIDs.contains($0.id) }
+        if displaced.isEmpty {
+            print("  → nothing displaced: every pre-lapse winner still fires; "
+                + "the bait is purely additive on this data.")
+        } else {
+            for lost in displaced {
+                print("  → DISPLACED: \(lost.kind.rawValue) '\(lost.title)' @ "
+                    + "\(fmt.string(from: lost.fireDate)) no longer fires (budget or spacing).")
+            }
+        }
+        for gained in scheduled where gained.kind == .goalLapse && !beforeIDs.contains(gained.id) {
+            print("  → ADDED: goalLapse @ \(fmt.string(from: gained.fireDate)).")
+        }
+    }
+
+    // MARK: - DEBUG: daily budget impact
+
+    /// Before/after for raising `dailyNudgeBudget` 3 → 10 (cycle
+    /// 2026-08-04-02 item 3), per work-order item 5. BEFORE replays this
+    /// run's winner pick under the pre-change budget of 3; AFTER is what
+    /// actually got scheduled. Read-only.
+    ///
+    /// Also prints the day's EFFECTIVE ceiling — the number the budget can
+    /// no longer be blamed for. `minNudgeSpacingMinutes` fence-posts the
+    /// awake window (with the default profile, 810 min / 90 min → 10
+    /// slots), and every budget-exempt winner (morning prompt, event
+    /// blocks, due-soon) consumes a slot discretionary candidates can't
+    /// use — so the practical cap on a real day sits below the nominal
+    /// spacing ceiling, and both sit at-or-below the budget of 10.
+    /// Spacing, not budget, is now the binding constraint.
+    private func debugBudgetImpact(
+        eligible: [NudgeCandidate],
+        scheduled: [NudgeCandidate],
+        profile: UserProfile,
+        context: GateContext
+    ) {
+        let oldBudget = 3
+        let calendar = Calendar.current
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEE MMM d HH:mm"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+
+        let awakeMinutes: Int
+        if let window = quietWindow(for: profile) {
+            awakeMinutes = ((window.startMinute - window.endMinute) + 1440) % 1440
+        } else {
+            awakeMinutes = 1440
+        }
+        let spacingSlots = awakeMinutes / NudgeConfig.minNudgeSpacingMinutes + 1
+        print("[BudgetImpact] budget \(oldBudget) → \(NudgeConfig.dailyNudgeBudget); "
+            + "spacing ceiling = \(awakeMinutes)m awake / \(NudgeConfig.minNudgeSpacingMinutes)m "
+            + "spacing → \(spacingSlots) slots/day before budget-exempt winners claim theirs.")
+
+        let oldWinners = pickWinners(from: eligible, context: context, budget: oldBudget)
+        let oldIDs = Set(oldWinners.map(\.id))
+        let freed = scheduled.filter { !oldIDs.contains($0.id) }
+
+        let byDay = Dictionary(grouping: scheduled) { calendar.startOfDay(for: $0.fireDate) }
+        for (day, winners) in byDay.sorted(by: { $0.key < $1.key }) {
+            let discretionary = winners.filter(\.countsAgainstBudget).count
+            let exempt = winners.count - discretionary
+            print("  \(stamp(day)): \(discretionary) discretionary + \(exempt) exempt "
+                + "= \(winners.count) scheduled (old budget allowed \(min(discretionary, oldBudget)) "
+                + "discretionary; effective spacing ceiling \(spacingSlots - exempt) after exempt).")
+        }
+        if freed.isEmpty {
+            print("  → NO CHANGE: the old budget of \(oldBudget) wasn't binding on this data — "
+                + "nothing new fires at \(NudgeConfig.dailyNudgeBudget).")
+        } else {
+            for cand in freed.sorted(by: { $0.fireDate < $1.fireDate }) {
+                print("  → FREED: \(cand.kind.rawValue) @ \(fmt.string(from: cand.fireDate)) "
+                    + "— fires at budget \(NudgeConfig.dailyNudgeBudget), was cut at \(oldBudget).")
+            }
+        }
+    }
+
+    /// Names the FIRST gate in `passesGates` that rejects `candidate`. The
+    /// order here mirrors that function; it re-derives rather than shares
+    /// code because `passesGates` returns a bare Bool and making it report
+    /// reasons would put debug plumbing in the production path.
+    private func floaterGateBlockReason(
+        _ candidate: NudgeCandidate,
+        context: GateContext
+    ) -> String {
+        if firesDuringActiveSession(candidate.fireDate) {
+            return "a focus session is running until "
+                + "\(SessionCoordinator.shared.sessionEnd) and this nudge would arrive "
+                + "inside it. (Since Jul 2026 an active session only blocks candidates "
+                + "that land during it, and never blocks budget-exempt kinds.)"
+        }
+        if firesInsideActivityCooldown(candidate.fireDate) {
+            return "the fire time lands inside the "
+                + "\(NudgeConfig.recentActivityCooldownMinutes)m cooldown that follows the "
+                + "last focus-session start — i.e. this nudge would arrive while the user "
+                + "is plausibly still working. (Read against the FIRE DATE since Jul 2026; "
+                + "it used to read `now` and drop every budget-counting candidate in the "
+                + "reevaluate, tomorrow's included.)"
+        }
+        if !passesQuietHours(fireDate: candidate.fireDate, profile: context.profile) {
+            let window = quietWindow(for: context.profile)
+            return "fire time falls inside quiet hours "
+                + (window.map { $0.description } ?? "(unresolvable — should have failed open)") + "."
+        }
+        if BusyWindowResolver.shared.isBusy(at: candidate.fireDate, modelContext: context.modelContext) {
+            return "fire time lands inside a busy window. Note this includes merged "
+                + "windows: two events with a gap ≤ \(NudgeConfig.interEventGapToleranceMinutes)m "
+                + "become one, so neither has to cover the fire time itself."
+        }
+        if NudgeConfig.fatigueGateEnabled, let taskID = candidate.taskID,
+           taskFatigueCount(taskID: taskID, context: context) >= NudgeConfig.perTaskMaxNudges {
+            return "per-task fatigue — nudged ≥ \(NudgeConfig.perTaskMaxNudges) times without action."
+        }
+        return "no gate reproduced the rejection — this reason-walk has drifted from `passesGates`."
+    }
+
+    private func padc(_ text: String, _ width: Int) -> String {
+        text.count >= width
+            ? String(text.prefix(width - 1)) + " "
+            : text + String(repeating: " ", count: width - text.count)
+    }
+    #endif
 
     // MARK: - Winners
 
     /// Picks all event-block reminders (they're factual + budget-exempt)
     /// plus the top-scoring discretionary candidate per fire-day, capped
     /// by the daily budget, and spaced by the min-spacing window.
+    ///
+    /// An overload rather than a `budget:` default argument for the same
+    /// reason `clusterEvents` has one: a default-value expression is a
+    /// nonisolated autoclosure, so it can't read the main-actor-isolated
+    /// `NudgeConfig`. The parameterized form exists for
+    /// `debugBudgetImpact`, which replays the winner pick under the
+    /// pre-change budget.
     private func pickWinners(
         from candidates: [NudgeCandidate],
         context: GateContext
+    ) -> [NudgeCandidate] {
+        pickWinners(from: candidates, context: context, budget: NudgeConfig.dailyNudgeBudget)
+    }
+
+    private func pickWinners(
+        from candidates: [NudgeCandidate],
+        context: GateContext,
+        budget: Int
     ) -> [NudgeCandidate] {
         var winners: [NudgeCandidate] = []
         let calendar = Calendar.current
@@ -975,7 +4018,7 @@ final class NudgeArbiter: NudgeArbitering {
             let sorted = dayCandidates.sorted { $0.score > $1.score }
             var chosen: [NudgeCandidate] = []
             for cand in sorted {
-                guard chosen.count < NudgeConfig.dailyNudgeBudget else { break }
+                guard chosen.count < budget else { break }
                 // Min spacing — must be far enough from every already-chosen
                 // notification (event blocks included).
                 let combined = chosen + winners
@@ -1039,7 +4082,7 @@ final class NudgeArbiter: NudgeArbitering {
         // let us change banner color, but the title prefix is the closest
         // legitimate substitute.
         content.title = candidate.tier.styledTitle(candidate.title)
-        content.body = candidate.body
+        content.body = resolvedBody(for: candidate, modelContext: modelContext)
         content.sound = .default
         content.categoryIdentifier = candidate.categoryID.rawValue
         // The tier overrides the candidate's `interruption` so warning/
@@ -1051,6 +4094,9 @@ final class NudgeArbiter: NudgeArbitering {
         ]
         if let taskID = candidate.taskID {
             userInfo[NudgeNotificationUserInfoKey.taskID] = taskID.uuidString
+        }
+        if let goalID = candidate.goalID {
+            userInfo[NudgeNotificationUserInfoKey.goalID] = goalID.uuidString
         }
         content.userInfo = userInfo
 
@@ -1080,6 +4126,46 @@ final class NudgeArbiter: NudgeArbitering {
             eventReminderHistory = history
         }
 
+        // Same delivered-marker for due-soon reminders — this is what makes
+        // them once-per-task (see `buildDueSoonCandidates`).
+        if candidate.kind == .dueSoon {
+            var history = dueSoonHistory
+            history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
+            dueSoonHistory = history
+        }
+
+        // And for missed-placement attempts — what stops the catch-up path
+        // from re-firing a delivered attempt on the next reevaluate (see
+        // `buildPlacementMissedCandidates`).
+        if candidate.kind == .placementMissed {
+            var history = placementMissedHistory
+            history[candidate.id] = candidate.fireDate.timeIntervalSinceReferenceDate
+            placementMissedHistory = history
+        }
+
+        // Per-GOAL delivered marker for the goal-lapse bait — backs the
+        // at-most-monthly-per-goal cap. Written at scheduling like the
+        // others, but the builder only lets it BIND once the recorded
+        // instant has passed, so re-scheduling a pending bait doesn't
+        // push it out another month.
+        if candidate.kind == .goalLapse, let goalID = candidate.goalID {
+            var history = goalLapseHistory
+            history[goalID.uuidString] = candidate.fireDate.timeIntervalSinceReferenceDate
+            goalLapseHistory = history
+        }
+
+        // Record which task the morning prompt named for its fire day, so
+        // `morningPromptMaxConsecutiveDays` can make it step aside. Keyed on
+        // the FIRE day, not today: an evening reevaluate schedules
+        // tomorrow's prompt, and tomorrow is the morning the user will see
+        // it on. Re-scheduling the same day writes the same pair again.
+        if candidate.kind == .morningPrompt, let namedTaskID = candidate.namedTaskID {
+            var history = morningPromptHistory
+            history[stamp(Calendar.current.startOfDay(for: candidate.fireDate))]
+                = namedTaskID.uuidString
+            morningPromptHistory = history
+        }
+
         // Log the outcome row as "pending" so future evaluations can see
         // fatigue and so we can mark it tapped/ignored later. `estimatedMinutes`
         // is captured here so that on completion we can compare predicted
@@ -1093,6 +4179,46 @@ final class NudgeArbiter: NudgeArbitering {
         )
         modelContext.insert(outcome)
         try? modelContext.save()
+    }
+
+    /// The body this candidate ships with: cached AI copy when a valid
+    /// entry exists, the candidate's own deterministic template otherwise
+    /// (cycle 2026-08-03-03).
+    ///
+    /// This is a synchronous cache READ — no API call anywhere near the
+    /// arbiter's path (DESIGN.md). `NudgeCopyStore.validBody` does the
+    /// staleness work: entry age, the named task still open and unfinished,
+    /// its deadline unchanged and still ahead of the fire date. Any miss →
+    /// template, which is why the app with no key, no network, or an empty
+    /// cache behaves exactly as it did before generated copy existed.
+    ///
+    /// Looked up by `namedTaskID ?? taskID`: the morning prompt carries the
+    /// task its copy names in `namedTaskID` (its `taskID` stays nil for the
+    /// fatigue system — see `NudgeCandidate.namedTaskID`).
+    private func resolvedBody(
+        for candidate: NudgeCandidate,
+        modelContext: ModelContext
+    ) -> String {
+        // Come-back copy is Roman's verbatim wording (Sep 2026) and never
+        // names a task — the cache may still hold pre-ruling entries that
+        // do, so this kind never swaps.
+        guard candidate.kind != .comeBack else { return candidate.body }
+        guard let generated = NudgeCopyStore.validBody(
+            kind: candidate.kind,
+            taskID: candidate.namedTaskID ?? candidate.taskID,
+            fireDate: candidate.fireDate,
+            modelContext: modelContext
+        ) else {
+            return candidate.body
+        }
+        #if DEBUG
+        // Before/after per work-order item 5: the template beside the
+        // generated copy that replaces it.
+        print("[NudgeArbiter] copy swap for \(candidate.kind.rawValue) @ \(candidate.fireDate):")
+        print("  TEMPLATE : \"\(candidate.body)\"")
+        print("  GENERATED: \"\(generated)\"")
+        #endif
+        return generated
     }
 
     private func stamp(_ date: Date) -> String {

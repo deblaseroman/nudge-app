@@ -6,6 +6,8 @@
 	<array>
 		<string>com.deblaser.nudge.dailyRecalc</string>
 	</array>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Nudge reads your calendar to schedule tasks around your events and remind you before classes, shifts, and appointments.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Lexend-Light.ttf</string>
@@ -17,7 +19,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
-		<string>remote-notification</string>
 	</array>
 </dict>
 </plist>

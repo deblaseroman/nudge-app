@@ -6,6 +6,7 @@
 //
 
 import BackgroundTasks
+import EventKit
 import SwiftData
 import SwiftUI
 import UIKit
@@ -29,7 +30,10 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in
             NudgeNotificationCategories.registerAll()
         }
-        Task {
+        Task { @MainActor in
+            // NudgeNotificationService is @MainActor — explicit isolation
+            // here because UIApplicationDelegate's methods aren't
+            // @MainActor-isolated, so this Task wouldn't inherit it.
             await NudgeNotificationService.shared.configure()
         }
 
@@ -49,6 +53,64 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
             }
         }
         Self.scheduleNextDailyRecalc()
+
+        // ⚠️ TEMP-STAKES-DUMP — remove after verifying capture-assigned
+        // stakes. Grep the tag to delete every trace (this block + the
+        // method below).
+        #if DEBUG
+        Task { @MainActor in
+            Self.tempDumpAllTaskStakes()
+        }
+        #endif
+
+        // Eval harness (`eval/run.sh`): `-nudge-eval <cases.json>` runs the
+        // cases against the real capture / arbiter code on an isolated
+        // in-memory store, prints EVAL lines, and exits the process. DEBUG
+        // only; a normal launch never sees the flag.
+        #if DEBUG
+        if EvalHarness.isRequested {
+            Task { @MainActor in
+                await EvalHarness.runFromLaunchArguments()
+                exit(0)
+            }
+            return true
+        }
+        // `-nudge-export-captures [path]`: write the capture-history draft
+        // (`scripts/export-captures.sh`) and exit. Reads the real store,
+        // writes two files in Documents, changes nothing else.
+        if CaptureHistoryExporter.isRequested {
+            Task { @MainActor in
+                CaptureHistoryExporter.runFromLaunchArguments()
+                exit(0)
+            }
+            return true
+        }
+        // `-nudge-check-calendar`: call the real calendar request and print
+        // the result. A missing usage description kills the process before
+        // the dialog, so one console line proves the key matches the API.
+        if ProcessInfo.processInfo.arguments.contains("-nudge-check-calendar") {
+            Task { @MainActor in
+                let before = EKEventStore.authorizationStatus(for: .event)
+                let granted = await CalendarService.shared.requestCalendarAccess()
+                let after = EKEventStore.authorizationStatus(for: .event)
+                print("[CalendarCheck] requestFullAccessToEvents granted=\(granted) status before=\(before.rawValue) after=\(after.rawValue) (0 notDetermined, 1 restricted, 2 denied, 3 fullAccess, 4 writeOnly)")
+                exit(0)
+            }
+            return true
+        }
+        #endif
+
+        // ⚠️ TEMP-INTENT-AUDIT (cycle 2026-09-03-01 item 4) — every open
+        // dated task predates the deadline/intent split and carries a
+        // possibly-fabricated deadline. This PRINTS a proposed
+        // classification and writes NOTHING; Roman reviews the table and
+        // fixes rows by hand (or approves a one-shot apply in a later
+        // cycle). Grep the tag to delete every trace.
+        #if DEBUG
+        Task { @MainActor in
+            Self.tempDumpDeadlineIntentAudit()
+        }
+        #endif
 
         return true
     }
@@ -98,19 +160,81 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
 
         let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first
         if let profile {
-            // All notification decisions go through the arbiter.
+            // All notification decisions go through the arbiter — including
+            // the morning prompt, which is why this ~6 AM run matters: it
+            // reassesses today's day-load with the morning's data before
+            // the wake+30 fire time.
             NudgeArbiter.shared.reevaluate(
                 reason: .backgroundTask,
                 profile: profile,
                 modelContext: context
             )
-            // Keep the two repeating check-in notifications (bedtime planning
-            // + morning kickoff) — these aren't nudges, they're factual
-            // anchors and don't compete with the arbiter.
-            NotificationScheduler.shared.scheduleDailyNotifications(for: profile)
+            // Sweep the retired pre-Jul-2026 repeating daily notifications.
+            NotificationScheduler.shared.cancelRetiredDailyNotifications()
         }
         task.setTaskCompleted(success: true)
     }
+
+    // ⚠️ TEMP-STAKES-DUMP — remove after verifying capture-assigned stakes.
+    // Prints every NudgeTask at launch so we can eyeball what stakes freshly
+    // captured tasks receive. This is the one place we see the capture
+    // flow's own stakes output. Sorted by source
+    // so capture / calendar / manual rows cluster. Grep "TEMP-STAKES-DUMP".
+    #if DEBUG
+    @MainActor
+    static func tempDumpAllTaskStakes() {
+        let context = SharedModelContainer.container.mainContext
+        let tasks = ((try? context.fetch(FetchDescriptor<NudgeTask>())) ?? [])
+            .sorted { ($0.source, $0.title) < ($1.source, $1.title) }
+        print("\n── TEMP-STAKES-DUMP · \(tasks.count) task(s) ──────────────────────")
+        for t in tasks {
+            let userSet = t.stakesIsUserSet ? " (user-set)" : ""
+            print("  stakes=\(t.stakes?.rawValue ?? "nil")\(userSet)"
+                + "\tsrc=\(t.source)"
+                + "\tcat=\(t.category ?? "nil")"
+                + "\tpri=\(t.priority)"
+                + "\t\(t.title)")
+        }
+        print("── TEMP-STAKES-DUMP end ───────────────────────────────────────\n")
+    }
+
+    /// ⚠️ TEMP-INTENT-AUDIT — proposes deadline-vs-intent for every open
+    /// dated task, WRITES NOTHING. "keep deadline" is proposed only where
+    /// the row shows owed-work signals (deadline-shaped title keywords, or
+    /// a generated prep/commitment row whose date IS its plan day);
+    /// everything else dated is proposed as intent — the same asymmetry as
+    /// capture's default, and these proposals are read by a human, not
+    /// applied by code.
+    @MainActor
+    static func tempDumpDeadlineIntentAudit() {
+        let context = SharedModelContainer.container.mainContext
+        let all = ((try? context.fetch(FetchDescriptor<NudgeTask>())) ?? [])
+        let dated = all
+            .filter { !$0.isComplete && !$0.isInformationalEvent && $0.hasDeadline }
+            .sorted { ($0.dueDate ?? .distantFuture, $0.title) < ($1.dueDate ?? .distantFuture, $1.title) }
+        print("\n── TEMP-INTENT-AUDIT · \(dated.count) open dated task(s), nothing written ──")
+        let deadlineWords = ["due", "submit", "turn in", "deadline", "exam",
+                             "midterm", "final", "quiz", "essay", "assignment",
+                             "application", "apply by", "register", "renew"]
+        for t in dated {
+            let title = t.title.lowercased()
+            let generated = t.source == "prep" || t.source == "commitment"
+            let wordHit = deadlineWords.first { title.contains($0) }
+            let proposal: String
+            if generated {
+                proposal = "keep deadline (generated \(t.source) row — its date is its plan day)"
+            } else if let wordHit {
+                proposal = "keep deadline (\"\(wordHit)\")"
+            } else {
+                proposal = "→ intent (no owed-work signal in the row)"
+            }
+            let day = t.dueDate?.formatted(date: .abbreviated, time: .omitted) ?? "?"
+            let time = t.specificTime?.formatted(date: .omitted, time: .shortened) ?? "—"
+            print("  \(day) \(time)\tsrc=\(t.source)\t\(proposal)\t\(t.title)")
+        }
+        print("── TEMP-INTENT-AUDIT end (review by hand; no auto-apply exists) ──\n")
+    }
+    #endif
 }
 
 @main

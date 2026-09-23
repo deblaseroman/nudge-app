@@ -1,0 +1,356 @@
+<title>The AI of Nudge</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F6F8F6; --panel: #FFFFFF; --panel-2: #EEF1EE;
+    --ink: #1C211D; --muted: #5F665F; --faint: #8C948E; --line: #C9CFC9;
+    --accent: #5E80A6; --accent-soft: #DDE7F0;
+    --warn: #C98A1F; --warn-soft: #F5EAD2;
+    --good: #4E8A66; --good-soft: #DCEDE3;
+    --danger: #C24444; --danger-soft: #F3DCDC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+      --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+      --accent: #9CB2C8; --accent-soft: #2A3542;
+      --warn: #D9A94E; --warn-soft: #3A3222;
+      --good: #7FB799; --good-soft: #223429;
+      --danger: #D97B7B; --danger-soft: #3A2626;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A17; --panel: #1E2320; --panel-2: #262C28;
+    --ink: #E3E8E3; --muted: #A7B0A8; --faint: #79837A; --line: #3A423B;
+    --accent: #9CB2C8; --accent-soft: #2A3542;
+    --warn: #D9A94E; --warn-soft: #3A3222;
+    --good: #7FB799; --good-soft: #223429;
+    --danger: #D97B7B; --danger-soft: #3A2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Lexend","Avenir Next","Segoe UI",sans-serif; font-weight:300;
+    line-height:1.6; font-size:15.5px; }
+  .doc { max-width:940px; margin:0 auto; padding:40px 24px 96px; }
+  .titleblock { border:1.5px solid var(--ink); display:grid; grid-template-columns:1fr auto; margin-bottom:48px; }
+  .titleblock .name { padding:26px 28px; }
+  .titleblock h1 { margin:0 0 6px; font-size:30px; font-weight:600; letter-spacing:-0.01em; text-wrap:balance; }
+  .titleblock .sub { margin:0; color:var(--muted); max-width:58ch; }
+  .titleblock .byline { margin:12px 0 0; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:var(--faint); }
+  .titleblock .meta { border-left:1.5px solid var(--ink); display:grid; grid-template-rows:repeat(3,1fr); min-width:200px; }
+  .titleblock .meta > div { padding:8px 16px; display:flex; flex-direction:column; justify-content:center; }
+  .titleblock .meta > div + div { border-top:1px solid var(--line); }
+  .k { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+  .v { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink); }
+  section { margin:56px 0; }
+  h2 { font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);
+    border-bottom:1px solid var(--line); padding-bottom:8px; margin:0 0 10px; }
+  h2 .n { color:var(--faint); margin-right:10px; }
+  .lede { color:var(--muted); max-width:68ch; margin:0 0 22px; }
+  .lede strong { color:var(--ink); font-weight:500; }
+  code { font-family:"IBM Plex Mono",monospace; font-size:0.86em; background:var(--panel-2); padding:1px 5px; border-radius:4px; }
+  figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px 18px 14px; overflow-x:auto; }
+  figure svg { display:block; min-width:680px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption { font-size:13px; color:var(--muted); border-top:1px solid var(--line); margin-top:16px; padding-top:12px; max-width:74ch; }
+  figcaption .fig { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); margin-right:6px; }
+  svg { color: var(--ink); }
+  svg text { font-family:"Lexend",sans-serif; font-size:12.5px; fill:var(--ink); }
+  svg text.m { font-family:"IBM Plex Mono",monospace; font-size:11px; }
+  svg text.s { font-size:10.5px; fill:var(--muted); }
+  svg text.acct { fill:var(--accent); }
+  svg text.warnt { fill:var(--warn); }
+  svg text.goodt { fill:var(--good); }
+  svg text.dngt { fill:var(--danger); }
+  svg .box { fill:var(--panel-2); stroke:currentColor; stroke-width:1.2; }
+  svg .soft { fill:var(--panel); stroke:var(--line); stroke-width:1; }
+  svg .accb { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.2; }
+  svg .warnb { fill:var(--warn-soft); stroke:var(--warn); stroke-width:1.2; }
+  svg .goodb { fill:var(--good-soft); stroke:var(--good); stroke-width:1.2; }
+  svg .ghost { fill:none; stroke:var(--faint); stroke-width:1.2; stroke-dasharray:5 4; }
+  svg .wire { stroke:currentColor; stroke-width:1.2; fill:none; }
+  svg .wire.acc { stroke:var(--accent); }
+  svg .wire.warn { stroke:var(--warn); }
+  svg .wire.good { stroke:var(--good); }
+  svg .wire.dng { stroke:var(--danger); }
+  svg .wire.dash { stroke-dasharray:5 4; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px;
+    background:var(--panel); border:1px solid var(--line); }
+  th { text-align:left; font-family:"IBM Plex Mono",monospace; font-size:10.5px;
+    letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); font-weight:600;
+    padding:10px 12px; border-bottom:1.5px solid var(--line); }
+  td { padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  td.mono { font-family:"IBM Plex Mono",monospace; font-size:12px; white-space:nowrap; }
+  .tag { display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:600;
+    letter-spacing:0.06em; padding:1px 7px; border-radius:99px; border:1px solid; white-space:nowrap; }
+  .tag.opus { color:var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+  .tag.haiku { color:var(--muted); border-color:var(--line); background:var(--panel-2); }
+  .tag.none { color:var(--good); border-color:var(--good); background:var(--good-soft); }
+  .tablewrap { overflow-x:auto; }
+  .qs { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .qs li { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:4px; padding:12px 16px; font-size:14px; }
+  .qs li strong { font-weight:500; }
+  .qs li .why { color:var(--muted); }
+  footer { margin-top:72px; padding-top:16px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:"IBM Plex Mono",monospace; }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <div class="name">
+      <h1>The AI of Nudge</h1>
+      <p class="sub">Eight call sites, two models, one router, and one hard boundary: judgment happens at the edges, and the machinery that interrupts you never calls a model.</p>
+      <p class="byline">Roman DeBlase · Nudge</p>
+    </div>
+    <div class="meta">
+      <div><span class="k">Document</span><span class="v">SYS-AI-05</span></div>
+      <div><span class="k">Census</span><span class="v">CONTEXT.md ⚙ · 8 sites</span></div>
+      <div><span class="k">Revision</span><span class="v">2026-09-14</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 1.0 THE MAP ════════ -->
+  <section>
+    <h2><span class="n">1.0</span>Where AI lives — and the line it never crosses</h2>
+    <p class="lede">Every model call sits on an <strong>edge</strong> of the system: language coming in, or copy going out. The core — arbiter, planner, scorers — is deterministic Swift. AI-derived facts reach decisions only as <strong>cached fields read synchronously</strong>, so notification timing is always reproducible from local data.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 420" role="img" aria-label="AI call sites arranged around a deterministic core: capture and small-talk on the input edge, enrichment and copy generation as cached writers, with the arbiter and planner inside a boundary no model call crosses.">
+        <defs>
+          <marker id="m1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+          <marker id="m1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- INPUT EDGE column -->
+        <text class="m" x="120" y="24" text-anchor="middle" font-weight="600">LANGUAGE IN</text>
+        <rect class="accb" x="20" y="36" width="200" height="58" rx="5"/>
+        <text class="m" x="120" y="58" text-anchor="middle" font-weight="600">capture (sendChat)</text>
+        <text class="s" x="120" y="74" text-anchor="middle">Opus 5 · effort low · ~6¢</text>
+        <text class="s" x="120" y="87" text-anchor="middle">dump → tasks/events/commitments</text>
+
+        <rect class="soft" x="20" y="108" width="200" height="50" rx="5"/>
+        <text class="m" x="120" y="128" text-anchor="middle" font-weight="600">small-talk lane</text>
+        <text class="s" x="120" y="145" text-anchor="middle">Haiku · ~0.05¢ · writes NOTHING</text>
+
+        <rect class="soft" x="20" y="172" width="200" height="50" rx="5"/>
+        <text class="m" x="120" y="192" text-anchor="middle" font-weight="600">screenshot import</text>
+        <text class="s" x="120" y="209" text-anchor="middle">Haiku · image → events</text>
+
+        <rect class="soft" x="20" y="236" width="200" height="50" rx="5"/>
+        <text class="m" x="120" y="256" text-anchor="middle" font-weight="600">plan refine (Refiner)</text>
+        <text class="s" x="120" y="273" text-anchor="middle">Haiku · Pro · writes placements</text>
+
+        <!-- STORE -->
+        <rect class="accb" x="330" y="120" width="180" height="120" rx="6"/>
+        <text class="m" x="420" y="152" text-anchor="middle" font-weight="600">SwiftData store</text>
+        <text class="s" x="420" y="172" text-anchor="middle">tasks · events · intents</text>
+        <text class="s" x="420" y="188" text-anchor="middle">stakes · signals · copy cache</text>
+        <text class="s" x="420" y="204" text-anchor="middle">outcomes</text>
+
+        <line class="wire acc" x1="220" y1="65" x2="326" y2="150" marker-end="url(#m1a)"/>
+        <line class="wire" x1="220" y1="197" x2="326" y2="180" marker-end="url(#m1)"/>
+        <line class="wire" x1="220" y1="261" x2="326" y2="210" marker-end="url(#m1)"/>
+        <text class="s dngt" x="262" y="120" text-anchor="middle">small talk never</text>
+        <text class="s dngt" x="262" y="133" text-anchor="middle">touches the store</text>
+
+        <!-- CACHED WRITERS column -->
+        <text class="m" x="120" y="318" text-anchor="middle" font-weight="600">BACKGROUND WRITERS</text>
+        <rect class="soft" x="20" y="330" width="200" height="42" rx="5"/>
+        <text class="s" x="120" y="348" text-anchor="middle"><tspan class="m" font-weight="600">NudgeIntelligence</tspan> · Haiku · 7-day cache</text>
+        <text class="s" x="120" y="362" text-anchor="middle">per-task signals</text>
+        <rect class="soft" x="240" y="330" width="200" height="42" rx="5"/>
+        <text class="s" x="340" y="348" text-anchor="middle"><tspan class="m" font-weight="600">StakesBackfill</tspan> · Haiku · one-shot</text>
+        <text class="s" x="340" y="362" text-anchor="middle">stakes on old rows</text>
+        <rect class="soft" x="460" y="330" width="200" height="42" rx="5"/>
+        <text class="s" x="560" y="348" text-anchor="middle"><tspan class="m" font-weight="600">NudgeCopyService</tspan> · Haiku · ahead-of-time</text>
+        <text class="s" x="560" y="362" text-anchor="middle">notification bodies, cached 3 days</text>
+        <rect class="soft" x="680" y="330" width="200" height="42" rx="5"/>
+        <text class="s" x="780" y="348" text-anchor="middle"><tspan class="m" font-weight="600">goal-lapse hook</tspan> · Haiku · live, cached/day</text>
+        <text class="s" x="780" y="362" text-anchor="middle">one message-box message</text>
+
+        <line class="wire" x1="120" y1="330" x2="360" y2="244" marker-end="url(#m1)"/>
+        <line class="wire" x1="340" y1="330" x2="400" y2="244" marker-end="url(#m1)"/>
+        <line class="wire" x1="560" y1="330" x2="460" y2="244" marker-end="url(#m1)"/>
+
+        <!-- DETERMINISTIC CORE -->
+        <rect class="ghost" x="590" y="36" width="320" height="250" rx="8"/>
+        <text class="m goodt" x="750" y="60" text-anchor="middle" font-weight="600">DETERMINISTIC CORE — NO MODEL CALLS</text>
+        <rect class="goodb" x="620" y="80" width="260" height="56" rx="5"/>
+        <text class="m" x="750" y="102" text-anchor="middle" font-weight="600">NudgeArbiter</text>
+        <text class="s" x="750" y="119" text-anchor="middle">10 builders · 4 gates · winners</text>
+        <rect class="goodb" x="620" y="152" width="260" height="50" rx="5"/>
+        <text class="m" x="750" y="172" text-anchor="middle" font-weight="600">DayPlanEngine · scorers</text>
+        <text class="s" x="750" y="188" text-anchor="middle">any-day planning · Eisenhower · durations</text>
+        <rect class="soft" x="620" y="218" width="260" height="50" rx="5"/>
+        <text class="s" x="750" y="238" text-anchor="middle">reads AI-derived fields from the store</text>
+        <text class="s" x="750" y="254" text-anchor="middle">synchronously — cache-only, reproducible</text>
+
+        <line class="wire good" x1="510" y1="180" x2="616" y2="180" marker-end="url(#m1)"/>
+        <text class="s goodt" x="562" y="170" text-anchor="middle">reads</text>
+
+        <text class="s" x="750" y="304" text-anchor="middle">Every site degrades to a deterministic path with no API key.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 1</span>The trust boundary in one look: models write <em>into</em> the store (structured, validated, logged) or generate copy <em>ahead of time</em>; nothing inside the dashed box ever waits on a network call. This is why notification behavior is debuggable — and why the capture prompt is the app's real "AI surface area."</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 2.0 THE ROUTER ════════ -->
+  <section>
+    <h2><span class="n">2.0</span>The router — paranoid in the right direction</h2>
+    <p class="lede">Every Home-chat message passes a <strong>deterministic gate</strong> before any model is chosen. The bias is the design: a wrong "chat" verdict loses a capture (unforgivable); a wrong "task" verdict costs six cents. So the cheap lane takes only what <strong>provably</strong> carries no work — and every tie pays the Opus toll.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 330" role="img" aria-label="A message flows through three checks — plan intent, outstanding model question, and the small-talk gate — routing to the plan refiner, the Opus capture path, or the Haiku small-talk lane.">
+        <defs>
+          <marker id="m2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect class="soft" x="20" y="30" width="150" height="50" rx="5"/>
+        <text x="95" y="60" text-anchor="middle" font-weight="500">message sent</text>
+
+        <rect class="box" x="230" y="30" width="170" height="50" rx="5"/>
+        <text x="315" y="50" text-anchor="middle" font-size="12">"plan my day"-shaped?</text>
+        <text class="s" x="315" y="67" text-anchor="middle">keyword match</text>
+        <line class="wire" x1="170" y1="55" x2="226" y2="55" marker-end="url(#m2)"/>
+
+        <rect class="soft" x="700" y="30" width="200" height="50" rx="5"/>
+        <text class="m" x="800" y="50" text-anchor="middle" font-weight="600">DayPlanRefiner</text>
+        <text class="s" x="800" y="67" text-anchor="middle">Haiku · plan pass</text>
+        <line class="wire" x1="400" y1="55" x2="696" y2="55" marker-end="url(#m2)"/>
+        <text class="s" x="548" y="46" text-anchor="middle">yes</text>
+
+        <rect class="warnb" x="230" y="120" width="170" height="62" rx="5"/>
+        <text x="315" y="142" text-anchor="middle" font-size="12">question outstanding?</text>
+        <text class="s" x="315" y="159" text-anchor="middle">commitment ask pending —</text>
+        <text class="s" x="315" y="172" text-anchor="middle">"today" is a task_update in disguise</text>
+        <line class="wire" x1="315" y1="80" x2="315" y2="116" marker-end="url(#m2)"/>
+        <text class="s" x="325" y="102">no</text>
+
+        <rect class="box" x="230" y="222" width="170" height="76" rx="5"/>
+        <text x="315" y="244" text-anchor="middle" font-size="12">small-talk gate</text>
+        <text class="s" x="315" y="261" text-anchor="middle">≤ 60 chars · ≤ 8 words</text>
+        <text class="s" x="315" y="275" text-anchor="middle">no digits · no day/time words</text>
+        <text class="s" x="315" y="289" text-anchor="middle">no task verbs (word-boundary)</text>
+        <line class="wire" x1="315" y1="182" x2="315" y2="218" marker-end="url(#m2)"/>
+        <text class="s" x="325" y="204">no</text>
+
+        <rect class="accb" x="700" y="130" width="200" height="66" rx="5"/>
+        <text class="m" x="800" y="152" text-anchor="middle" font-weight="600">Opus 5 capture</text>
+        <text class="s" x="800" y="169" text-anchor="middle">effort low · full rulebook</text>
+        <text class="s" x="800" y="184" text-anchor="middle">~6¢ · 3–7 s · writes tasks</text>
+        <line class="wire warn" x1="400" y1="151" x2="696" y2="160" marker-end="url(#m2)"/>
+        <text class="s warnt" x="540" y="144" text-anchor="middle">yes — forced to capture</text>
+        <polyline class="wire" points="400,270 560,270 560,196" fill="none" marker-end="url(#m2)"/>
+        <text class="s" x="470" y="260" text-anchor="middle">fails ANY check → capture</text>
+
+        <rect class="goodb" x="700" y="240" width="200" height="58" rx="5"/>
+        <text class="m" x="800" y="262" text-anchor="middle" font-weight="600">Haiku small talk</text>
+        <text class="s" x="800" y="278" text-anchor="middle">~0.05¢ · &lt;1 s · one warm line</text>
+        <line class="wire good" x1="400" y1="285" x2="696" y2="272" marker-end="url(#m2)"/>
+        <text class="s goodt" x="548" y="292" text-anchor="middle">passes every check</text>
+
+        <text class="s" x="700" y="318">Safety net: the small-talk prompt may never claim it saved anything,</text>
+        <text class="s" x="700" y="331" transform="translate(0,-1)"> </text>
+        <text class="s" x="700" y="330">and redirects real work back to a fresh message.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 2</span>Three deterministic checks, zero AI spent on routing. The outstanding-question override is the subtle one: while Nudge has asked "start today or tomorrow?", even a one-word reply must reach the full capture model to become an update. The gate's mistakes are asymmetric by construction — it can waste cents, never captures.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ════════ 3.0 COST ════════ -->
+  <section>
+    <h2><span class="n">3.0</span>What each call costs — measured, not estimated</h2>
+    <p class="lede">From the Sep 14 head-to-head (real prompts, your key): capture input runs ~10K tokens (the 6.5K-token rulebook + date table + your task list); output is small once effort is low. The USAGE line in the DEBUG console now prints these numbers on every call.</p>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Site</th><th>Model</th><th>When it runs</th><th>Cost / call</th><th>Latency</th></tr>
+      <tr><td>Capture</td><td><span class="tag opus">Opus 5 · low</span></td><td>Each task-bearing chat message</td><td class="mono">~5–7¢</td><td class="mono">3–7 s</td></tr>
+      <tr><td>Small talk</td><td><span class="tag haiku">Haiku</span></td><td>Provably work-free chat</td><td class="mono">~0.05¢</td><td class="mono">&lt;1 s</td></tr>
+      <tr><td>Screenshot import</td><td><span class="tag haiku">Haiku</span></td><td>Per screenshot</td><td class="mono">&lt;1¢</td><td class="mono">~2 s</td></tr>
+      <tr><td>Task intelligence</td><td><span class="tag haiku">Haiku</span></td><td>Once per task per week</td><td class="mono">&lt;0.5¢</td><td class="mono">bg</td></tr>
+      <tr><td>Stakes backfill</td><td><span class="tag haiku">Haiku</span></td><td>One-shot repair</td><td class="mono">~1¢ total</td><td class="mono">bg</td></tr>
+      <tr><td>Notification copy</td><td><span class="tag haiku">Haiku</span></td><td>≤6 batches/day, cached 3 days</td><td class="mono">&lt;1¢</td><td class="mono">bg</td></tr>
+      <tr><td>Plan refine</td><td><span class="tag haiku">Haiku</span></td><td>Once/day, on request, Pro</td><td class="mono">&lt;1¢</td><td class="mono">~3 s</td></tr>
+      <tr><td>Goal-lapse hook</td><td><span class="tag haiku">Haiku</span></td><td>After bait tap, cached/goal/day</td><td class="mono">&lt;0.5¢</td><td class="mono">~2 s</td></tr>
+      <tr><td>Calendar import (iCal / Apple)</td><td><span class="tag none">NO AI</span></td><td>Rolling daily sync</td><td class="mono">$0</td><td class="mono">—</td></tr>
+      <tr><td>All planning &amp; notifications</td><td><span class="tag none">NO AI</span></td><td>Constantly</td><td class="mono">$0</td><td class="mono">instant</td></tr>
+    </table>
+    </div>
+    <p class="lede" style="margin-top:14px">Rough monthly picture for one active user: <strong>capture dominates at ~$1.50–4</strong>; everything else combined is cents. The launch levers, in order: Sonnet 5 for capture (−42%, near-parity in the Sep 14 bake-off), prompt caching, per-user daily caps.</p>
+  </section>
+
+  <!-- ════════ 4.0 THE EMPTY SEAT ════════ -->
+  <section>
+    <h2><span class="n">4.0</span>The empty seat — the Tasks-tab chat box</h2>
+    <p class="lede">The message box's chat shell is <strong>built but deliberately unwired</strong>: portrait, bubbles, a text field, canned "nothing is saved yet" replies. Wiring it means answering one question first: <strong>what is talking to Nudge *here* for, that Home chat isn't?</strong> The shell opens seeded with real context Home never has — the composed message (an overdue task, a goal lapse, a plan announcement) the user just tapped.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 300" role="img" aria-label="The Tasks-tab chat shell shown with its existing seeded context flowing in, and three dashed candidate wirings out: reuse the capture pipeline, a new explain-and-act lane, or the small-talk lane.">
+        <defs>
+          <marker id="m4" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect class="soft" x="20" y="40" width="200" height="80" rx="5"/>
+        <text x="120" y="66" text-anchor="middle" font-weight="500">Seeded context</text>
+        <text class="s" x="120" y="86" text-anchor="middle">the TasksMessage the user tapped:</text>
+        <text class="s" x="120" y="100" text-anchor="middle">overdue · goal lapse · plan news</text>
+
+        <rect class="accb" x="310" y="40" width="220" height="80" rx="6"/>
+        <text class="m" x="420" y="68" text-anchor="middle" font-weight="600">MessageBoxChatShell</text>
+        <text class="s" x="420" y="88" text-anchor="middle">UI complete · replies are stubs</text>
+        <text class="s warnt" x="420" y="104" text-anchor="middle">THE DECISION LIVES HERE</text>
+        <line class="wire" x1="220" y1="80" x2="306" y2="80" marker-end="url(#m4)"/>
+
+        <!-- three candidate wirings -->
+        <rect class="ghost" x="640" y="20" width="260" height="66" rx="5"/>
+        <text class="m" x="770" y="42" text-anchor="middle" font-weight="600">A · reuse capture (Opus)</text>
+        <text class="s" x="770" y="58" text-anchor="middle">full task powers here too — but two</text>
+        <text class="s" x="770" y="72" text-anchor="middle">capture surfaces to keep honest, ~6¢/turn</text>
+        <line class="wire dash" x1="530" y1="62" x2="636" y2="52" marker-end="url(#m4)"/>
+
+        <rect class="ghost" x="640" y="106" width="260" height="66" rx="5"/>
+        <text class="m" x="770" y="128" text-anchor="middle" font-weight="600">B · explain-and-act lane (new)</text>
+        <text class="s" x="770" y="144" text-anchor="middle">answers about YOUR data + small safe</text>
+        <text class="s" x="770" y="158" text-anchor="middle">actions (snooze, move, complete) — new prompt</text>
+        <line class="wire dash" x1="530" y1="85" x2="636" y2="135" marker-end="url(#m4)"/>
+
+        <rect class="ghost" x="640" y="192" width="260" height="66" rx="5"/>
+        <text class="m" x="770" y="214" text-anchor="middle" font-weight="600">C · small-talk lane (Haiku, exists)</text>
+        <text class="s" x="770" y="230" text-anchor="middle">companion voice only, saves nothing,</text>
+        <text class="s" x="770" y="244" text-anchor="middle">redirects work to Home — cheapest, least</text>
+        <line class="wire dash" x1="530" y1="108" x2="636" y2="218" marker-end="url(#m4)"/>
+
+        <text class="s" x="20" y="180">Mixes are legal: e.g. C for chat + a routed jump</text>
+        <text class="s" x="20" y="196">to Home for capture, or B scoped to ONLY the</text>
+        <text class="s" x="20" y="212">seeded item ("push it to tomorrow") — the</text>
+        <text class="s" x="20" y="228">narrowest honest version of "act from chat."</text>
+        <text class="s" x="20" y="256">Whatever is chosen rides the router pattern:</text>
+        <text class="s" x="20" y="272">deterministic gate first, cheapest capable</text>
+        <text class="s" x="20" y="288">model second, capture never silently faked.</text>
+      </svg>
+      <figcaption><span class="fig">FIG 4</span>Three candidate wirings for the shell, drawn as the choice it actually is. A is the most powerful and the most expensive to keep coherent; C is nearly free and already built; B is the genuinely new idea — and its narrow form ("act on the one item you tapped") may be the strongest product fit for a box that opens <em>from</em> a specific message.</figcaption>
+    </figure>
+
+    <ul class="qs">
+      <li><strong>Q1 — What can it DO?</strong> <span class="why">Talk only (C) · talk + capture (A) · talk + act on the seeded item (narrow B) · full B. Everything else follows from this.</span></li>
+      <li><strong>Q2 — Can it change data?</strong> <span class="why">If yes (A or B), every action must run through the existing write paths (capture's validated writes, the editor's `apply`) — never a new model-driven write path. The AI proposes; existing code disposes.</span></li>
+      <li><strong>Q3 — Which model?</strong> <span class="why">Follows from Q1: C = Haiku as-is; narrow B = likely Haiku with a small tool-ish prompt; A / full B = Opus low, routed.</span></li>
+      <li><strong>Q4 — One brain or two?</strong> <span class="why">If both Home and Tasks can capture, they must share the one prompt and write path or they WILL drift — the codebase's oldest lesson.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    Companions: SYS-MAP-01 · SYS-ARB-02 · SYS-BLD-03 · SYS-TIME-04 &nbsp;·&nbsp; census: docs/plan/CONTEXT.md ⚙ (8 sites, Sep 14) &nbsp;·&nbsp; costs: measured Sep 14 bake-off
+  </footer>
+</div>

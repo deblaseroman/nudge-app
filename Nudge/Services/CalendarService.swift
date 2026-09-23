@@ -129,22 +129,37 @@ final class CalendarService {
             }
     }
 
-    /// Default window depth — keeps the app 3 weeks ahead in the calendar so
-    /// upcoming exams/quizzes/deadlines are visible to the prep system.
-    static let rollingWindowDays = 21
+    /// Import depth for both doors (`NudgeConfig.calendarImportHorizonDays`,
+    /// cycle 2026-09-16-01 item 4). The store knows the term; the plan
+    /// reader thinks `planProposalHorizonDays` ahead of it.
+    static var rollingWindowDays: Int { NudgeConfig.calendarImportHorizonDays }
+
+    /// Day stamp of the last successful iCal feed refresh — the feed joins
+    /// the same daily cadence Apple Calendar has (it used to be a one-time
+    /// snapshot taken on the tap).
+    static let icalSyncedDayKey = "nudge.icalSyncedDay"
 
     /// App Group UserDefaults key tracking the latest date we've fetched
     /// calendar events through. Used by `refreshRollingWindow` to incrementally
-    /// extend the window week by week.
+    /// extend the window day by day.
     static let calendarSyncedThroughKey = "nudge.calendarSyncedThrough"
     private static let appGroupID = "group.com.deblaser.nudge"
 
-    /// Re-runs Apple Calendar import to maintain a rolling 3-week future window.
+    /// Re-runs Apple Calendar import to maintain a rolling future window of
+    /// `rollingWindowDays`.
     ///
-    /// - On first call (`syncedThrough == nil`): imports today → today + 21 days.
-    /// - On subsequent calls: only re-imports if at least 7 days have elapsed
-    ///   since the last sync, then extends the window to today + 21 days.
-    /// Skipping the import when no week has elapsed avoids redundant work.
+    /// - On first call (`syncedThrough == nil`): imports today → today + horizon.
+    /// - On subsequent calls: re-imports once the synced-through edge has
+    ///   fallen at least a day behind today + 21, importing only the missing
+    ///   tail slice (genuinely incremental — `start` is the old edge).
+    ///
+    /// Daily, not weekly (cycle 2026-08-02-01): the weekly cadence let the
+    /// visible horizon decay from 21 to 14 days between refreshes, and 14 is
+    /// exactly the prep sweep's maximum lead band — an exam near the far edge
+    /// could enter its lead window while still un-imported, starting prep
+    /// late on the exams needing the longest runway. Extending one day per
+    /// day pins the horizon; same-day repeat calls still skip (the
+    /// guard is 0 until midnight passes).
     @discardableResult
     func refreshRollingWindow(
         modelContext: ModelContext,
@@ -159,9 +174,9 @@ final class CalendarService {
 
         let start: Date
         if let syncedThrough {
-            // Only run if a full week has passed since the last sync.
+            // Only run once the edge is at least a day short of the target.
             let daysSinceSync = calendar.dateComponents([.day], from: syncedThrough, to: target).day ?? 0
-            guard daysSinceSync >= 7 else { return nil }
+            guard daysSinceSync >= 1 else { return nil }
             // Begin from where we last left off (or today if that's in the past).
             start = max(now, syncedThrough)
         } else {
@@ -187,10 +202,33 @@ final class CalendarService {
     func resetRollingWindowCursor() {
         SharedModelContainer.appGroupDefaults
             .removeObject(forKey: Self.calendarSyncedThroughKey)
+        SharedModelContainer.appGroupDefaults
+            .removeObject(forKey: Self.icalSyncedDayKey)
+    }
+
+    /// Daily refresh for a connected iCal link (cycle 2026-09-16-01 item
+    /// 4): re-fetches the persisted feed once per day through the same
+    /// duplicate check and horizon as a manual import. Returns nil when
+    /// today's refresh already ran. Failures leave the day unmarked so the
+    /// next foreground tries again.
+    @discardableResult
+    func refreshICalFeedIfNeeded(
+        urlString: String,
+        modelContext: ModelContext,
+        now: Date = Date()
+    ) async -> CalendarImportResult? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        let today = NudgeCopyStore.dayStamp(now)
+        guard defaults.string(forKey: Self.icalSyncedDayKey) != today else { return nil }
+        let result = await importCanvasICal(urlString: urlString, modelContext: modelContext)
+        if result.errors.isEmpty {
+            defaults.set(today, forKey: Self.icalSyncedDayKey)
+        }
+        return result
     }
 
     /// Import events from Apple Calendar between `from` and `through`.
-    /// Defaults to the rolling 3-week window from now.
+    /// Defaults to the rolling `rollingWindowDays` window from now.
     /// Creates NudgeTasks with source="calendar", deduplicating by title+dueDate.
     func importAppleCalendar(
         modelContext: ModelContext,
@@ -214,7 +252,7 @@ final class CalendarService {
             }
         }
 
-        // Date range: caller-provided or default 3-week window
+        // Date range: caller-provided or the default horizon
         let startDate = startDateOverride ?? Date()
         let endDate = endDateOverride
             ?? Calendar.current.date(byAdding: .day, value: Self.rollingWindowDays, to: startDate)!
@@ -253,16 +291,23 @@ final class CalendarService {
                 continue
             }
 
+            let category = inferCategory(from: event)
             let task = NudgeTask(
                 title: title,
                 dueDate: dueDate,
                 dueTime: event.isAllDay ? nil : "specific",
                 specificTime: specificTime,
                 priority: "medium",
-                category: inferCategory(from: event),
+                category: category,
                 source: "calendar",
+                estimatedMinutes: importedDurationMinutes(
+                    start: event.startDate,
+                    end: event.endDate,
+                    isAllDay: event.isAllDay
+                ),
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
+            task.setStakesFromAutomation(inferStakes(title: title, category: category))
             modelContext.insert(task)
             importedCount += 1
         }
@@ -276,8 +321,78 @@ final class CalendarService {
         return CalendarImportResult(importedCount: importedCount, skippedDuplicates: skippedDuplicates, errors: [])
     }
 
-    /// Fetch and parse a Canvas iCal URL, creating NudgeTasks with
-    /// source="calendar" and category="school".
+    /// Shared fetch + validation for any iCal URL — used by BOTH the real
+    /// import and the pre-import "Check Link", so a passed check can never
+    /// disagree with what the import would then do. Fetches and parses,
+    /// writes NOTHING.
+    ///
+    /// `webcal://` is how Google/Outlook/Canvas often hand out iCal links —
+    /// plain https under a subscribe-me scheme, so it rewrites rather than
+    /// rejects. The envelope guard exists because a pasted web-page URL
+    /// (the Google Calendar page, an Outlook portal) fetches fine and
+    /// parses to zero events — indistinguishable from an empty feed unless
+    /// the iCal envelope itself is checked.
+    private enum ICalFetchOutcome {
+        case success([ParsedICalEvent])
+        case failure(String)
+    }
+
+    private func fetchICalEvents(urlString: String) async -> ICalFetchOutcome {
+        var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("webcal://") {
+            trimmed = "https://" + trimmed.dropFirst("webcal://".count)
+        }
+        guard let url = URL(string: trimmed),
+              url.scheme == "https" || url.scheme == "http" else {
+            return .failure("That's not a usable link — paste the full iCal address.")
+        }
+
+        let icsString: String
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                return .failure("The calendar server returned an error — check that the link is still published.")
+            }
+            guard let text = String(data: data, encoding: .utf8) else {
+                return .failure("Could not read that link's contents.")
+            }
+            icsString = text
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+
+        guard icsString.contains("BEGIN:VCALENDAR") else {
+            return .failure("That link isn't an iCal feed — look for the address ending in .ics (Canvas: Calendar Feed · Google: Secret address in iCal format · Outlook: Publish calendar).")
+        }
+
+        return .success(parseICalEvents(from: icsString))
+    }
+
+    /// Pre-import validation (Sep 2026, Roman): fetch and parse the feed,
+    /// import NOTHING, and report what was found — so the user can verify
+    /// a link before letting it touch their data.
+    func checkICalFeed(urlString: String) async -> (ok: Bool, message: String) {
+        switch await fetchICalEvents(urlString: urlString) {
+        case .failure(let message):
+            return (false, message)
+        case .success(let events):
+            guard !events.isEmpty else {
+                return (true, "That's a valid iCal feed, but it holds no events yet.")
+            }
+            let now = Date()
+            let cutoff = Calendar.current.date(byAdding: .day, value: Self.rollingWindowDays, to: now) ?? now
+            let upcoming = events.filter { event in
+                guard let start = event.startDate else { return false }
+                return start >= now && start <= cutoff
+            }.count
+            return (true, "Valid iCal feed — \(events.count) event\(events.count == 1 ? "" : "s") found, \(upcoming) in the next \(Self.rollingWindowDays) days. Nothing imported yet.")
+        }
+    }
+
+    /// Fetch and parse an iCal feed URL (Canvas, Google, Outlook — any
+    /// .ics), creating NudgeTasks with source="calendar" and category="exam"
+    /// (exam-shaped titles) or "school" (everything else).
     func importCanvasICal(urlString: String, modelContext: ModelContext) async -> CalendarImportResult {
         isImporting = true
         defer {
@@ -285,39 +400,18 @@ final class CalendarService {
             lastImportDate = Date()
         }
 
-        // Validate URL
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed),
-              url.scheme == "https" || url.scheme == "http" else {
-            lastImportError = "Invalid URL"
-            return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: ["Invalid iCal URL"])
+        let parsedEvents: [ParsedICalEvent]
+        switch await fetchICalEvents(urlString: urlString) {
+        case .failure(let message):
+            lastImportError = message
+            return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [message])
+        case .success(let events):
+            parsedEvents = events
         }
 
-        // Fetch .ics data
-        let icsString: String
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                lastImportError = "Failed to fetch calendar"
-                return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: ["Server returned an error"])
-            }
-            guard let text = String(data: data, encoding: .utf8) else {
-                lastImportError = "Could not decode response"
-                return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: ["Could not decode response"])
-            }
-            icsString = text
-        } catch {
-            lastImportError = error.localizedDescription
-            return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [error.localizedDescription])
-        }
-
-        // Parse VEVENT blocks
-        let parsedEvents = parseICalEvents(from: icsString)
-
-        // Filter to next 30 days and map to tasks
+        // Filter to the import horizon and map to tasks
         let now = Date()
-        let cutoff = Calendar.current.date(byAdding: .day, value: 30, to: now)!
+        let cutoff = Calendar.current.date(byAdding: .day, value: Self.rollingWindowDays, to: now)!
 
         var importedCount = 0
         var skippedDuplicates = 0
@@ -344,10 +438,18 @@ final class CalendarService {
                 dueTime: event.isAllDay ? nil : "specific",
                 specificTime: specificTime,
                 priority: inferPriorityFromCanvas(title: title),
-                category: "school",
+                // Canvas is where exams come from — a blanket "school"
+                // here would keep every imported exam at the school prior.
+                category: isExamTitle(title) ? "exam" : "school",
                 source: "calendar",
+                estimatedMinutes: importedDurationMinutes(
+                    start: startDate,
+                    end: event.endDate,
+                    isAllDay: event.isAllDay
+                ),
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
+            task.setStakesFromAutomation(inferStakes(title: title, category: "school"))
             modelContext.insert(task)
             importedCount += 1
         }
@@ -359,6 +461,35 @@ final class CalendarService {
 
         lastImportError = nil
         return CalendarImportResult(importedCount: importedCount, skippedDuplicates: skippedDuplicates, errors: [])
+    }
+
+    // MARK: - Imported duration
+
+    /// Real duration for an imported event, taken from the end time both
+    /// import paths already have and used to throw away. Without this,
+    /// every imported event arrived with `estimatedMinutes == nil` and
+    /// `BusyWindowResolver` fell back to `defaultEventDurationMinutes` —
+    /// a three-hour lab and a six-hour shift both read as 60 minutes busy.
+    ///
+    /// Returns nil (leaving the old fallback in place) when:
+    ///   - the event is all-day — it has no `specificTime`, so the busy
+    ///     gate never asks about it in the first place;
+    ///   - there is no end time;
+    ///   - the span is zero or negative — an iCal deadline entry where
+    ///     DTEND == DTSTART carries no duration information at all, and
+    ///     writing 0 would be read as "unset" downstream anyway
+    ///     (`BusyWindowResolver` requires `explicit > 0`).
+    ///
+    /// Capped at `NudgeConfig.maxImportedEventDurationMinutes`.
+    private func importedDurationMinutes(
+        start: Date,
+        end: Date?,
+        isAllDay: Bool
+    ) -> Int? {
+        guard !isAllDay, let end else { return nil }
+        let minutes = Int(end.timeIntervalSince(start) / 60)
+        guard minutes > 0 else { return nil }
+        return min(minutes, NudgeConfig.maxImportedEventDurationMinutes)
     }
 
     // MARK: - Deduplication
@@ -386,57 +517,66 @@ final class CalendarService {
         }
     }
 
-    // MARK: - High-Priority Event Detection (Feature 4)
+    // MARK: - High-priority keywords
 
-    /// Keywords that indicate an event is important enough to trigger a multi-day prep plan.
+    /// Keywords that mark an imported title as consequential (the keyword
+    /// half of `inferStakes`). Plans for such events are proposed by
+    /// `PlanProposalSweep`, not keyed on this list.
     private let highPriorityKeywords = [
         "exam", "final", "midterm", "test", "quiz", "presentation",
         "interview", "deadline", "due date", "defense", "surgery",
         "board meeting", "review", "audit", "demo", "showcase"
     ]
 
-    /// Scans imported calendar tasks for upcoming high-priority events within
-    /// the next 7 days that don't already have prep plans generated.
-    ///
-    // ── CLAUDE API INTEGRATION ──────────────────────────────────────
-    // When a high-priority event is detected, call:
-    //   ClaudeService.shared.generatePrepPlan(eventTitle:eventDate:...)
-    // to create a multi-day prep sequence, then create NudgeTasks from the
-    // returned PrepBlockData items with source = "prep".
-    // ────────────────────────────────────────────────────────────────
-    func detectHighPriorityEvents(modelContext: ModelContext) -> [NudgeTask] {
-        let calendarSource = "calendar"
-        let allCalendarTasks = (try? modelContext.fetch(
-            FetchDescriptor<NudgeTask>(
-                predicate: #Predicate<NudgeTask> { $0.source == calendarSource }
-            )
-        )) ?? []
-
-        let now = Date()
-        let sevenDaysOut = Calendar.current.date(byAdding: .day, value: 7, to: now)!
-
-        return allCalendarTasks.filter { task in
-            guard !task.isComplete else { return false }
-            guard let dueDate = task.dueDate ?? task.specificTime else { return false }
-            guard dueDate > now && dueDate <= sevenDaysOut else { return false }
-
-            // Check if the event title matches high-priority keywords
-            let lower = task.title.lowercased()
-            return highPriorityKeywords.contains { lower.contains($0) }
-        }
-    }
-
     /// Returns true if the given event title contains keywords indicating importance.
+    /// Also the keyword half of `inferStakes` below.
     func isHighPriorityEvent(title: String) -> Bool {
         let lower = title.lowercased()
         return highPriorityKeywords.contains { lower.contains($0) }
     }
 
+    // MARK: - Stakes Inference (deterministic)
+
+    /// Deterministic consequence signal for imported items — keyword scan
+    /// first, then the category ladder. Synchronous and offline on purpose:
+    /// imports must work with no network and no API key, so there is no
+    /// Claude call here. A later AI pass can upgrade these values through
+    /// `NudgeTask.setStakesFromAutomation`, which is also the only way this
+    /// result may be written (user-set stakes must survive re-imports).
+    func inferStakes(title: String, category: String?) -> TaskStakes {
+        if isHighPriorityEvent(title: title) { return .high }
+        switch category.flatMap({ TaskCategory(rawValue: $0.lowercased()) }) {
+        case .exam:
+            return .high
+        case .work, .school, .health:
+            return .medium
+        default:
+            return .low
+        }
+    }
+
     // MARK: - Category & Priority Inference
+
+    /// Exam-title check shared by both import paths (EventKit and Canvas
+    /// iCal). Kept out of `schoolKeywords` because `.exam` carries its own
+    /// importance prior (0.9 vs school's 0.7) and the planned study-task
+    /// feature keys on the category — an exam filed under "school" is
+    /// invisible to it. Mirrors the chat prompt's rule: "exam" for
+    /// tests/midterms/finals/quizzes, "school" for other coursework.
+    private func isExamTitle(_ title: String) -> Bool {
+        let lower = title.lowercased()
+        let examKeywords = ["exam", "quiz", "midterm", "final", "test"]
+        return examKeywords.contains { lower.contains($0) }
+    }
 
     private func inferCategory(from event: EKEvent) -> String {
         let calendarTitle = (event.calendar.title).lowercased()
         let title = (event.title ?? "").lowercased()
+
+        // Exam FIRST, and on the event title only — a calendar NAMED
+        // "Exams" signals school context for its events, not that every
+        // event inside it is itself an exam.
+        if isExamTitle(title) { return "exam" }
 
         let schoolKeywords = ["school", "class", "university", "college", "canvas",
                               "coursework", "lecture", "seminar", "lab", "exam",

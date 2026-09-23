@@ -48,13 +48,12 @@ struct NudgeCompanionView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .widgetURL(URL(string: "nudge://open"))
-        .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+        // No manual .background here — the background is the edge-to-edge
+        // containerBackground on the widget config below. A .background sits
+        // inside the system content margins and inset the fill from the border.
         .overlay {
             ContainerRelativeShape()
-                .strokeBorder(
-                    Color(red: 0.49, green: 0.53, blue: 0.5).opacity(0.28),
-                    lineWidth: 1
-                )
+                .strokeBorder(WidgetColors.neutral.opacity(0.28), lineWidth: 1)
         }
     }
 }
@@ -68,7 +67,7 @@ struct NudgeCompanionWidget: Widget {
         StaticConfiguration(kind: kind, provider: NudgeCompanionProvider()) { entry in
             NudgeCompanionView(entry: entry)
                 .containerBackground(for: .widget) {
-                    Color(red: 0.98, green: 0.98, blue: 0.97)
+                    WidgetColors.background
                 }
         }
         .configurationDisplayName("Nudge Companion")

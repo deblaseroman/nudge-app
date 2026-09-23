@@ -2,8 +2,8 @@
 //  NudgeWidget.swift
 //  NudgeWidget
 //
-//  Widget 1 — Main task widget. Shows today's tasks with interactive
-//  checkboxes, active goals, and a 7-day streak bar.
+//  Widget 1 — Main task widget (large family only, Sep 2026). Shows today's
+//  tasks with interactive checkboxes, today's events, and a 7-day streak bar.
 //  Background: glassy light surface with green accents and grey outlines.
 //  Refreshes every 15 minutes.
 //
@@ -36,12 +36,12 @@ struct TaskSnapshot: Identifiable, Hashable {
     /// "3 hours ago"). Hidden for far-future and at night to keep the
     /// row calm when there's no time pressure to surface.
     var remainingLine: String? = nil
-}
 
-struct GoalSnapshot: Identifiable, Hashable {
-    let id: UUID
-    let title: String
-    let emoji: String
+    /// Day-slot index from the shared `DaySlotPalette` — the row's tint, and
+    /// the same one this task's block carries on the mini chart and in the
+    /// app. Nil for a task that isn't part of today (no placement, no plan
+    /// position), which leaves that row untinted exactly as before.
+    var slot: Int? = nil
 }
 
 /// Lightweight read-model for an informational event (class, work shift,
@@ -58,13 +58,28 @@ struct EventSnapshot: Identifiable, Hashable {
     }
 }
 
+/// Compact block for the widget's mini day chart — today's events + placed
+/// tasks. `start`/`durationMinutes` position it on the wake→bed track.
+struct WidgetTimeBlock: Identifiable, Hashable {
+    let id: UUID
+    let title: String
+    let start: Date
+    let durationMinutes: Int
+    let isEvent: Bool
+    let isComplete: Bool
+    /// Day-slot index from the shared `DaySlotPalette`, so this block is the
+    /// same color here as in the app's timeline and Today list. Nil for
+    /// events (they sit outside the rotation) and for any task the assignment
+    /// didn't reach.
+    let slot: Int?
+}
+
 // MARK: - Timeline Entry
 
 struct NudgeTaskEntry: TimelineEntry {
     let date: Date
     let tasks: [TaskSnapshot]
     let events: [EventSnapshot]
-    let goals: [GoalSnapshot]
     let currentStreak: Int
     let weekActivity: [Bool]   // last 7 days — index 0 = 6 days ago, 6 = today
     let urgentCount: Int
@@ -77,13 +92,18 @@ struct NudgeTaskEntry: TimelineEntry {
     let sessionTimerEndDate: Date?
     let sessionPausedRemaining: Int?
     let activeTaskID: UUID?
+    /// Mini day-chart data. `timeBlocks` are today's events + placed tasks;
+    /// `dayStart`/`dayEnd` are the chart window (wake → bedtime). Defaulted so
+    /// the placeholder/empty factories don't need to specify them.
+    var timeBlocks: [WidgetTimeBlock] = []
+    var dayStart: Date = Date()
+    var dayEnd: Date = Date()
 
     static var placeholder: NudgeTaskEntry {
         NudgeTaskEntry(
             date: Date(),
             tasks: mockTasks,
             events: mockEvents,
-            goals: mockGoals,
             currentStreak: 3,
             weekActivity: [false, true, true, false, true, true, true],
             urgentCount: 1,
@@ -102,7 +122,6 @@ struct NudgeTaskEntry: TimelineEntry {
             date: Date(),
             tasks: [],
             events: [],
-            goals: [],
             currentStreak: 0,
             weekActivity: Array(repeating: false, count: 7),
             urgentCount: 0,
@@ -121,7 +140,6 @@ struct NudgeTaskEntry: TimelineEntry {
             date: Date(),
             tasks: mockTasks,
             events: mockEvents,
-            goals: mockGoals,
             currentStreak: 3,
             weekActivity: [false, true, true, false, true, true, true],
             urgentCount: 1,
@@ -188,35 +206,54 @@ struct NudgeTaskEntry: TimelineEntry {
             isGoalFallback: false
         ),
     ]
-
-    private static var mockGoals: [GoalSnapshot] {
-        [
-            GoalSnapshot(id: UUID(), title: "Read more", emoji: "\u{1F4DA}"),
-            GoalSnapshot(id: UUID(), title: "Work out", emoji: "\u{1F4AA}"),
-            GoalSnapshot(id: UUID(), title: "Journal", emoji: "\u{270D}\u{FE0F}"),
-        ]
-    }
 }
 
 // MARK: - Widget Colors (light theme)
 
-private enum WidgetColors {
-    static let background = Color(red: 0.965, green: 0.976, blue: 0.967)
-    static let surface = Color.white
-    static let accent = Color(red: 0.451, green: 0.576, blue: 0.702)
-    static let accentSoft = Color(red: 0.451, green: 0.576, blue: 0.702).opacity(0.16)
-    static let goalAccent = Color(red: 0.329, green: 0.643, blue: 0.467)
-    static let goalAccentSoft = goalAccent.opacity(0.12)
-    static let neutral = Color(red: 0.55, green: 0.58, blue: 0.56)
-    static let textPrimary = Color(red: 0.11, green: 0.13, blue: 0.12)
-    static let textSecondary = Color(red: 0.11, green: 0.13, blue: 0.12).opacity(0.72)
-    static let textMuted = Color(red: 0.11, green: 0.13, blue: 0.12).opacity(0.45)
-    static let streakActive = accent
-    static let streakInactive = Color(red: 0.11, green: 0.13, blue: 0.12).opacity(0.12)
-    static let checkboxBorder = Color(red: 0.49, green: 0.53, blue: 0.5).opacity(0.28)
-    static let divider = Color(red: 0.49, green: 0.53, blue: 0.5).opacity(0.14)
+/// Widget-local NAMES for the shared `NudgeTheme` palette (Jul 2026 —
+/// these used to be hand-copied RGB triples, and had drifted: background
+/// and textPrimary were off by one channel step, surface/muted/divider
+/// carried their own alphas, and `neutral` was a rounded copy of
+/// `textMuted`). Every value now reads from NudgeTheme, which is compiled
+/// into this target; only widget-specific soft/inactive derivations apply
+/// an opacity on top. Do not introduce raw color literals here.
+enum WidgetColors {
+    static let background = NudgeTheme.background
+    static let surface = NudgeTheme.surface
+    static let accent = NudgeTheme.primary
+    static let accentSoft = NudgeTheme.primary.opacity(0.16)
+    static let goalAccent = NudgeTheme.goalAccent
+    static let goalAccentSoft = NudgeTheme.goalAccent.opacity(0.12)
+    static let neutral = NudgeTheme.textSecondary
+    static let textPrimary = NudgeTheme.textPrimary
+    static let textSecondary = NudgeTheme.textSecondary
+    static let textMuted = NudgeTheme.textMuted
+    static let streakActive = NudgeTheme.primary
+    static let streakInactive = NudgeTheme.textPrimary.opacity(0.12)
+    static let checkboxBorder = NudgeTheme.border
+    static let divider = NudgeTheme.border
     static let pillBackground = accentSoft
-    static let chipBackground = Color(red: 0.49, green: 0.53, blue: 0.5).opacity(0.08)
+    static let chipBackground = NudgeTheme.surfaceAlt
+
+    // Day-slot tints for the mini day chart — forwarded, not redefined, so
+    // the widget's blocks and the app's timeline blocks can only ever be the
+    // same color. `completed` is the greyed variant: mostly neutral, with
+    // enough of the original hue left to still say which block it was.
+    static func daySlotFill(_ slot: Int, completed: Bool) -> Color {
+        completed ? NudgeTheme.daySlotFillCompleted(slot) : NudgeTheme.daySlotFill(slot)
+    }
+
+    static func daySlotAccent(_ slot: Int, completed: Bool) -> Color {
+        completed ? NudgeTheme.daySlotAccentCompleted(slot) : NudgeTheme.daySlotAccent(slot)
+    }
+
+    static func eventSlotFill(completed: Bool) -> Color {
+        completed ? NudgeTheme.eventSlotFillCompleted : NudgeTheme.eventSlotFill
+    }
+
+    static func eventSlotAccent(completed: Bool) -> Color {
+        completed ? NudgeTheme.eventSlotAccentCompleted : NudgeTheme.eventSlotAccent
+    }
 }
 
 // MARK: - Shared Widget Schema & Container
@@ -245,6 +282,8 @@ let widgetSchema = Schema([
     TaskIntelligence.self,
     CategoryDurationStats.self,
     EventDurationStats.self,
+    PrepTombstone.self,
+    NudgeCommitment.self,
 ])
 
 private let widgetAppGroupID = "group.com.deblaser.nudge"
@@ -284,14 +323,6 @@ private enum WidgetFormatters {
     }()
     static let clockTime: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "h:mm a"; return f
-    }()
-    /// Used by `dueDateLine` for ":00" minute case → "9pm".
-    static let clockTimeHourOnly: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "ha"; return f
-    }()
-    /// Used by `dueDateLine` when minutes are non-zero → "9:30pm".
-    static let clockTimeWithMinutes: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "h:mma"; return f
     }()
 }
 
@@ -370,8 +401,35 @@ struct NudgeTaskProvider: TimelineProvider {
             recentDoneDescriptor.fetchLimit = 100
             let recentDone = try context.fetch(recentDoneDescriptor)
 
+            // ── Mini day chart window: a rolling 5-hour window with "now" ──
+            // 15% in from the left (so a little of the recent past shows, and
+            // the next ~4¼ hours are ahead). A short window lets blocks show
+            // a label. Computed HERE, before the event fetch, because the
+            // fetch window below must cover it. `dayStart`/`dayEnd` drive the
+            // strip; the now-marker lands at 15% automatically because
+            // now = dayStart + 0.15 * window.
+            let chartWindow: TimeInterval = 5 * 3600
+            let chartStart = now.addingTimeInterval(-0.15 * chartWindow)
+            let chartEnd = now.addingTimeInterval(0.85 * chartWindow)
+
+            // Events are fetched SORTED by start time and SCOPED to what the
+            // widget actually renders: today (the "next 2 events" list) plus
+            // the chart window (which can poke past midnight late in the
+            // day). An unscoped, unsorted fetch returned the first 20 events
+            // in arbitrary store order — with more than 20 in the store (five
+            // classes a day over two weeks is seventy), today's events could
+            // all miss the cut and the widget omitted what's happening today.
+            // Timeless events are excluded: both consumers guard on
+            // `specificTime` anyway.
+            let eventWindowStart = min(startOfToday, chartStart)
+            let eventWindowEnd = max(endOfToday, chartEnd)
             var eventDescriptor = FetchDescriptor<NudgeTask>(
-                predicate: #Predicate { $0.isInformationalEvent }
+                predicate: #Predicate<NudgeTask> { task in
+                    task.isInformationalEvent &&
+                    (task.specificTime ?? distantPastSentinel) >= eventWindowStart &&
+                    (task.specificTime ?? distantPastSentinel) < eventWindowEnd
+                },
+                sortBy: [SortDescriptor(\.specificTime)]
             )
             eventDescriptor.fetchLimit = 20
             let allFetchedEvents = try context.fetch(eventDescriptor)
@@ -398,7 +456,7 @@ struct NudgeTaskProvider: TimelineProvider {
                 guard let completedAt = task.completedAt else { return false }
                 return now.timeIntervalSince(completedAt) < completionDisplayDuration
             }
-            let visibleTasks = openActionable + recentlyAnimatedDone
+            let visibleTasks = openActionable.filter { !$0.isSkipped } + recentlyAnimatedDone
             let recentlyCompletedTasks = recentlyAnimatedDone
 
             let todayCompletedCount = recentDone.filter { task in
@@ -406,36 +464,52 @@ struct NudgeTaskProvider: TimelineProvider {
                 return completedAt >= startOfToday && completedAt < endOfToday
             }.count
 
-            let incompleteTasks = openActionable
+            let incompleteTasks = openActionable.filter { !$0.isSkipped }
             let totalToday = incompleteTasks.count + todayCompletedCount
 
             let urgentCount = incompleteTasks.filter { task in
                 task.isOverdue || task.priority == "high"
             }.count
 
-            // Sort visible tasks (incomplete + recently completed) together
-            // so completed tasks stay in their original position for smooth animation
-            let sortedVisible = visibleTasks.sorted { lhs, rhs in
-                // Completed tasks sink below incomplete ones
-                if lhs.isComplete != rhs.isComplete {
-                    return !lhs.isComplete
-                }
-                let leftBucket = sortBucket(for: lhs)
-                let rightBucket = sortBucket(for: rhs)
-                if leftBucket != rightBucket {
-                    return leftBucket < rightBucket
-                }
-                return lhs.sortDeadline < rhs.sortDeadline
-            }
+            // Sort visible tasks (incomplete + recently completed) with the
+            // shared comparator — plan-first, then overdue/dated/floater,
+            // completed sunk to the bottom. This used to be an inline copy
+            // of the app's ordering with the plan-first rule hand-bolted on
+            // top; one comparator means the widget can't drift from the
+            // list again.
+            let comparator = TaskSortComparator()
+            let sortedVisible = visibleTasks.sorted { comparator.compare($0, $1) }
 
             var goalDescriptor = FetchDescriptor<NudgeGoal>(
                 predicate: #Predicate { $0.isActive }
             )
             goalDescriptor.fetchLimit = 10
             let activeGoals = try context.fetch(goalDescriptor)
-            let goalSnapshots = activeGoals.prefix(3).map { goal in
-                GoalSnapshot(id: goal.id, title: goal.title, emoji: goal.emoji)
-            }
+
+            // Day-slot assignment, from the SHARED `DaySlotPalette` the app
+            // uses — that's what makes a task the same color in both places,
+            // in the rows and on the mini chart alike.
+            //
+            // Its own fetch, deliberately, rather than reusing
+            // `openActionable + recentDone`: those are capped at 50 and 100
+            // and `openActionable` has no sort descriptor, so which tasks
+            // survive the cap depends on store order. A slot is an INDEX into
+            // an ordered day — one task missing from the input shifts every
+            // slot after it and the widget starts drawing a task in its
+            // neighbor's color. This predicate matches the population
+            // `DaySlotPalette` actually considers (placed or plan, never an
+            // event), which is a handful of rows, so the cap is nominal and
+            // the widget sees the same set the app's unbounded query does.
+            var slotDescriptor = FetchDescriptor<NudgeTask>(
+                predicate: #Predicate<NudgeTask> { task in
+                    !task.isInformationalEvent &&
+                    (task.plannedStartDate != nil || task.sequenceIndex != nil)
+                }
+            )
+            slotDescriptor.fetchLimit = 200
+            let daySlots = DaySlotPalette.assignments(
+                among: (try? context.fetch(slotDescriptor)) ?? []
+            )
 
             // Identify the single most-urgent task — gets a countdown label.
             // Everything else shows the day name only (Rule 9).
@@ -456,7 +530,8 @@ struct NudgeTaskProvider: TimelineProvider {
                         ? WidgetCountdownFormatter.countdown(for: task, now: now)
                         : nil,
                     dueDateLine: WidgetCountdownFormatter.dueDateLine(for: task),
-                    remainingLine: WidgetCountdownFormatter.remainingLine(for: task, now: now)
+                    remainingLine: WidgetCountdownFormatter.remainingLine(for: task, now: now),
+                    slot: daySlots[task.id]
                 )
             }
 
@@ -513,11 +588,52 @@ struct NudgeTaskProvider: TimelineProvider {
                 return UUID(uuidString: idString)
             }()
 
+            // Mini day chart — window computed above, next to the event
+            // fetch it scopes.
+            func overlapsWindow(start: Date, minutes: Int) -> Bool {
+                let end = start.addingTimeInterval(Double(minutes) * 60)
+                return start < chartEnd && end > chartStart
+            }
+
+            var blocks: [WidgetTimeBlock] = []
+            // Events in-window.
+            for event in allFetchedEvents {
+                guard let t = event.specificTime else { continue }
+                // Shared resolution incl. the learned per-title duration —
+                // the old `estimatedMinutes ?? 60` drew a three-hour lab
+                // one hour wide.
+                let mins = event.eventDurationMinutes(modelContext: context)
+                guard overlapsWindow(start: t, minutes: mins) else { continue }
+                blocks.append(WidgetTimeBlock(
+                    id: event.id,
+                    title: event.title,
+                    start: t,
+                    durationMinutes: mins,
+                    isEvent: true,
+                    isComplete: event.isComplete,
+                    slot: nil
+                ))
+            }
+            // Placed tasks in-window (incomplete + recently completed).
+            for task in (openActionable + recentDone) {
+                guard let p = task.plannedStartDate else { continue }
+                let mins = task.plannedDurationMinutes ?? task.estimatedMinutes ?? 30
+                guard overlapsWindow(start: p, minutes: mins) else { continue }
+                blocks.append(WidgetTimeBlock(
+                    id: task.id,
+                    title: task.title,
+                    start: p,
+                    durationMinutes: mins,
+                    isEvent: false,
+                    isComplete: task.isComplete,
+                    slot: daySlots[task.id]
+                ))
+            }
+
             let liveEntry = NudgeTaskEntry(
                 date: Date(),
                 tasks: displayTasks,
                 events: Array(eventSnapshots),
-                goals: Array(goalSnapshots),
                 currentStreak: streak,
                 weekActivity: weekActivity,
                 urgentCount: urgentCount,
@@ -527,7 +643,10 @@ struct NudgeTaskProvider: TimelineProvider {
                 isSessionPaused: sessionPaused,
                 sessionTimerEndDate: sessionEndDate,
                 sessionPausedRemaining: sessionPaused ? sessionPausedRemaining : nil,
-                activeTaskID: activeTaskID
+                activeTaskID: activeTaskID,
+                timeBlocks: blocks,
+                dayStart: chartStart,
+                dayEnd: chartEnd
             )
             let recentCompletionExpiry = recentlyCompletedTasks
                 .compactMap { $0.completedAt?.addingTimeInterval(completionDisplayDuration) }
@@ -550,23 +669,16 @@ struct NudgeTaskProvider: TimelineProvider {
         return task.dueTime
     }
 
-    private func sortBucket(for task: NudgeTask) -> Int {
-        if task.isOverdue {
-            return 0
-        }
-
-        if task.sortDeadline != .distantFuture {
-            return 1
-        }
-
-        return 2
-    }
 }
 
-/// Widget-side mirror of CountdownLabel's text logic. Returns the same
-/// phrasing the in-app label uses so the widget reads consistently. The
-/// widget only refreshes every 15 min, so this is computed at timeline-
-/// snapshot time — not live.
+/// Widget-side countdown text. Derives every threshold decision from the
+/// shared `CountdownState` (Jul 2026 — it used to hand-copy the logic,
+/// and had drifted: `countdown()` switched to days-away at 72h where the
+/// app and this file's own `remainingLine` used 48h). Only the PHRASING
+/// here is widget-specific — shorter formats for a small surface; which
+/// state applies is decided in exactly one place. The widget only
+/// refreshes every 15 min, so this is computed at timeline-snapshot
+/// time — not live.
 enum WidgetCountdownFormatter {
     /// Day-name (or date) string for the non-urgent rows. Per Rule 9.
     static func dayName(for task: NudgeTask, now: Date) -> String? {
@@ -587,44 +699,30 @@ enum WidgetCountdownFormatter {
         return WidgetFormatters.monthDay.string(from: deadline)
     }
 
-    /// Countdown label for the most-urgent row only. Implements rules 1–7
-    /// from the CountdownLabel spec.
+    /// Countdown label for the most-urgent row only. The state (which
+    /// rule applies, incl. the 48h days-away boundary and the night
+    /// window) comes from `CountdownState.compute`; the short phrasing is
+    /// widget-specific.
     static func countdown(for task: NudgeTask, now: Date) -> String? {
         guard let deadline = task.specificTime ?? task.dueDate else { return nil }
-        let interval = deadline.timeIntervalSince(now)
-
-        // Rule 6 — overdue
-        if interval < 0 {
-            return "Was due \(timeAgo(-interval))"
-        }
-
-        // Rule 7 — night suppression
-        let hour = Calendar.current.component(.hour, from: now)
-        if hour >= 23 || hour < 7 { return nil }
-
-        let hours = interval / 3600
-        let days  = hours / 24
         let prefix = pickPrefix(task: task)
 
-        if days > 7 {
+        switch CountdownState.compute(dueDate: deadline, now: now) {
+        case .overdue(let ago):
+            return "Was due \(ago)"
+        case .nightSuppressed:
+            return nil
+        case .farFuture:
             return "\(prefix) \(WidgetFormatters.monthDay.string(from: deadline))"
+        case .daysAway(_, let days):
+            return "\(prefix) \(WidgetFormatters.weekday.string(from: deadline)) · \(days) days away"
+        case .withinTwoDays(_, let hours), .underDay(_, let hours):
+            return "\(prefix) in \(hours) hours"
+        case .underThreeHours(_, let h, let m):
+            if h == 0 { return "\(prefix) in \(m)min" }
+            if m == 0 { return "\(prefix) in \(h)hr" }
+            return "\(prefix) in \(h)hr \(m)min"
         }
-        if days >= 3 {
-            return "\(prefix) \(WidgetFormatters.weekday.string(from: deadline)) · \(Int(days.rounded())) days away"
-        }
-        if hours >= 24 {
-            return "\(prefix) in \(Int(hours.rounded())) hours"
-        }
-        if hours >= 3 {
-            return "\(prefix) in \(Int(hours.rounded())) hours"
-        }
-        // Rule 5 — under 3 hours: hr+min
-        let totalMinutes = Int((interval / 60).rounded())
-        let h = totalMinutes / 60
-        let m = totalMinutes % 60
-        if h == 0 { return "\(prefix) in \(m)min" }
-        if m == 0 { return "\(prefix) in \(h)hr" }
-        return "\(prefix) in \(h)hr \(m)min"
     }
 
     private static func pickPrefix(task: NudgeTask) -> String {
@@ -642,157 +740,44 @@ enum WidgetCountdownFormatter {
         return "Due"
     }
 
-    private static func timeAgo(_ seconds: TimeInterval) -> String {
-        let minutes = Int(seconds / 60)
-        if minutes < 60 { return minutes <= 1 ? "1 minute ago" : "\(minutes) minutes ago" }
-        let hours = minutes / 60
-        if hours < 24 { return hours == 1 ? "1 hour ago" : "\(hours) hours ago" }
-        let days = hours / 24
-        return days == 1 ? "1 day ago" : "\(days) days ago"
-    }
-
     // MARK: - Split-row helpers
     //
-    // Mirror the in-app `CountdownState.dueDateLine` and `.remainingLine`
-    // helpers so the widget row reads the same as the task list. Kept
-    // in lockstep with the in-app version — any tweak to format there
-    // should be applied here too.
+    // Straight delegation to the shared `CountdownState` helpers — the
+    // widget row and the task list read the same strings by construction,
+    // not by hand-synced copies.
 
     /// "Jun 17th, 9pm" for timed tasks, "Jun 17th" when only date is set,
     /// nil for floaters.
     static func dueDateLine(for task: NudgeTask) -> String? {
-        let anchor = task.specificTime ?? task.dueDate
-        guard let anchor else { return nil }
-        let day = Calendar.current.component(.day, from: anchor)
-        let datePart = WidgetFormatters.monthDay.string(from: anchor) + ordinalSuffix(for: day)
-        if task.specificTime != nil {
-            return "\(datePart), \(formatClockTime(anchor))"
-        }
-        return datePart
+        CountdownState.dueDateLine(dueDate: task.dueDate, specificTime: task.specificTime)
     }
 
     /// "12 hours left" / "5 days away" / "3 hours ago", hidden for
-    /// far-future and at night. Threshold: hours-left below 48h,
-    /// days-away above 48h (matches in-app).
+    /// far-future and at night.
     static func remainingLine(for task: NudgeTask, now: Date) -> String? {
         guard let deadline = task.specificTime ?? task.dueDate else { return nil }
-        let interval = deadline.timeIntervalSince(now)
-        if interval < 0 { return timeAgo(-interval) }
-
-        let hour = Calendar.current.component(.hour, from: now)
-        if hour >= 23 || hour < 7 { return nil }
-
-        let hoursOut = interval / 3600
-        let daysOut  = hoursOut / 24
-        if daysOut > 7 { return nil }
-        if hoursOut >= 48 {
-            let n = Int(daysOut.rounded())
-            return n == 1 ? "1 day away" : "\(n) days away"
-        }
-        if hoursOut >= 3 {
-            let n = Int(hoursOut.rounded())
-            return n == 1 ? "1 hour left" : "\(n) hours left"
-        }
-        let totalMinutes = Int((interval / 60).rounded())
-        let h = totalMinutes / 60
-        let m = totalMinutes % 60
-        if h == 0 { return "\(m)min" }
-        if m == 0 { return "\(h)hr" }
-        return "\(h)hr \(m)min"
-    }
-
-    private static func ordinalSuffix(for day: Int) -> String {
-        if (11...13).contains(day) { return "th" }
-        switch day % 10 {
-        case 1: return "st"
-        case 2: return "nd"
-        case 3: return "rd"
-        default: return "th"
-        }
-    }
-
-    private static func formatClockTime(_ date: Date) -> String {
-        let minute = Calendar.current.component(.minute, from: date)
-        let formatter = minute == 0
-            ? WidgetFormatters.clockTimeHourOnly
-            : WidgetFormatters.clockTimeWithMinutes
-        return formatter.string(from: date).lowercased()
+        return CountdownState.remainingLine(dueDate: deadline, now: now)
     }
 }
 
-private extension NudgeTask {
-    var sortDeadline: Date {
-        if let specificTime {
-            return specificTime
-        }
-
-        if let dueDate {
-            let startOfDay = Calendar.current.startOfDay(for: dueDate)
-            return Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) ?? dueDate
-        }
-
-        return .distantFuture
-    }
-
-    var isOverdue: Bool {
-        !isComplete && sortDeadline < Date()
-    }
-}
+// `sortDeadline` / `isOverdue` come from the shared extension in
+// `Nudge/Models/NudgeTask.swift` — this file carried private copies until
+// Jul 2026.
 
 // MARK: - Widget View
 
 struct NudgeTaskWidgetView: View {
     var entry: NudgeTaskEntry
-    @Environment(\.widgetFamily) var family
 
     var body: some View {
-        Group {
-            switch family {
-            case .systemLarge:
-                largeLayout
-            default:
-                mediumLayout
-            }
-        }
-        .background(WidgetColors.surface)
-        .overlay {
-            ContainerRelativeShape()
-                .strokeBorder(WidgetColors.neutral.opacity(0.28), lineWidth: 1)
-        }
+        largeLayout
+        // Expand so content stretches to the widget frame instead of hugging
+        // its intrinsic size. The background itself is now the edge-to-edge
+        // containerBackground (see NudgeTaskWidget below), NOT a .background()
+        // here — a manual .background sits inside the system content margins
+        // and left an inset ring of the container color around it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentTransition(.interpolate)
-    }
-
-    // MARK: - Medium Layout
-
-    private var mediumLayout: some View {
-        VStack(spacing: 0) {
-            compactHeader
-
-            Rectangle()
-                .fill(WidgetColors.divider)
-                .frame(height: 1)
-
-            if entry.tasks.isEmpty {
-                emptyStateView
-            } else {
-                mediumTaskList
-            }
-
-            if !entry.events.isEmpty {
-                Rectangle()
-                    .fill(WidgetColors.divider)
-                    .frame(height: 1)
-                eventsRow
-            }
-
-            Spacer(minLength: 0)
-
-            Rectangle()
-                .fill(WidgetColors.divider)
-                .frame(height: 1)
-
-            mediumFooter
-        }
     }
 
     // MARK: - Large Layout
@@ -811,21 +796,12 @@ struct NudgeTaskWidgetView: View {
                 largeTaskList
             }
 
-            if !entry.events.isEmpty {
-                Rectangle()
-                    .fill(WidgetColors.divider)
-                    .frame(height: 1)
-                eventsRow
-            }
+            Rectangle()
+                .fill(WidgetColors.divider)
+                .frame(height: 1)
+            eventsRow
 
             Spacer(minLength: 0)
-
-            if !entry.goals.isEmpty {
-                Rectangle()
-                    .fill(WidgetColors.divider)
-                    .frame(height: 1)
-                largeGoalSection
-            }
 
             Rectangle()
                 .fill(WidgetColors.divider)
@@ -837,44 +813,6 @@ struct NudgeTaskWidgetView: View {
 
     // MARK: - Headers
 
-    private var compactHeader: some View {
-        HStack(spacing: 8) {
-            Image("mascot-default")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 24, height: 24)
-                .clipShape(Circle())
-
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 3) {
-                    Text("nudge")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(WidgetColors.textPrimary)
-                    Text("tasks")
-                        .font(.system(size: 11))
-                        .foregroundStyle(WidgetColors.textSecondary)
-                }
-
-                Text(compactStatusText)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(entry.urgentCount > 0 ? WidgetColors.accent : WidgetColors.textMuted)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Text("\(entry.completedToday)/\(max(entry.totalToday, 1))")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(WidgetColors.textPrimary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(WidgetColors.pillBackground)
-                .clipShape(Capsule())
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-    }
-
     private var spaciousHeader: some View {
         HStack(alignment: .top, spacing: 10) {
             Image("mascot-default")
@@ -885,7 +823,7 @@ struct NudgeTaskWidgetView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
-                    Text("nudge")
+                    Text("Nudge")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(WidgetColors.textPrimary)
                     Text("\u{00B7}")
@@ -894,10 +832,6 @@ struct NudgeTaskWidgetView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(WidgetColors.textSecondary)
                 }
-
-                Text(largeStatusText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(entry.urgentCount > 0 ? WidgetColors.accent : WidgetColors.textMuted)
             }
 
             Spacer()
@@ -926,31 +860,14 @@ struct NudgeTaskWidgetView: View {
 
     // MARK: - Task Lists
 
-    private var mediumTaskList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(entry.tasks.prefix(3).enumerated()), id: \.element.id) { index, task in
-                WidgetTaskRow(
-                    task: task,
-                    family: .systemMedium,
-                    isActiveSessionTask: entry.isSessionActive && entry.activeTaskID == task.id,
-                    isSessionPaused: entry.isSessionPaused,
-                    sessionTimerEndDate: entry.sessionTimerEndDate,
-                    sessionPausedRemaining: entry.sessionPausedRemaining
-                )
-
-                if index < min(entry.tasks.count, 3) - 1 {
-                    Rectangle()
-                        .fill(WidgetColors.divider)
-                        .frame(height: 1)
-                        .padding(.leading, 30)
-                }
-            }
-        }
-    }
-
     private var largeTaskList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(entry.tasks.prefix(3).enumerated()), id: \.element.id) { index, task in
+        // Spacing 2 (was 0) so a tinted row reads as its own block. The
+        // divider is drawn only between two UNtinted rows — where a tint is
+        // present its edge already separates them, and a hairline running
+        // across two color blocks just adds noise.
+        let rows = Array(entry.tasks.prefix(3))
+        return VStack(spacing: 2) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, task in
                 WidgetTaskRow(
                     task: task,
                     family: .systemLarge,
@@ -960,7 +877,7 @@ struct NudgeTaskWidgetView: View {
                     sessionPausedRemaining: entry.sessionPausedRemaining
                 )
 
-                if index < min(entry.tasks.count, 3) - 1 {
+                if index < rows.count - 1, task.slot == nil, rows[index + 1].slot == nil {
                     Rectangle()
                         .fill(WidgetColors.divider)
                         .frame(height: 1)
@@ -970,24 +887,33 @@ struct NudgeTaskWidgetView: View {
         }
     }
 
-    // MARK: - Events Row (shared between layouts)
+    // MARK: - Events Row
 
     /// Compact horizontal strip showing up to 2 upcoming events for today.
-    /// Hidden when there are no events so the layout stays balanced.
-    @ViewBuilder
+    /// Always rendered so the layout height stays fixed; shows
+    /// "No events today" when there is nothing to list.
     private var eventsRow: some View {
-        if !entry.events.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(WidgetColors.textMuted)
-                    Text("Today")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(WidgetColors.textMuted)
-                        .tracking(0.5)
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(WidgetColors.textMuted)
+                Text("Today")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(WidgetColors.textMuted)
+                    .tracking(0.5)
+            }
 
+            if entry.events.isEmpty {
+                Text("No events today")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(WidgetColors.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(WidgetColors.chipBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
                 HStack(spacing: 8) {
                     ForEach(entry.events) { event in
                         VStack(alignment: .leading, spacing: 1) {
@@ -1008,94 +934,23 @@ struct NudgeTaskWidgetView: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Footers
 
-    private var mediumFooter: some View {
-        HStack(spacing: 0) {
-            if entry.isSessionActive {
-                // Session controls — icon-only buttons to fit medium width
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(WidgetColors.accent)
-
-                    sessionTimerText
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(entry.isSessionPaused ? Color(red: 0.95, green: 0.6, blue: 0.2) : WidgetColors.accent)
-                        .monospacedDigit()
-
-                    if entry.isSessionPaused {
-                        Text("Paused")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(Color(red: 0.95, green: 0.6, blue: 0.2))
-                    }
-
-                    Spacer()
-
-                    // Pause / Resume — tapping opens the app to the
-                    // tasks tab where the user controls the session.
-                    Link(destination: URL(string: "nudge://focus-session")!) {
-                        Image(systemName: entry.isSessionPaused ? "play.fill" : "pause.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 26, height: 22)
-                            .background(Color(red: 0.95, green: 0.6, blue: 0.2))
-                            .clipShape(Capsule())
-                    }
-
-                    // End — also opens the app rather than acting in-widget.
-                    Link(destination: URL(string: "nudge://focus-session")!) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 26, height: 22)
-                            .background(Color(red: 0.85, green: 0.25, blue: 0.25))
-                            .clipShape(Capsule())
-                    }
-                }
-            } else {
-                // Goals summary on the left
-                HStack(spacing: 4) {
-                    Image(systemName: "flag.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(WidgetColors.accent)
-
-                    Text(entry.goals.prefix(2).map(\.title).joined(separator: " \u{2022} ").isEmpty ? "No goals yet" : entry.goals.prefix(2).map(\.title).joined(separator: " \u{2022} "))
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(WidgetColors.textSecondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                // Session start — opens the app to the tasks tab where
-                // the user picks a task and starts the session manually.
-                // No auto-start; the widget is just a launcher.
-                Link(destination: URL(string: "nudge://focus-session")!) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 8, weight: .bold))
-                        Text("Start")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(WidgetColors.accent)
-                    .clipShape(Capsule())
-                }
+    private var sessionStartFooter: some View {
+        VStack(spacing: 6) {
+            if entry.dayEnd > entry.dayStart {
+                WidgetTimeBlockStrip(entry: entry)
             }
+            sessionButtonRow
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
     }
 
-    private var sessionStartFooter: some View {
+    private var sessionButtonRow: some View {
         Group {
             if entry.isSessionActive {
                 HStack(spacing: 8) {
@@ -1146,17 +1001,17 @@ struct NudgeTaskWidgetView: View {
                 // Start — opens the app to the tasks tab where the user
                 // picks a task and starts manually. No auto-start.
                 Link(destination: URL(string: "nudge://focus-session")!) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                         Text("Start Session")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 6)
                     .background(WidgetColors.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
                 }
             }
         }
@@ -1179,36 +1034,7 @@ struct NudgeTaskWidgetView: View {
         }
     }
 
-    // MARK: - Goals & Empty State
-
-    private var largeGoalSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Goals in motion")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(WidgetColors.textMuted)
-                .textCase(.uppercase)
-
-            HStack(spacing: 8) {
-                ForEach(entry.goals.prefix(3)) { goal in
-                    HStack(spacing: 4) {
-                        Text(goal.emoji)
-                            .font(.system(size: 11))
-                        Text(goal.title)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(WidgetColors.textSecondary)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(WidgetColors.chipBackground)
-                    .clipShape(Capsule())
-                }
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
+    // MARK: - Empty State
 
     private var emptyStateView: some View {
         VStack(spacing: 6) {
@@ -1224,31 +1050,6 @@ struct NudgeTaskWidgetView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Status Text
-
-    private var compactStatusText: String {
-        if entry.urgentCount > 0 {
-            return "\(entry.urgentCount) urgent"
-        }
-
-        if entry.totalToday > 0 {
-            return "\(entry.totalToday) tasks in list"
-        }
-
-        return "light day"
-    }
-
-    private var largeStatusText: String {
-        if entry.urgentCount > 0 {
-            return "\(entry.urgentCount) urgent, sort the top ones first"
-        }
-
-        if entry.totalToday > 0 {
-            return "\(entry.totalToday) tasks in your list"
-        }
-
-        return "Nothing pressing yet"
-    }
 }
 
 // MARK: - Task Row
@@ -1365,7 +1166,9 @@ struct WidgetTaskRow: View {
         }
         .opacity(task.isComplete ? 0.85 : 1.0)
         .padding(.horizontal, isLarge ? 10 : 8)
-        .background(rowBackgroundColor)
+        // Rounded, so a slot tint reads as a block on the task the way the
+        // app's card does, rather than as a full-bleed band across the widget.
+        .background(rowBackgroundColor, in: RoundedRectangle(cornerRadius: 8))
         .contentTransition(.interpolate)
     }
 
@@ -1386,9 +1189,20 @@ struct WidgetTaskRow: View {
         task.isGoalFallback ? WidgetColors.goalAccent : WidgetColors.accent
     }
 
+    /// Row fill. The day-slot tint takes it whenever the task has a slot, so
+    /// this row is the same color as that task's row in the app and its block
+    /// on the mini chart — matching is the whole job of the tint, and the
+    /// states below can't answer "which block is this". Nothing is lost: the
+    /// completed state still shows its "Done" capsule and strikethrough, and
+    /// an active session still shows its bolt/timer chip. The goal-fallback
+    /// row keeps its green because it isn't a task and has no slot anyway.
     private var rowBackgroundColor: Color {
         if task.isGoalFallback {
             return WidgetColors.goalAccentSoft
+        }
+
+        if let slot = task.slot {
+            return WidgetColors.daySlotFill(slot, completed: task.isComplete)
         }
 
         if task.isComplete {
@@ -1444,6 +1258,146 @@ private struct WidgetCheckboxButtonStyle: ButtonStyle {
     }
 }
 
+// MARK: - Mini day-chart strip
+
+/// A compact, non-interactive day timeline for the large widget: today's
+/// events and placed tasks as small blocks on a wake→bed track, with a "now"
+/// marker. The marker advances each time the widget timeline refreshes
+/// (~every 15 min) — WidgetKit can't animate it continuously.
+struct WidgetTimeBlockStrip: View {
+    let entry: NudgeTaskEntry
+    private let labelH: CGFloat = 12      // start-time label row (top)
+    private let tickH: CGFloat = 5        // vertical connector label → block
+    private let barHeight: CGFloat = 44   // the block track
+    private let inset: CGFloat = 5
+    private var totalHeight: CGFloat { labelH + tickH + barHeight }
+
+    /// Clamped 0…1 position; `rawFraction` is unclamped so we can tell when a
+    /// block actually STARTS inside the window (vs. clipped at the left edge).
+    private func fraction(for date: Date) -> CGFloat { min(max(rawFraction(for: date), 0), 1) }
+    private func rawFraction(for date: Date) -> CGFloat {
+        let total = entry.dayEnd.timeIntervalSince(entry.dayStart)
+        guard total > 0 else { return 0 }
+        return CGFloat(date.timeIntervalSince(entry.dayStart) / total)
+    }
+
+    private func timeString(_ date: Date) -> String {
+        let m = Calendar.current.component(.minute, from: date)
+        let f = DateFormatter()
+        f.dateFormat = m == 0 ? "ha" : "h:mma"
+        return f.string(from: date).lowercased()
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let barTop = labelH + tickH
+            // Label declutter (Roman, Sep 2026): blocks that start close
+            // together were stacking their time labels into an unreadable
+            // pile. Walk the blocks in start order and grant a label only
+            // when it clears the previous label's right edge (~40pt at
+            // this type size) — the block and tick still draw, so the
+            // schedule stays complete; only the redundant text yields.
+            let sortedBlocks = entry.timeBlocks.sorted { $0.start < $1.start }
+            let labeledIDs: Set<UUID> = {
+                var granted: Set<UUID> = []
+                var lastLabelMaxX: CGFloat = -.greatestFiniteMagnitude
+                for block in sortedBlocks where rawFraction(for: block.start) >= 0 {
+                    let x = min(fraction(for: block.start) * w, w - 34)
+                    if x >= lastLabelMaxX + 6 {
+                        granted.insert(block.id)
+                        lastLabelMaxX = x + 40
+                    }
+                }
+                return granted
+            }()
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(WidgetColors.chipBackground)
+                    .frame(width: w, height: barHeight)
+                    .offset(y: barTop)
+
+                ForEach(sortedBlocks) { block in
+                    let startX = fraction(for: block.start) * w
+                    let endDate = block.start.addingTimeInterval(Double(block.durationMinutes) * 60)
+                    let blockW = max(fraction(for: endDate) * w - startX, 4)
+                    // Label only when in-window AND granted by the
+                    // declutter pass above.
+                    let startsInWindow = labeledIDs.contains(block.id)
+
+                    // The block itself. Tinted by day slot, matching the app's
+                    // timeline and Today rows; events take the one stone tint
+                    // outside the rotation. A task with no slot falls back to
+                    // the event tint, same as the app does.
+                    let fill = block.slot.map {
+                        WidgetColors.daySlotFill($0, completed: block.isComplete)
+                    } ?? WidgetColors.eventSlotFill(completed: block.isComplete)
+                    let stroke = block.slot.map {
+                        WidgetColors.daySlotAccent($0, completed: block.isComplete)
+                    } ?? WidgetColors.eventSlotAccent(completed: block.isComplete)
+
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(fill)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(stroke, lineWidth: 1)
+                        )
+                        .frame(width: blockW, height: barHeight - inset * 2)
+                        .overlay(alignment: .leading) {
+                            if blockW > 40 {
+                                Text(block.title)
+                                    // Was `.white` on the old 85%-opacity blue
+                                    // fill; these tints are pale, so white is
+                                    // unreadable on them.
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(
+                                        block.isComplete ? WidgetColors.textMuted : WidgetColors.textPrimary
+                                    )
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.75)
+                                    .padding(.horizontal, 4)
+                                    .frame(width: blockW, alignment: .leading)
+                            }
+                        }
+                        // 0.3 used to be the whole "this is done" signal; the
+                        // greyed fill carries it now, so this only finishes
+                        // the recession instead of washing the hue out twice.
+                        // Same value as the app's `completedBlockOpacity`.
+                        .opacity(block.isComplete ? 0.75 : 1)
+                        .offset(x: startX, y: barTop + inset)
+
+                    if startsInWindow {
+                        // Vertical connector on the block's left edge, up to
+                        // the time label.
+                        Rectangle()
+                            .fill(WidgetColors.textMuted)
+                            .frame(width: 1, height: tickH + inset)
+                            .offset(x: startX, y: labelH)
+                            .opacity(block.isComplete ? 0.75 : 1)
+
+                        // Start-time label, left-aligned to the block edge
+                        // (clamped so it doesn't run off the right side).
+                        Text(timeString(block.start))
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(WidgetColors.textSecondary)
+                            .fixedSize()
+                            .offset(x: min(startX, w - 34), y: 0)
+                    }
+                }
+
+                if entry.date >= entry.dayStart && entry.date <= entry.dayEnd {
+                    Rectangle()
+                        .fill(WidgetColors.accent)
+                        .frame(width: 2, height: barHeight)
+                        .offset(x: fraction(for: entry.date) * w - 1, y: barTop)
+                }
+            }
+            .frame(height: totalHeight, alignment: .topLeading)
+        }
+        .frame(height: totalHeight)
+    }
+}
+
 // MARK: - Widget Configuration
 
 struct NudgeTaskWidget: Widget {
@@ -1452,23 +1406,20 @@ struct NudgeTaskWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: NudgeTaskProvider()) { entry in
             NudgeTaskWidgetView(entry: entry)
+                // Surface (the card color the content is designed against) now
+                // fills edge-to-edge via containerBackground, so there's no gap
+                // between the content and the widget's rounded border.
                 .containerBackground(for: .widget) {
-                    WidgetColors.background
+                    WidgetColors.surface
                 }
         }
         .configurationDisplayName("Nudge Tasks")
-        .description("Your tasks, goals, and streak at a glance.")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        .description("Your tasks, events, and streak at a glance.")
+        .supportedFamilies([.systemLarge])
     }
 }
 
 // MARK: - Preview
-
-#Preview(as: .systemMedium) {
-    NudgeTaskWidget()
-} timeline: {
-    NudgeTaskEntry.placeholder
-}
 
 #Preview(as: .systemLarge) {
     NudgeTaskWidget()

@@ -123,12 +123,12 @@ struct OnboardingCompleteView: View {
 
     private var grantedContent: some View {
         VStack(spacing: 20) {
-            Text("Perfect — I’ve got your back")
+            Text("Perfect, I’ve got your back")
                 .font(.custom(NudgeTheme.fontSemiBold, size: 24))
                 .foregroundColor(NudgeTheme.textPrimary)
                 .multilineTextAlignment(.center)
 
-            Text("You'll hear from me when it matters — and only then.")
+            Text("You'll hear from me when it matters, and only then.")
                 .font(.custom(NudgeTheme.fontBody, size: 15))
                 .foregroundColor(NudgeTheme.textMuted)
                 .multilineTextAlignment(.center)
