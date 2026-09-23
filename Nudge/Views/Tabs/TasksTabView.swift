@@ -3182,6 +3182,38 @@ struct TaskEditorSheet: View {
                             .foregroundColor(NudgeTheme.textMuted)
                     }
 
+                    // Duration — how long the thing runs. This is the ONLY
+                    // hand-editable route to an event's length (capture is
+                    // the other writer), and the timeline draws an event one
+                    // hour long without it. Chips cover the common lengths;
+                    // a value between chips (AI-captured 45m, learned 100m)
+                    // shows in the header so it isn't silently invisible.
+                    editorSection(title: durationSectionTitle) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                durationChip(minutes: 30)
+                                durationChip(minutes: 60)
+                                durationChip(minutes: 90)
+                            }
+                            HStack(spacing: 10) {
+                                durationChip(minutes: 120)
+                                durationChip(minutes: 180)
+                                durationChip(minutes: 240)
+                            }
+                        }
+                    }
+
+                    editorSection(title: "Importance") {
+                        HStack(spacing: 10) {
+                            stakesChip(title: "High", value: .high)
+                            stakesChip(title: "Medium", value: .medium)
+                            stakesChip(title: "Low", value: .low)
+                        }
+                    }
+
+                    // Reschedule and due date come after duration and
+                    // importance (Roman, Sep 23 2026: read the size and the
+                    // weight first, then decide when).
                     if isEventMode {
                         // An event has one clock: when it is. Unchanged.
                         editorSection(title: "Reschedule") {
@@ -3211,35 +3243,6 @@ struct TaskEditorSheet: View {
                         // when you mean to work on it, and when it is owed.
                         scheduledSection
                         dueDateSection
-                    }
-
-                    // Duration — how long the thing runs. This is the ONLY
-                    // hand-editable route to an event's length (capture is
-                    // the other writer), and the timeline draws an event one
-                    // hour long without it. Chips cover the common lengths;
-                    // a value between chips (AI-captured 45m, learned 100m)
-                    // shows in the header so it isn't silently invisible.
-                    editorSection(title: durationSectionTitle) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(spacing: 10) {
-                                durationChip(minutes: 30)
-                                durationChip(minutes: 60)
-                                durationChip(minutes: 90)
-                            }
-                            HStack(spacing: 10) {
-                                durationChip(minutes: 120)
-                                durationChip(minutes: 180)
-                                durationChip(minutes: 240)
-                            }
-                        }
-                    }
-
-                    editorSection(title: "Importance") {
-                        HStack(spacing: 10) {
-                            stakesChip(title: "High", value: .high)
-                            stakesChip(title: "Medium", value: .medium)
-                            stakesChip(title: "Low", value: .low)
-                        }
                     }
 
                     if let onRemoveFromTimeline {
@@ -3602,6 +3605,17 @@ struct TaskEditorSheet: View {
                     durationMinutes: mins,
                     modelContext: modelContext
                 )
+            } else if !task.isInformationalEvent {
+                // A placed task's block follows the chip (Roman, Sep 23
+                // 2026): the timeline draws `plannedDurationMinutes`, which
+                // the editor never wrote before, so a resize was invisible
+                // on auto placements. The reflow pushes later auto
+                // placements out of the way and never moves anchored ones.
+                if let mins = draft.durationMinutes, mins > 0 {
+                    TimelineReflow.durationChanged(task, to: mins, modelContext: modelContext)
+                } else {
+                    task.plannedDurationMinutes = nil
+                }
             }
         }
     }

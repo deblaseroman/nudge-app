@@ -166,6 +166,17 @@ final class PlanProposalSweep {
     /// The anchor of a row: an event's time, a task's deadline. Nil for
     /// anything without a due date — the vision's rule: only due-dated
     /// things can receive a plan.
+    /// The reader's subject test (Roman, Sep 23 2026: a 300-minute work
+    /// shift was offered a plan to "spread it out"). Owed WORK can be
+    /// prepared for or broken into sessions, so every deadline task
+    /// qualifies. An EVENT is something you attend; there is nothing to
+    /// prepare unless it is the exam-like thing work builds toward, which
+    /// the app already identifies by category (`isExamTitle` at import,
+    /// "exam" from capture). Stated on properties, never on the title.
+    static func canBePreparedFor(_ task: NudgeTask) -> Bool {
+        !task.isInformationalEvent || task.taskCategory == .exam
+    }
+
     static func anchor(of task: NudgeTask) -> Date? {
         if task.isInformationalEvent { return task.specificTime ?? task.dueDate }
         return task.hasDeadline ? task.sortDeadline : nil
@@ -266,7 +277,8 @@ final class PlanProposalSweep {
                 guard task.source != "prep", task.source != "commitment",
                       task.commitmentShapeRaw == nil,
                       task.linkedEventId == nil,
-                      let anchor = anchor(of: task)
+                      let anchor = anchor(of: task),
+                      Self.canBePreparedFor(task)
                 else { return false }
                 let anchorDay = calendar.startOfDay(for: anchor)
                 guard anchorDay >= today, anchorDay <= horizonEnd else { return false }
@@ -314,7 +326,7 @@ final class PlanProposalSweep {
             let anchorDay = calendar.startOfDay(for: anchor)
             let days = calendar.dateComponents([.day], from: today, to: anchorDay).day ?? 0
             let dueLine = CountdownState.dueDateLine(
-                dueDate: task.dueDate, specificTime: task.isInformationalEvent ? task.specificTime : task.specificTime
+                dueDate: task.dueDate, specificTime: task.specificTime
             ) ?? ""
             let when = days == 1 ? "tomorrow" : "in \(days) days"
             return ClaudeService.PlanProposalCandidate(
@@ -385,6 +397,7 @@ final class PlanProposalSweep {
                   predicate: #Predicate<NudgeTask> { $0.id == parentID }
               )).first,
               !parent.isComplete,
+              Self.canBePreparedFor(parent),
               let anchor = Self.anchor(of: parent)
         else { return }
         let calendar = Calendar.current

@@ -92,6 +92,14 @@ struct HomeTabView: View {
             }
             .onChange(of: isWaitingForAI) { _, newValue in
                 ChatComposerStore.shared.isWaitingForAI = newValue
+                // Keep the Thinking bubble in view while it is up.
+                if newValue {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        withAnimation(NudgeAnimation.standard) {
+                            proxy.scrollTo(HomeTabView.thinkingBubbleID, anchor: .bottom)
+                        }
+                    }
+                }
             }
             .onChange(of: sessions.first?.id) { _, _ in
                 loadConversation()
@@ -191,9 +199,36 @@ struct HomeTabView: View {
                         .id(message.id)
                 }
             }
-
+            // The send is acknowledged the instant it leaves (Roman, Sep 23
+            // 2026): a "Thinking…" bubble with iMessage-style moving dots
+            // until the reply arrives. Not a message, never persisted.
+            if isWaitingForAI {
+                thinkingBubble
+                    .id(HomeTabView.thinkingBubbleID)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(NudgeAnimation.standard, value: isWaitingForAI)
+    }
+
+    static let thinkingBubbleID = "thinking-bubble"
+
+    private var thinkingBubble: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            MascotAvatarView(size: 34)
+            HStack(spacing: 6) {
+                Text("Thinking")
+                    .font(.custom(NudgeTheme.fontBody, size: 15))
+                    .foregroundColor(NudgeTheme.textPrimary)
+                TypingDots()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(NudgeTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+            Spacer(minLength: 44)
+        }
     }
 
     private var sendBar: some View {
@@ -787,4 +822,30 @@ struct HomeChatMessage: Identifiable, Codable, Equatable {
 enum HomeChatRole: String, Codable {
     case user
     case assistant
+}
+
+/// Three dots that rise and fall in sequence, the iMessage typing cue.
+/// Pure animation, no timer: one repeating keyframe per dot, staggered.
+struct TypingDots: View {
+    @State private var phase = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(NudgeTheme.textMuted)
+                    .frame(width: 6, height: 6)
+                    .offset(y: phase ? -3 : 1)
+                    .opacity(phase ? 1 : 0.45)
+                    .animation(
+                        .easeInOut(duration: 0.45)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(i) * 0.15),
+                        value: phase
+                    )
+            }
+        }
+        .onAppear { phase = true }
+        .accessibilityLabel("Thinking")
+    }
 }

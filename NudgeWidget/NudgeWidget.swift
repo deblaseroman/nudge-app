@@ -576,12 +576,24 @@ struct NudgeTaskProvider: TimelineProvider {
             // Read session state from app group UserDefaults
             let sessionDefaults = UserDefaults(suiteName: "group.com.deblaser.nudge")
             let sessionDict = sessionDefaults?.dictionary(forKey: "activeSessionState")
-            let sessionActive = (sessionDict?["isActive"] as? Bool) ?? false
             let sessionPaused = (sessionDict?["isPaused"] as? Bool) ?? false
             let sessionPausedRemaining = sessionDict?["pausedTimeRemaining"] as? Int
             let sessionEndDate: Date? = {
                 guard let interval = sessionDict?["timerEndDate"] as? TimeInterval else { return nil }
                 return Date(timeIntervalSince1970: interval)
+            }()
+            // A session whose end instant has passed is over, whatever the
+            // flag says: the app's end timer is an in-process work item and
+            // dies with the process (Roman, Sep 23 2026: widget stuck at
+            // 0:00). Treat it as inactive and drop the stale key.
+            let publishedActive = (sessionDict?["isActive"] as? Bool) ?? false
+            let sessionActive: Bool = {
+                guard publishedActive else { return false }
+                if !sessionPaused, let end = sessionEndDate, end <= Date() {
+                    sessionDefaults?.removeObject(forKey: "activeSessionState")
+                    return false
+                }
+                return true
             }()
             let activeTaskID: UUID? = {
                 guard let idString = sessionDict?["currentTaskID"] as? String, !idString.isEmpty else { return nil }
@@ -652,9 +664,14 @@ struct NudgeTaskProvider: TimelineProvider {
                 .compactMap { $0.completedAt?.addingTimeInterval(completionDisplayDuration) }
                 .min()
 
+            // Refresh at the session's end instant too, so the timer row
+            // gives way to the Start button the moment it reaches 0:00.
+            let sessionExpiry: Date? = (sessionActive && !sessionPaused) ? sessionEndDate : nil
+            let nextUpdate = [recentCompletionExpiry, sessionExpiry, defaultNextUpdate]
+                .compactMap { $0 }.filter { $0 > Date() }.min() ?? defaultNextUpdate
             return TimelineState(
                 entry: liveEntry,
-                nextUpdate: recentCompletionExpiry ?? defaultNextUpdate
+                nextUpdate: nextUpdate
             )
         } catch {
             let fallbackNextUpdate = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(900)
@@ -1028,7 +1045,7 @@ struct NudgeTaskWidgetView: View {
             let seconds = remaining % 60
             Text(String(format: "%d:%02d", minutes, seconds))
         } else if let endDate = entry.sessionTimerEndDate {
-            Text(timerInterval: Date()...endDate, countsDown: true)
+            Text(timerInterval: Date()...max(endDate, Date()), countsDown: true)
         } else {
             Text("--:--")
         }
@@ -1136,7 +1153,7 @@ struct WidgetTaskRow: View {
                             .font(.system(size: isLarge ? 10 : 9, weight: .bold, design: .rounded))
                             .monospacedDigit()
                     } else if let endDate = sessionTimerEndDate {
-                        Text(timerInterval: Date()...endDate, countsDown: true)
+                        Text(timerInterval: Date()...max(endDate, Date()), countsDown: true)
                             .font(.system(size: isLarge ? 10 : 9, weight: .bold, design: .rounded))
                             .monospacedDigit()
                     }

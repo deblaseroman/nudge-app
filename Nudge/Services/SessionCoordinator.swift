@@ -78,6 +78,14 @@ final class SessionCoordinator {
 
         let minutes = task.estimatedMinutes ?? defaultDurationMinutes
         let duration = TimeInterval(minutes * 60)
+        // The timeline follows the session (Roman, Sep 23 2026): the task's
+        // block moves to now as a manual placement and whatever it now
+        // covers is pushed later. Before the reevaluate below, so the
+        // arbiter sees the new layout.
+        TimelineReflow.sessionStarted(
+            task, at: Date(), minutes: minutes,
+            modelContext: SharedModelContainer.container.mainContext
+        )
         // MUST be set before the reevaluate below. The arbiter's
         // active-session gate reads `sessionEnd` live to decide whether a
         // candidate would arrive DURING this session — and `cancelSession()`
@@ -217,8 +225,30 @@ final class SessionCoordinator {
     ///
     /// Call this every time the app becomes active.
     func syncIfActivityDismissed() {
-        guard isSessionActive else { return }
-        guard Activity<TaskActivityAttributes>.activities.isEmpty else { return }
+        let defaults = SharedModelContainer.appGroupDefaults
+        let published = defaults.dictionary(forKey: "activeSessionState")
+        guard isSessionActive else {
+            // No session in this process, but the App Group still says one
+            // is running: the end timer was an in-process work item and the
+            // process died before it fired (Roman, Sep 23 2026: the widget
+            // sat at 0:00 after the app had "stopped"). Clear it so the
+            // widget and the app agree again.
+            if published != nil {
+                defaults.removeObject(forKey: "activeSessionState")
+                WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+            }
+            return
+        }
+        // Session live here, but the widget ended it (its Complete on the
+        // session's task clears the key) or the Live Activity is gone, or
+        // the end instant passed while suspended: tear down to match.
+        let endPassed = sessionEnd != .distantPast && sessionEnd <= Date()
+        let widgetEnded = published == nil
+        guard widgetEnded || endPassed || Activity<TaskActivityAttributes>.activities.isEmpty else { return }
+        if endPassed && !widgetEnded {
+            finishSession()
+            return
+        }
         cancelAllTimers()
         isSessionActive = false
         sessionState = .active
@@ -226,6 +256,7 @@ final class SessionCoordinator {
         sessionEnd = .distantPast
         sessionStartedAt = nil
         publishSessionState(isActive: false, currentTaskID: nil, timerEndDate: nil)
+        reevaluateAfterSessionEnd()
     }
 
     // MARK: - Cancel

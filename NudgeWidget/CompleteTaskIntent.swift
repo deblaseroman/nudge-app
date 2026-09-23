@@ -71,6 +71,17 @@ struct CompleteTaskIntent: AppIntent {
 
             try context.save()
 
+            // Completing the task a session is running for ends the session
+            // (the app does the same on its own checkbox). The coordinator
+            // notices the missing key on the next foreground and tears its
+            // state down. Without this the row kept its timer and, once the
+            // end instant passed, the extension could not render at all.
+            let defaults = UserDefaults(suiteName: "group.com.deblaser.nudge")
+            if let state = defaults?.dictionary(forKey: "activeSessionState"),
+               (state["currentTaskID"] as? String) == task.id.uuidString {
+                defaults?.removeObject(forKey: "activeSessionState")
+            }
+
             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
 
             // Notify the main app so SessionCoordinator can advance if a
