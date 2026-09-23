@@ -39,8 +39,25 @@ enum EvalHarness {
             emit("ERROR -nudge-eval needs a path to the case file")
             return
         }
+        // `-nudge-eval-fill`: after each capture case, record what the app
+        // did as that case's `expected` and write every case back to
+        // `<cases>.filled.json` (`eval/run.sh --fill`). For drafting cases
+        // from today's behavior; the input file is never modified.
+        fillOutput = args.contains("-nudge-eval-fill")
+            ? URL(fileURLWithPath: args[i + 1].replacingOccurrences(of: ".json", with: "") + ".filled.json")
+            : nil
         await run(casesPath: args[i + 1], localOnly: args.contains("-nudge-eval-local-only"))
     }
+
+    private static var fillOutput: URL?
+    private static var filledCases: [[String: Any]] = []
+    /// Every case's in-memory store, kept alive until the run ends: the
+    /// arbiter's copy generator (`NudgeCopyGenerator.noteShift`) fetches on
+    /// a background task after `reevaluate` returns, and a store released
+    /// under it traps inside SwiftData (crash seen Sep 23 2026 on a
+    /// 25-row capture). The app never releases its container, so this is
+    /// the harness matching the app's lifetime, not a behavior change.
+    private static var liveFixtures: [Fixture] = []
 
     // MARK: - Driver
 
@@ -74,6 +91,8 @@ enum EvalHarness {
         }
 
         var outcomes: [Outcome] = []
+        filledCases = []
+        liveFixtures = []
         for c in cases {
             let id = (c["id"] as? String) ?? "<no id>"
             let kind = (c["kind"] as? String) ?? "<no kind>"
@@ -111,6 +130,15 @@ enum EvalHarness {
         if captureCalls > 0 {
             emit("CACHE capture calls \(captureCalls): cache_read=\(captureCacheRead) cache_creation=\(captureCacheCreation) uncached_in=\(captureUncachedIn)")
         }
+        if let fillOutput {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: filledCases, options: [.prettyPrinted, .sortedKeys])
+                try data.write(to: fillOutput)
+                emit("FILLED \(filledCases.count) case(s) → \(fillOutput.path)")
+            } catch {
+                emit("ERROR could not write \(fillOutput.path): \(error)")
+            }
+        }
     }
 
     private static func emit(_ line: String) {
@@ -132,7 +160,9 @@ enum EvalHarness {
         let profile = UserProfile(name: "Eval", onboardingComplete: true)
         context.insert(profile)
         try context.save()
-        return Fixture(container: container, context: context, profile: profile)
+        let fixture = Fixture(container: container, context: context, profile: profile)
+        liveFixtures.append(fixture)
+        return fixture
     }
 
     private static func reevaluate(_ f: Fixture) -> NudgeArbiter.DebugRunSnapshot? {
@@ -309,6 +339,16 @@ enum EvalHarness {
         if let count = expected["rowCount"] as? Int, created.count != count {
             mismatches.append("rowCount: expected \(count), actual \(created.count) (model returned \(returned))")
         }
+        if fillOutput != nil {
+            var filled = c
+            filled["expected"] = filledExpected(routedTo: routedTo, replyKind: replyKind, created: created, snapshot: snapshot)
+            filled["unverified"] = true
+            var draft = (c["draft"] as? [String: Any]) ?? [:]
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
+            draft["expectedFilledFromRerunOn"] = f.string(from: Date())
+            filled["draft"] = draft
+            filledCases.append(filled)
+        }
         for spec in (expected["rows"] as? [[String: Any]]) ?? [] {
             guard let needle = spec["titleContains"] as? String else {
                 mismatches.append("expected row without titleContains"); continue
@@ -320,6 +360,25 @@ enum EvalHarness {
             mismatches.append(contentsOf: compare(spec, against: row, snapshot: snapshot, label: "\"\(needle)\""))
         }
         return failureLine(input: inputSummary, mismatches: mismatches)
+    }
+
+    /// The observed outcome in `expected` shape: the same fields the
+    /// hand-written cases use, dates relative to today.
+    private static func filledExpected(routedTo: String, replyKind: String, created: [NudgeTask], snapshot: NudgeArbiter.DebugRunSnapshot?) -> [String: Any] {
+        let rows: [[String: Any]] = created.map { t in
+            var r: [String: Any] = [
+                "titleContains": t.title,
+                "isEvent": t.isInformationalEvent,
+                "hasDeadline": t.hasDeadline,
+                "countdown": !t.isComplete && CountdownState.dueDateLine(dueDate: t.dueDate, specificTime: t.specificTime) != nil,
+                "isOverdue": t.isOverdue,
+                "intendedDay": t.intendedDate.map { day($0) } ?? NSNull(),
+                "plannedStart": t.plannedStartDate.map { dayAndClock($0) } ?? NSNull()
+            ]
+            if let m = t.estimatedMinutes { r["estimatedMinutes"] = m }
+            return r
+        }
+        return ["routedTo": routedTo, "replyKind": replyKind, "rowCount": created.count, "rows": rows]
     }
 
     // MARK: - Field comparison (shared by both kinds)

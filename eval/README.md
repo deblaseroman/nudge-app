@@ -9,6 +9,8 @@ eval/run.sh                # everything: arbiter cases locally, capture cases th
 eval/run.sh --local-only   # arbiter cases only, free, run it often
 eval/run.sh --no-build     # reuse the last build
 eval/run.sh --model <id>   # capture model for this run only; default is what the app uses
+eval/run.sh --cases <file> # run another case file, e.g. a draft
+eval/run.sh --fill --cases <file>   # also write <file>.filled.json with expected = what the app did
 ```
 
 Output: one line per **failing** case (`FAIL <id> | input: … | expected: … |

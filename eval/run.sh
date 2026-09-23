@@ -4,10 +4,13 @@
 # (`Nudge/Services/EvalHarness.swift`) reports: one line per FAILING case,
 # then a summary. Passing cases print nothing.
 #
-#   usage: eval/run.sh [--local-only] [--no-build] [--model <id>]
+#   usage: eval/run.sh [--local-only] [--no-build] [--model <id>] [--cases <file>] [--fill]
 #     --local-only   skip the capture cases (no API calls, no cost)
 #     --no-build     reuse the last build in eval/.build
 #     --model <id>   capture model for this run only (default: what the app uses)
+#     --cases <file> run another case file (default eval/cases.json)
+#     --fill         write each case back with `expected` set to what the app did,
+#                    to <file>.filled.json; the input file is untouched
 #
 # Full simulator log (the app's own DEBUG chatter) goes to eval/.last-run.log.
 set -u
@@ -16,17 +19,21 @@ cd "$(dirname "$0")/.." || exit 1
 LOCAL=0
 BUILD=1
 MODEL=""
+FILL=0
+CASES="$PWD/eval/cases.json"
 while [ $# -gt 0 ]; do
   case "$1" in
     --local-only) LOCAL=1 ;;
     --no-build) BUILD=0 ;;
+    --fill) FILL=1 ;;
     --model) shift; MODEL="${1:-}"; [ -n "$MODEL" ] || { echo "--model needs a model id" >&2; exit 2; } ;;
+    --cases) shift; CASES="${1:-}"; [ -n "$CASES" ] || { echo "--cases needs a path" >&2; exit 2; }
+             case "$CASES" in /*) ;; *) CASES="$PWD/$CASES" ;; esac ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
-CASES="$PWD/eval/cases.json"
 DD="$PWD/eval/.build"
 LOG="$PWD/eval/.last-run.log"
 BUILD_LOG="$PWD/eval/.build.log"
@@ -70,6 +77,7 @@ xcrun simctl install "$UDID" "$APP" || { echo "install failed" >&2; exit 1; }
 ARGS=(-nudge-skip-onboarding -nudge-eval "$CASES")
 [ "$LOCAL" = 1 ] && ARGS+=(-nudge-eval-local-only)
 [ -n "$MODEL" ] && ARGS+=(-nudge-capture-model "$MODEL")
+[ "$FILL" = 1 ] && ARGS+=(-nudge-eval-fill)
 
 echo "running cases$([ "$LOCAL" = 1 ] && echo ' (local only)')$([ -n "$MODEL" ] && echo " (capture model $MODEL)")…"
 xcrun simctl launch --console "$UDID" "$BUNDLE" "${ARGS[@]}" > "$LOG" 2>&1
