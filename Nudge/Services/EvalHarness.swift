@@ -10,8 +10,8 @@
 //  process. It changes nothing: no app store, no prompt, no arbiter rule.
 //
 //  What each kind exercises (the same entry points the app uses):
-//    capture  → `HomeTabView.isPlanIntent` / `isSmallTalk` (the routers the
-//               Home chat runs first), `ClaudeService.sendChat` (the brain
+//    capture  → `HomeTabView.isPlanIntent` / `ChatRouter.isSmallTalk` (the
+//               routers the Home chat runs first), `ClaudeService.sendChat` (the brain
 //               dump's only API entry point), `CaptureWriter.apply` (the
 //               write site), `ExamPrepSweep.run`, `NudgeArbiter.reevaluate`.
 //    arbiter  → rows built from the case, optional `PlacementRollover.sweep`,
@@ -253,7 +253,7 @@ enum EvalHarness {
         let routedTo: String
         if HomeTabView.isPlanIntent(text) {
             routedTo = "plan"
-        } else if HomeTabView.isSmallTalk(text) {
+        } else if ChatRouter.isSmallTalk(text) {
             routedTo = "smallTalk"
         } else {
             routedTo = "capture"
@@ -262,6 +262,10 @@ enum EvalHarness {
         var created: [NudgeTask] = []
         var returned: Int = 0
         var snapshot: NudgeArbiter.DebugRunSnapshot?
+        // "template" when the reply is one of ChatRouter's lines (chitchat,
+        // or a capture that found nothing), "model" when the model's own
+        // message is shown, "plan" for the planner lane.
+        var replyKind = routedTo == "smallTalk" ? "template" : (routedTo == "plan" ? "plan" : "model")
         if routedTo == "capture" {
             do {
                 let response = try await ClaudeService.shared.sendChat(
@@ -272,6 +276,7 @@ enum EvalHarness {
                     activeGoals: []
                 )
                 returned = response.tasks.count
+                if ChatRouter.isEmptyCapture(response, questionOutstanding: false) { replyKind = "template" }
                 captureCalls += 1
                 captureUncachedIn += response.usage?.inputTokens ?? 0
                 captureCacheRead += response.usage?.cacheReadInputTokens ?? 0
@@ -297,6 +302,9 @@ enum EvalHarness {
         let expectedRoute = (expected["routedTo"] as? String) ?? "capture"
         if routedTo != expectedRoute {
             mismatches.append("routedTo: expected \(expectedRoute), actual \(routedTo)")
+        }
+        if let want = expected["replyKind"] as? String, want != replyKind {
+            mismatches.append("replyKind: expected \(want), actual \(replyKind)")
         }
         if let count = expected["rowCount"] as? Int, created.count != count {
             mismatches.append("rowCount: expected \(count), actual \(created.count) (model returned \(returned))")
@@ -338,6 +346,7 @@ enum EvalHarness {
         f["skipCount"] = String(task.skipCount)
         f["source"] = task.source
         f["stakes"] = task.stakes?.rawValue ?? "null"
+        f["timeWindow"] = task.timeWindow?.rawValue ?? "null"
         let kinds = Set((snapshot?.raw ?? []).filter { $0.taskID == task.id }.map { $0.kind.rawValue })
         for k in NudgeOutcomeKind.allCases {
             f["candidates.\(k.rawValue)"] = str(kinds.contains(k.rawValue))

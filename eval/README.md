@@ -51,7 +51,8 @@ git-ignored.
   "input": { … },
   "expected": { … },
   "note": "one line: why this case exists",
-  "unverified": true            // optional: expectation not confirmed against the rules
+  "unverified": true,           // optional: expectation not confirmed against the rules
+  "author": "roman"             // optional: whose case it is; the harness ignores it
 }
 ```
 
@@ -65,6 +66,9 @@ summary reports a percentage.
 - `routedTo`: `"capture"` (default), `"smallTalk"`, or `"plan"`. The two
   non-capture lanes never write rows; the harness reports the route and
   stops.
+- `replyKind`: `"template"` when the reply is one of `ChatRouter`'s lines
+  (chitchat, or a capture that found nothing), `"model"` when the model's
+  own message is shown, `"plan"` for the planner lane.
 - `rowCount`: rows written.
 - `rows`: each entry names a row by `titleContains` (case-insensitive
   substring of the stored title) plus any of the row fields below.

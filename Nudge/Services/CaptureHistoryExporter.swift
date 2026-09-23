@@ -225,7 +225,7 @@ enum CaptureHistoryExporter {
                 if HomeTabView.isPlanIntent(turn.text) {
                     planIntents.append(routedCase(id: "plan-\(dayID)-\(n)", text: turn.text, route: "plan", day: dayLabel, reply: turn.reply))
                     counts.planIntent += 1
-                } else if HomeTabView.isSmallTalk(turn.text) {
+                } else if ChatRouter.isSmallTalk(turn.text) {
                     swallowed.append(routedCase(id: "swallowed-\(dayID)-\(n)", text: turn.text, route: "smallTalk", day: dayLabel, reply: turn.reply))
                     counts.swallowed += 1
                 } else {

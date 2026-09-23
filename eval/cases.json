@@ -2,12 +2,29 @@
   {
     "id": "cap-study-then-application",
     "kind": "capture",
-    "input": { "text": "study python tomorrow at 9am and then work on my application" },
+    "input": {
+      "text": "study python tomorrow at 9am and then work on my application"
+    },
     "expected": {
       "rowCount": 2,
       "rows": [
-        { "titleContains": "python", "isEvent": false, "hasDeadline": false, "countdown": false, "isOverdue": false, "intendedDay": "+1d", "plannedStart": "+1d 09:00", "estimatedMinutes": 60 },
-        { "titleContains": "application", "isEvent": false, "hasDeadline": false, "countdown": false, "isOverdue": false }
+        {
+          "titleContains": "python",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": "+1d",
+          "plannedStart": "+1d 09:00",
+          "estimatedMinutes": 60
+        },
+        {
+          "titleContains": "application",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false
+        }
       ]
     },
     "note": "Cycle 2026-09-03-01 addendum: an ordered plan with a stated time keeps the time; intent plus placement, never a countdown or overdue. Caught on device once."
@@ -15,11 +32,21 @@
   {
     "id": "cap-deadline-essay-friday",
     "kind": "capture",
-    "input": { "text": "essay due Friday 11:59pm" },
+    "input": {
+      "text": "essay due Friday 11:59pm"
+    },
     "expected": {
       "rowCount": 1,
       "rows": [
-        { "titleContains": "essay", "isEvent": false, "hasDeadline": true, "countdown": true, "isOverdue": false, "intendedDay": null, "plannedStart": null }
+        {
+          "titleContains": "essay",
+          "isEvent": false,
+          "hasDeadline": true,
+          "countdown": true,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
       ]
     },
     "note": "The one deadline case: owed work keeps its countdown. Without it the suite cannot see the opposite failure (capture stops writing real deadlines)."
@@ -27,12 +54,25 @@
   {
     "id": "cap-floater-call-grandma",
     "kind": "capture",
-    "input": { "text": "call grandma" },
+    "input": {
+      "text": "call grandma"
+    },
     "expected": {
       "routedTo": "capture",
       "rowCount": 1,
       "rows": [
-        { "titleContains": "grandma", "isEvent": false, "hasDeadline": false, "countdown": false, "isOverdue": false, "intendedDay": null, "plannedStart": null, "candidates": { "floater": true } }
+        {
+          "titleContains": "grandma",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null,
+          "candidates": {
+            "floater": true
+          }
+        }
       ]
     },
     "note": "No temporal signal: a floater. Two words, but 'call' is on the small-talk block list so it reaches the API."
@@ -40,12 +80,25 @@
   {
     "id": "cap-floater-grandma-birthday-card",
     "kind": "capture",
-    "input": { "text": "grandma birthday card" },
+    "input": {
+      "text": "grandma birthday card"
+    },
     "expected": {
       "routedTo": "capture",
       "rowCount": 1,
       "rows": [
-        { "titleContains": "grandma", "isEvent": false, "hasDeadline": false, "countdown": false, "isOverdue": false, "intendedDay": null, "plannedStart": null, "candidates": { "floater": true } }
+        {
+          "titleContains": "grandma",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null,
+          "candidates": {
+            "floater": true
+          }
+        }
       ]
     },
     "note": "Deliberately short with no block-list word: shows whether isSmallTalk swallows a real task before the API sees it. Expected is what the product wants, not what the router does."
@@ -53,12 +106,25 @@
   {
     "id": "cap-floater-clean-garage",
     "kind": "capture",
-    "input": { "text": "clean out the garage" },
+    "input": {
+      "text": "clean out the garage"
+    },
     "expected": {
       "routedTo": "capture",
       "rowCount": 1,
       "rows": [
-        { "titleContains": "garage", "isEvent": false, "hasDeadline": false, "countdown": false, "isOverdue": false, "intendedDay": null, "plannedStart": null, "candidates": { "floater": true } }
+        {
+          "titleContains": "garage",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null,
+          "candidates": {
+            "floater": true
+          }
+        }
       ]
     },
     "note": "No temporal signal: a floater, a chore with no day."
@@ -66,12 +132,25 @@
   {
     "id": "cap-floater-email-landlord",
     "kind": "capture",
-    "input": { "text": "email the landlord about the leak" },
+    "input": {
+      "text": "email the landlord about the leak"
+    },
     "expected": {
       "routedTo": "capture",
       "rowCount": 1,
       "rows": [
-        { "titleContains": "landlord", "isEvent": false, "hasDeadline": false, "countdown": false, "isOverdue": false, "intendedDay": null, "plannedStart": null, "candidates": { "floater": true } }
+        {
+          "titleContains": "landlord",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null,
+          "candidates": {
+            "floater": true
+          }
+        }
       ]
     },
     "note": "No temporal signal: a floater phrased as a message to send, where the model might invent 'today'."
@@ -79,12 +158,25 @@
   {
     "id": "cap-floater-boxes-in-closet",
     "kind": "capture",
-    "input": { "text": "i should really get around to sorting through the boxes in the closet" },
+    "input": {
+      "text": "i should really get around to sorting through the boxes in the closet"
+    },
     "expected": {
       "routedTo": "capture",
       "rowCount": 1,
       "rows": [
-        { "titleContains": "box", "isEvent": false, "hasDeadline": false, "countdown": false, "isOverdue": false, "intendedDay": null, "plannedStart": null, "candidates": { "floater": true } }
+        {
+          "titleContains": "box",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null,
+          "candidates": {
+            "floater": true
+          }
+        }
       ]
     },
     "note": "No temporal signal, long and hedged ('should really get around to'): a floater that does not look like a task list item."
@@ -94,12 +186,30 @@
     "kind": "arbiter",
     "input": {
       "tasks": [
-        { "title": "Study Python", "intendedDate": "+1d", "plannedStartDate": "+1d 09:00", "estimatedMinutes": 60 }
+        {
+          "title": "Study Python",
+          "intendedDate": "+1d",
+          "plannedStartDate": "+1d 09:00",
+          "estimatedMinutes": 60
+        }
       ]
     },
     "expected": {
       "tasks": [
-        { "title": "Study Python", "hasDeadline": false, "countdown": false, "isOverdue": false, "intendedDay": "+1d", "scheduledDay": "+1d", "plannedStart": "+1d 09:00", "candidates": { "placementLead": true, "dueSoon": false, "floater": false } }
+        {
+          "title": "Study Python",
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": "+1d",
+          "scheduledDay": "+1d",
+          "plannedStart": "+1d 09:00",
+          "candidates": {
+            "placementLead": true,
+            "dueSoon": false,
+            "floater": false
+          }
+        }
       ]
     },
     "note": "What capture writes for 'study python tomorrow at 9am': intent + manual placement. Placement heads-up builds, nothing deadline-keyed does, and it is not a floater."
@@ -109,12 +219,26 @@
     "kind": "arbiter",
     "input": {
       "tasks": [
-        { "title": "Finish essay", "dueDate": "+2d 23:59" }
+        {
+          "title": "Finish essay",
+          "dueDate": "+2d 23:59"
+        }
       ]
     },
     "expected": {
       "tasks": [
-        { "title": "Finish essay", "hasDeadline": true, "countdown": true, "isOverdue": false, "scheduledDay": null, "candidates": { "dueSoon": true, "floater": false, "placementLead": false } }
+        {
+          "title": "Finish essay",
+          "hasDeadline": true,
+          "countdown": true,
+          "isOverdue": false,
+          "scheduledDay": null,
+          "candidates": {
+            "dueSoon": true,
+            "floater": false,
+            "placementLead": false
+          }
+        }
       ]
     },
     "note": "A real deadline: countdown shown, dueSoon builds, owed is not scheduled (scheduledDay nil), never a floater."
@@ -124,12 +248,25 @@
     "kind": "arbiter",
     "input": {
       "tasks": [
-        { "title": "Sort receipts", "intendedDate": "-1d" }
+        {
+          "title": "Sort receipts",
+          "intendedDate": "-1d"
+        }
       ]
     },
     "expected": {
       "tasks": [
-        { "title": "Sort receipts", "hasDeadline": false, "countdown": false, "isOverdue": false, "intentIsFuture": false, "candidates": { "floater": true, "dueSoon": false } }
+        {
+          "title": "Sort receipts",
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intentIsFuture": false,
+          "candidates": {
+            "floater": true,
+            "dueSoon": false
+          }
+        }
       ]
     },
     "note": "An intent whose day passed: never overdue (never-shame), and exactly what the floater check-in targets."
@@ -139,12 +276,25 @@
     "kind": "arbiter",
     "input": {
       "tasks": [
-        { "title": "Call grandma" }
+        {
+          "title": "Call grandma"
+        }
       ]
     },
     "expected": {
       "tasks": [
-        { "title": "Call grandma", "hasDeadline": false, "countdown": false, "isOverdue": false, "scheduledDay": null, "candidates": { "floater": true, "dueSoon": false, "placementLead": false } }
+        {
+          "title": "Call grandma",
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "scheduledDay": null,
+          "candidates": {
+            "floater": true,
+            "dueSoon": false,
+            "placementLead": false
+          }
+        }
       ]
     },
     "note": "No dates at all: the floater population the check-in baseline needs (CLAUDE.md work order item 2)."
@@ -154,12 +304,27 @@
     "kind": "arbiter",
     "input": {
       "tasks": [
-        { "title": "Laundry", "intendedDate": "+3d" }
+        {
+          "title": "Laundry",
+          "intendedDate": "+3d"
+        }
       ]
     },
     "expected": {
       "tasks": [
-        { "title": "Laundry", "hasDeadline": false, "countdown": false, "isOverdue": false, "intentIsFuture": true, "scheduledDay": "+3d", "candidates": { "floater": false, "dueSoon": false, "placementLead": false } }
+        {
+          "title": "Laundry",
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intentIsFuture": true,
+          "scheduledDay": "+3d",
+          "candidates": {
+            "floater": false,
+            "dueSoon": false,
+            "placementLead": false
+          }
+        }
       ]
     },
     "note": "A chore given a day ahead: glued to that day, not 'whenever' work before it, so the floater must not target it."
@@ -169,12 +334,24 @@
     "kind": "arbiter",
     "input": {
       "tasks": [
-        { "title": "Submit lab report", "dueDate": "-1d 23:59" }
+        {
+          "title": "Submit lab report",
+          "dueDate": "-1d 23:59"
+        }
       ]
     },
     "expected": {
       "tasks": [
-        { "title": "Submit lab report", "hasDeadline": true, "countdown": true, "isOverdue": true, "candidates": { "dueSoon": false, "floater": false } }
+        {
+          "title": "Submit lab report",
+          "hasDeadline": true,
+          "countdown": true,
+          "isOverdue": true,
+          "candidates": {
+            "dueSoon": false,
+            "floater": false
+          }
+        }
       ]
     },
     "note": "A missed real deadline is the only thing that may read as overdue. dueSoon does not fire on the past."
@@ -184,13 +361,29 @@
     "kind": "arbiter",
     "input": {
       "tasks": [
-        { "title": "Read chapter 4", "intendedDate": "-1d", "plannedStartDate": "-1d 19:00", "estimatedMinutes": 45 }
+        {
+          "title": "Read chapter 4",
+          "intendedDate": "-1d",
+          "plannedStartDate": "-1d 19:00",
+          "estimatedMinutes": 45
+        }
       ],
       "rolloverSweep": true
     },
     "expected": {
       "tasks": [
-        { "title": "Read chapter 4", "plannedStart": null, "skipCount": 1, "intendedDay": "today", "isSkipped": false, "isOverdue": false, "countdown": false, "candidates": { "placementLead": false } }
+        {
+          "title": "Read chapter 4",
+          "plannedStart": null,
+          "skipCount": 1,
+          "intendedDay": "today",
+          "isSkipped": false,
+          "isOverdue": false,
+          "countdown": false,
+          "candidates": {
+            "placementLead": false
+          }
+        }
       ]
     },
     "note": "A manual placement whose day passed unstarted: the sweep clears it, and the first skip re-intends it for today (Roman's Skipped rule, Sep 16 2026). Floater membership is not asserted: it depends on the time of day the run happens."
@@ -201,14 +394,205 @@
     "unverified": true,
     "input": {
       "tasks": [
-        { "title": "Chem lecture", "isEvent": true, "specificTime": "+1d 10:00", "estimatedMinutes": 60 }
+        {
+          "title": "Chem lecture",
+          "isEvent": true,
+          "specificTime": "+1d 10:00",
+          "estimatedMinutes": 60
+        }
       ]
     },
     "expected": {
       "tasks": [
-        { "title": "Chem lecture", "isEvent": true, "isOverdue": false, "scheduledDay": null, "candidates": { "eventBlock": true, "floater": false, "dueSoon": false, "placementLead": false } }
+        {
+          "title": "Chem lecture",
+          "isEvent": true,
+          "isOverdue": false,
+          "scheduledDay": null,
+          "candidates": {
+            "eventBlock": true,
+            "floater": false,
+            "dueSoon": false,
+            "placementLead": false
+          }
+        }
       ]
     },
     "note": "Events are outside the deadline/intent split: their time is their time. Unverified: the eventBlock builder's exact conditions were not walked, only its taskID."
+  },
+  {
+    "id": "cap-nounphrase-passport-renewal",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "passport renewal"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "passport",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Small-talk polarity diagnosis: a noun-phrase task with no listed verb. The old block list swallowed it."
+  },
+  {
+    "id": "cap-nounphrase-return-library-books",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "return library books"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "librar",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Small-talk polarity diagnosis: an unlisted verb. The old block list swallowed it."
+  },
+  {
+    "id": "cap-nounphrase-water-the-plants",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "water the plants"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "plant",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Small-talk polarity diagnosis: a chore with an unlisted verb. The old block list swallowed it."
+  },
+  {
+    "id": "cap-nounphrase-haircut",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "haircut"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "haircut",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Small-talk polarity diagnosis: one word, does not look like a task list item. The old block list swallowed it."
+  },
+  {
+    "id": "cap-nounphrase-thesis-outline-draft",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "thesis outline draft"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "thesis",
+          "isEvent": false,
+          "hasDeadline": false,
+          "countdown": false,
+          "isOverdue": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Small-talk polarity diagnosis: three nouns, no verb, no date. The old block list swallowed it."
+  },
+  {
+    "id": "chat-how-do-you-do",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "how do you do"
+    },
+    "expected": {
+      "routedTo": "smallTalk",
+      "replyKind": "template",
+      "rowCount": 0
+    },
+    "note": "Pure chitchat, entirely in the closed set: template reply, no API call. The old list sent it to Opus because 'do' was a work word."
+  },
+  {
+    "id": "chat-thanks-that-helped",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "thanks that helped"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "template",
+      "rowCount": 0
+    },
+    "note": "'helped' is outside the closed set so this goes to capture; the model finds nothing and the empty-capture template replies. Zero rows either way."
+  },
+  {
+    "id": "cap-laundry-extra-twenty",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "Tomorrow afternoon I need to do a lot of laundry so lets plan on adding an extra 20min to that task"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "laundry",
+          "isEvent": false,
+          "hasDeadline": false,
+          "intendedDay": "+1d"
+        }
+      ]
+    },
+    "note": "Roman's guard against the template firing on real work: a task with a day, a fuzzy time and a duration adjustment must be captured and answered by the model, never the premade line. 'Afternoon' carries no clock time, so no placement is asserted."
   }
 ]

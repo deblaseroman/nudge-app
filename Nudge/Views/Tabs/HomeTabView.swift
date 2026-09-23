@@ -288,15 +288,18 @@ struct HomeTabView: View {
                 isWaitingForAI = false
                 return
             }
-            // Model router (Sep 2026): pure chitchat skips the ~6¢ Opus
-            // capture path and gets a Haiku one-liner (~0.05¢, sub-second).
-            // Never while a question from the model is outstanding — a
-            // one-word answer like "today" is a task_update in disguise.
-            if !hasOutstandingModelQuestion, Self.isSmallTalk(messageText) {
+            // Router (polarity fixed Sep 23 2026): the cheap lane needs
+            // positive evidence of chitchat, a whole message of chitchat
+            // tokens (`ChatRouter`), and answers from a template, no API
+            // call. Everything else is capture. Never while a question
+            // from the model is outstanding — a one-word "yes" or "today"
+            // is an answer in disguise.
+            if !hasOutstandingModelQuestion, ChatRouter.isSmallTalk(messageText) {
                 #if DEBUG
-                print("[Router] chitchat → Haiku small-talk lane")
+                print("[Router] chitchat → template reply, no API call")
                 #endif
-                await handleSmallTalk(messageText)
+                messages.append(HomeChatMessage(role: .assistant, text: ChatRouter.smallTalkReply(for: messageText)))
+                persistSession()
                 isWaitingForAI = false
                 return
             }
@@ -439,7 +442,13 @@ struct HomeTabView: View {
                 // decided app-side with the same arithmetic the sweep
                 // uses — the model is never trusted with it — and
                 // appended to the SAME closing message.
-                var assistantText = response.message
+                // A capture that found nothing (no rows, no updates, no
+                // plan question or answer, nothing outstanding) gets one
+                // template line naming what the box is for, not the
+                // model's chat reply. Kept the model's text otherwise.
+                var assistantText = ChatRouter.isEmptyCapture(response, questionOutstanding: hasOutstandingModelQuestion)
+                    ? ChatRouter.emptyCaptureReply
+                    : response.message
                 if let followUp = commitmentStartDayFollowUp(newlyCreated: newlyCreatedTasks) {
                     let trimmed = assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
                     assistantText = trimmed.isEmpty ? followUp : trimmed + " " + followUp
@@ -672,67 +681,6 @@ struct HomeTabView: View {
             return parent
         }
         return pool.first { !$0.isComplete && $0.isInformationalEvent && $0.title.lowercased().contains(wanted) }
-    }
-
-    /// Words that mean a message might carry work. Word-boundary matched
-    /// (tokens, not substrings) so "that" doesn't trip on "at".
-    private static let smallTalkBlockWords: Set<String> = [
-        // days & relative time
-        "today", "tonight", "tomorrow", "yesterday", "monday", "tuesday",
-        "wednesday", "thursday", "friday", "saturday", "sunday", "morning",
-        "afternoon", "evening", "night", "noon", "midnight", "week",
-        "weekend", "month", "am", "pm", "later", "soon",
-        // task-shaped verbs & nouns
-        "need", "needs", "do", "doing", "due", "go", "going", "buy", "get",
-        "pick", "grab", "call", "text", "email", "send", "pay", "finish",
-        "start", "study", "work", "clean", "wash", "laundry", "meet",
-        "meeting", "plan", "schedule", "remind", "reminder", "appointment",
-        "class", "exam", "quiz", "test", "shift", "gym", "practice",
-        "homework", "assignment", "essay", "project", "add", "make",
-        "take", "drop", "apply", "application", "interview", "doctor",
-        "dentist", "event", "task", "deadline", "cancel", "move", "change"
-    ]
-
-    /// The router's cheap-lane gate: TRUE only when the message provably
-    /// contains no work. Bias is the whole design — a wrong "chat" verdict
-    /// loses a capture (unforgivable); a wrong "task" verdict costs six
-    /// cents. So: short, no digits, no day/time/task words, ties to Opus.
-    /// Deterministic on purpose — an AI guessing which AI to call would
-    /// itself cost a call.
-    static func isSmallTalk(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty, trimmed.count <= 60 else { return false }
-        guard trimmed.rangeOfCharacter(from: .decimalDigits) == nil else { return false }
-        let tokens = trimmed.split(whereSeparator: { !$0.isLetter }).map(String.init)
-        guard tokens.count <= 8, !tokens.isEmpty else { return false }
-        return tokens.allSatisfy { !smallTalkBlockWords.contains($0) }
-    }
-
-    /// The cheap lane itself. On failure, the honest causeless copy —
-    /// nothing was at stake, so no retry ceremony.
-    private func handleSmallTalk(_ messageText: String) async {
-        let history = messages.dropLast().map { msg in
-            ChatMessage(
-                role: msg.role == .user ? "user" : "assistant",
-                content: msg.text
-            )
-        }
-        do {
-            let reply = try await ClaudeService.shared.smallTalk(
-                userMessage: messageText,
-                conversationHistory: Array(history)
-            )
-            messages.append(HomeChatMessage(role: .assistant, text: reply))
-        } catch {
-            #if DEBUG
-            print("[HomeTabView] small-talk error: \(error)")
-            #endif
-            messages.append(HomeChatMessage(
-                role: .assistant,
-                text: "That didn't go through, try again in a moment."
-            ))
-        }
-        persistSession()
     }
 
     static func isPlanIntent(_ text: String) -> Bool {
