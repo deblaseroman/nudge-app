@@ -57,7 +57,7 @@ class ClaudeService {
             return args[i + 1]
         }
         #endif
-        return "claude-opus-5"
+        return "claude-sonnet-5"
     }
     /// The daily Tasks-tab memo (Sep 2026). Opus by Roman's design: the
     /// Tasks-tab box is Opus's only user-facing surface, personalized memos
