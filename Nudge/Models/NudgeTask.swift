@@ -146,6 +146,50 @@ extension NudgeTask {
         if let plannedStartDate { return Calendar.current.startOfDay(for: plannedStartDate) }
         return nil
     }
+
+    // MARK: - The day lens (one rule, two readers)
+
+    /// The ordered plan section of a day: plan tasks (`sequenceIndex`) whose
+    /// day is `day`, a dateless plan reading as today; open first, in stated
+    /// order. Hoisted here Sep 23 2026 so the widget shows exactly the
+    /// Tasks tab's Today lens (it had its own all-tasks list and showed
+    /// tomorrow's rows over today's).
+    static func planTasks(among tasks: [NudgeTask], on day: Date, now: Date = Date()) -> [NudgeTask] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: now)
+        return tasks
+            .filter { !$0.isInformationalEvent && $0.sequenceIndex != nil }
+            .filter { cal.isDate($0.scheduledDay ?? today, inSameDayAs: day) }
+            .sorted { lhs, rhs in
+                if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
+                return (lhs.sequenceIndex ?? .max) < (rhs.sequenceIndex ?? .max)
+            }
+    }
+
+    /// Non-plan tasks belonging to `day`: intended OR placed that day
+    /// (`scheduledDay`). Open rows in start-time order so the list reads
+    /// like the timeline; unplaced intents follow; completed rows sink.
+    static func dayTasks(among tasks: [NudgeTask], on day: Date) -> [NudgeTask] {
+        let cal = Calendar.current
+        return tasks
+            .filter { task in
+                guard !task.isInformationalEvent, task.sequenceIndex == nil,
+                      let d = task.scheduledDay else { return false }
+                return cal.isDate(d, inSameDayAs: day)
+            }
+            .sorted { lhs, rhs in
+                if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
+                let l = lhs.plannedStartDate ?? .distantFuture
+                let r = rhs.plannedStartDate ?? .distantFuture
+                if l != r { return l < r }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+    }
+
+    /// The whole lens for a day: the plan section, then the day's tasks.
+    static func dayLens(among tasks: [NudgeTask], on day: Date, now: Date = Date()) -> [NudgeTask] {
+        planTasks(among: tasks, on: day, now: now) + dayTasks(among: tasks, on: day)
+    }
 }
 
 /// The one task ordering, with **plan-first built in** (Jul 2026 — before

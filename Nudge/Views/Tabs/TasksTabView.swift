@@ -557,7 +557,7 @@ struct TasksTabView: View {
     }
 
     private func planTasks(on day: Date) -> [NudgeTask] {
-        planTasks.filter { Calendar.current.isDate(planDay(of: $0), inSameDayAs: day) }
+        NudgeTask.planTasks(among: actionableTasks, on: day)
     }
 
     /// Non-plan tasks belonging to `day` — the old `scheduledTasks` with
@@ -567,19 +567,9 @@ struct TasksTabView: View {
     /// in the same order the strip above draws, not the comparator's
     /// deadline buckets; unplaced intents follow; completed rows sink.
     private func dayTasks(on day: Date) -> [NudgeTask] {
-        actionableTasks
-            .filter { task in
-                guard task.sequenceIndex == nil,
-                      let d = scheduledDay(of: task) else { return false }
-                return Calendar.current.isDate(d, inSameDayAs: day)
-            }
-            .sorted { lhs, rhs in
-                if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
-                let l = lhs.plannedStartDate ?? .distantFuture
-                let r = rhs.plannedStartDate ?? .distantFuture
-                if l != r { return l < r }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
+        // The rule lives on the model (`NudgeTask.dayTasks`) so the widget
+        // reads the same lens; this is a forwarder.
+        NudgeTask.dayTasks(among: actionableTasks, on: day)
     }
 
     /// Events anchored to `day` — same anchor the Events tab uses

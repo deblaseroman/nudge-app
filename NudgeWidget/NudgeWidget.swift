@@ -385,7 +385,9 @@ struct NudgeTaskProvider: TimelineProvider {
             var openDescriptor = FetchDescriptor<NudgeTask>(
                 predicate: #Predicate { !$0.isComplete && !$0.isInformationalEvent }
             )
-            openDescriptor.fetchLimit = 50
+            // Wide enough that today's rows never lose the cut to store
+            // order; the lens below narrows to today.
+            openDescriptor.fetchLimit = 200
             let openActionable = try context.fetch(openDescriptor)
 
             // Use `Date.distantPast` explicitly — the SwiftData `#Predicate`
@@ -456,7 +458,14 @@ struct NudgeTaskProvider: TimelineProvider {
                 guard let completedAt = task.completedAt else { return false }
                 return now.timeIntervalSince(completedAt) < completionDisplayDuration
             }
-            let visibleTasks = openActionable.filter { !$0.isSkipped } + recentlyAnimatedDone
+            // The widget is a window onto the Tasks tab's TODAY lens and
+            // nothing else (Roman, Sep 23 2026: a task planned for tomorrow
+            // was pushing today's rows out). Same membership, same order,
+            // from the one rule on the model: the plan section, then the
+            // day's tasks by start time, completed rows sunk. Rows completed
+            // moments ago still animate out because they are in the pool.
+            let lensPool = openActionable.filter { !$0.isSkipped } + recentDone
+            let visibleTasks = NudgeTask.dayLens(among: lensPool, on: startOfToday, now: now)
             let recentlyCompletedTasks = recentlyAnimatedDone
 
             let todayCompletedCount = recentDone.filter { task in
@@ -464,21 +473,17 @@ struct NudgeTaskProvider: TimelineProvider {
                 return completedAt >= startOfToday && completedAt < endOfToday
             }.count
 
-            let incompleteTasks = openActionable.filter { !$0.isSkipped }
+            let incompleteTasks = visibleTasks.filter { !$0.isComplete }
             let totalToday = incompleteTasks.count + todayCompletedCount
 
             let urgentCount = incompleteTasks.filter { task in
                 task.isOverdue || task.priority == "high"
             }.count
 
-            // Sort visible tasks (incomplete + recently completed) with the
-            // shared comparator — plan-first, then overdue/dated/floater,
-            // completed sunk to the bottom. This used to be an inline copy
-            // of the app's ordering with the plan-first rule hand-bolted on
-            // top; one comparator means the widget can't drift from the
-            // list again.
-            let comparator = TaskSortComparator()
-            let sortedVisible = visibleTasks.sorted { comparator.compare($0, $1) }
+            // Already in lens order; the old comparator sort (deadline
+            // buckets across every open task) is what let tomorrow's rows
+            // outrank today's.
+            let sortedVisible = visibleTasks
 
             var goalDescriptor = FetchDescriptor<NudgeGoal>(
                 predicate: #Predicate { $0.isActive }
