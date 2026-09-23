@@ -104,9 +104,7 @@ final class NudgeIntelligence {
             return false
         }
 
-        let signals = try? await ClaudeService.shared.analyzeTask(
-            title: inputs.title, category: inputs.category, dueLine: inputs.dueLine
-        )
+        let signals = try? await ClaudeService.shared.analyzeTask(userMessage: inputs.userMessage)
 
         // Resumes on the main actor (this func is @MainActor), so the
         // SwiftData write below happens on the main thread.
@@ -128,23 +126,29 @@ final class NudgeIntelligence {
 
     // MARK: - Prompt inputs
 
-    /// Every value the prompt sees, and their hash. Anything added to the
-    /// prompt must be added here or the cache will serve stale answers.
-    private struct Inputs {
+    /// The prompt's user message and its hash, from one value: the hash is
+    /// SHA-256 of the exact string sent, so nothing can be added to the
+    /// prompt without changing the freshness key.
+    struct Inputs {
         let title: String
-        let category: String
-        let dueLine: String
+        let userMessage: String
 
         init(task: NudgeTask) {
             title = task.title
-            category = task.category ?? "uncategorized"
-            dueLine = task.dueDate.map(ISO8601DateFormatter().string(from:)) ?? "none"
+            let category = task.category ?? "uncategorized"
+            let dueLine = task.dueDate.map(ISO8601DateFormatter().string(from:)) ?? "none"
+            userMessage = "Task title: \"\(task.title)\"\nCategory: \(category)\nDue: \(dueLine)"
         }
 
         var hash: String {
-            let digest = SHA256.hash(data: Data("\(title)\u{1F}\(category)\u{1F}\(dueLine)".utf8))
-            return digest.map { String(format: "%02x", $0) }.joined()
+            SHA256.hash(data: Data(userMessage.utf8)).map { String(format: "%02x", $0) }.joined()
         }
+    }
+
+    /// The freshness key a row must carry to be a cache hit right now.
+    /// The harness seeds rows with it to test the no-call path.
+    static func currentInputHash(for task: NudgeTask) -> String {
+        Inputs(task: task).hash
     }
 
     // MARK: - Fallback

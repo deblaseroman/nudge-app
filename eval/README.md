@@ -95,6 +95,16 @@ does. A `specificTime` with no `dueDate` also sets the day's 23:59
 
 `expected.tasks` names rows by exact `title` plus row fields.
 
+`input.intelligence` seeds a per-task signals row for each task before
+the arbiter runs (`seedRow`, default true; `seedHash` true stores the
+current freshness hash, false leaves it empty like a row from before the
+column) and then asks for a refresh `asks` times (default 2) with nothing
+changed. `expected.tasks[].intelligenceCalls` is the list of asks that
+made a call, e.g. `[1, 0]`. A case with `seedHash: false` makes one real
+call and is skipped under `--local-only`. The `INTEL` line reports both
+paths: calls for new rows from capture, and calls for refresh asks on
+existing rows.
+
 ### Dates
 
 Relative to the day the run happens: `"+1d"`, `"-2d"`, `"today"`,

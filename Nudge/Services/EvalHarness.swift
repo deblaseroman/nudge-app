@@ -79,6 +79,8 @@ enum EvalHarness {
     private static var captureCacheCreation = 0
     private static var intelCalls = 0
     private static var intelRows = 0
+    private static var intelSeededAsks = 0
+    private static var intelSeededCalls = 0
 
     static func run(casesPath: String, localOnly: Bool) async {
         let cases: [[String: Any]]
@@ -99,15 +101,22 @@ enum EvalHarness {
         liveFixtures = []
         intelCalls = 0
         intelRows = 0
+        intelSeededAsks = 0
+        intelSeededCalls = 0
         for c in cases {
             let id = (c["id"] as? String) ?? "<no id>"
             let kind = (c["kind"] as? String) ?? "<no kind>"
             let unverified = (c["unverified"] as? Bool) ?? false
             if kind == "capture", localOnly { continue }
+            // A seeded-row intelligence case without a stored hash makes
+            // one real signal call, so it sits with the paid half.
+            if kind == "arbiter", localOnly,
+               let intel = (c["input"] as? [String: Any])?["intelligence"] as? [String: Any],
+               (intel["seedHash"] as? Bool) != true { continue }
             let failure: String?
             switch kind {
             case "arbiter":
-                failure = runArbiterCase(c)
+                failure = await runArbiterCase(c)
             case "capture":
                 failure = await runCaptureCase(c)
             default:
@@ -136,8 +145,8 @@ enum EvalHarness {
         if captureCalls > 0 {
             emit("CACHE capture calls \(captureCalls): cache_read=\(captureCacheRead) cache_creation=\(captureCacheCreation) uncached_in=\(captureUncachedIn)")
         }
-        if intelRows > 0 {
-            emit("INTEL per-task signal calls \(intelCalls) for \(intelRows) new row(s)")
+        if intelRows > 0 || intelSeededAsks > 0 {
+            emit("INTEL per-task signal calls \(intelCalls) for \(intelRows) new row(s); \(intelSeededCalls) call(s) for \(intelSeededAsks) refresh ask(s) on existing rows")
         }
         if let fillOutput {
             do {
@@ -182,7 +191,7 @@ enum EvalHarness {
     // MARK: - Arbiter cases
 
     /// Returns nil on pass, else the failure line body.
-    private static func runArbiterCase(_ c: [String: Any]) -> String? {
+    private static func runArbiterCase(_ c: [String: Any]) async -> String? {
         let input = (c["input"] as? [String: Any]) ?? [:]
         let expected = (c["expected"] as? [String: Any]) ?? [:]
         let inputSummary = describeArbiterInput(input)
@@ -200,6 +209,32 @@ enum EvalHarness {
         if (input["rolloverSweep"] as? Bool) == true {
             _ = PlacementRollover.sweep(modelContext: fixture.context)
         }
+        // `intelligence`: seed a TaskIntelligence row per task (fresh; with
+        // the current hash when seedHash is true, none otherwise), then ask
+        // for a refresh twice with nothing changed and record which asks
+        // made a call. The update path of the upsert is what this covers;
+        // capture cases only ever insert.
+        var intelResults: [String: [Bool]] = [:]
+        if let intel = input["intelligence"] as? [String: Any] {
+            let rowsNow = (try? fixture.context.fetch(FetchDescriptor<NudgeTask>())) ?? []
+            for task in rowsNow {
+                if (intel["seedRow"] as? Bool) ?? true {
+                    let seeded = TaskIntelligence(taskID: task.id, suggestedFirstStep: "Seeded by the harness.", analyzedAt: Date())
+                    if (intel["seedHash"] as? Bool) == true {
+                        seeded.inputHash = NudgeIntelligence.currentInputHash(for: task)
+                    }
+                    fixture.context.insert(seeded)
+                    try? fixture.context.save()
+                }
+                var made: [Bool] = []
+                for _ in 0..<((intel["asks"] as? Int) ?? 2) {
+                    made.append(await NudgeIntelligence.shared.refreshIfNeeded(task: task, in: fixture.container))
+                }
+                intelResults[task.title] = made
+                intelSeededAsks += made.count
+                intelSeededCalls += made.filter { $0 }.count
+            }
+        }
         let snapshot = reevaluate(fixture)
         let rows = (try? fixture.context.fetch(FetchDescriptor<NudgeTask>())) ?? []
 
@@ -212,7 +247,13 @@ enum EvalHarness {
                 mismatches.append("\(title): no such row (rows: \(rows.map(\.title).joined(separator: ", ")))")
                 continue
             }
-            mismatches.append(contentsOf: compare(spec, against: row, snapshot: snapshot, label: title))
+            var fields = spec
+            if let want = spec["intelligenceCalls"] as? [Int] {
+                fields.removeValue(forKey: "intelligenceCalls")
+                let have = (intelResults[title] ?? []).map { $0 ? 1 : 0 }
+                if have != want { mismatches.append("\(title) intelligenceCalls: expected \(want), actual \(have)") }
+            }
+            mismatches.append(contentsOf: compare(fields, against: row, snapshot: snapshot, label: title))
         }
         if let count = expected["rowCount"] as? Int, rows.count != count {
             mismatches.append("rowCount: expected \(count), actual \(rows.count)")

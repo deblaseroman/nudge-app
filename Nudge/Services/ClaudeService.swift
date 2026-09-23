@@ -600,8 +600,10 @@ class ClaudeService {
     /// which prepended the whole capture rulebook (~7,000 tokens) to a
     /// 150-token ask; `send()` and its "default dueDate to today" line are
     /// gone with it. The caller decides whether a call is needed at all
-    /// (`NudgeIntelligence` hashes these three inputs).
-    func analyzeTask(title: String, category: String, dueLine: String) async throws -> TaskSignals {
+    /// `userMessage` is built by `NudgeIntelligence.Inputs` and is the SAME
+    /// string its freshness hash is taken from, so an input cannot reach
+    /// the model without reaching the hash.
+    func analyzeTask(userMessage: String) async throws -> TaskSignals {
         let system = """
         You extract two signals from one task in a to-do app. Return ONLY valid JSON matching this exact schema, no prose, no fences:
         {"statedUrgency": "none" | "explicit", "suggestedFirstStep": "<short concrete first action, under 80 chars>"}
@@ -609,12 +611,11 @@ class ClaudeService {
         - statedUrgency is "explicit" only when the TITLE's own words signal time pressure ("urgent", "asap", "due tonight", "rush", "deadline"). Never infer it from the due line. Otherwise "none".
         - suggestedFirstStep is a tiny concrete move that lowers activation energy ("Open the doc and write one sentence."). Never a generic opener like "Get started". Never use an em dash.
         """
-        let user = "Task title: \"\(title)\"\nCategory: \(category)\nDue: \(dueLine)"
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 200,
             "system": system,
-            "messages": [["role": "user", "content": user]]
+            "messages": [["role": "user", "content": userMessage]]
         ]
         var req = URLRequest(url: URL(string: baseURL)!)
         req.httpMethod = "POST"

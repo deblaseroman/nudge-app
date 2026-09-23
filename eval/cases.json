@@ -774,5 +774,67 @@
       ]
     },
     "note": "Already-booked language with no stated time. No assertion on isEvent: Roman is watching what both models do under the new rule before deciding whether booked-but-timeless needs its own carve-out."
+  },
+  {
+    "id": "intel-existing-row-no-hash",
+    "kind": "arbiter",
+    "author": "roman",
+    "input": {
+      "tasks": [
+        {
+          "title": "Python course",
+          "category": "school",
+          "dueDate": "+3d 23:59"
+        }
+      ],
+      "intelligence": {
+        "seedRow": true,
+        "seedHash": false,
+        "asks": 2
+      }
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Python course",
+          "intelligenceCalls": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    "note": "A row from before the hash column: the first refresh ask backfills with one signal call, the second is a cache hit. Covers the upsert's update path, which capture cases never reach. Makes one real Haiku call, so it runs with the paid half."
+  },
+  {
+    "id": "intel-existing-row-with-hash",
+    "kind": "arbiter",
+    "author": "roman",
+    "input": {
+      "tasks": [
+        {
+          "title": "Python course",
+          "category": "school",
+          "dueDate": "+3d 23:59"
+        }
+      ],
+      "intelligence": {
+        "seedRow": true,
+        "seedHash": true,
+        "asks": 2
+      }
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Python course",
+          "intelligenceCalls": [
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    "note": "A fresh row whose hash matches the current inputs: two refresh asks with nothing changed make no call. Local and free."
   }
 ]
