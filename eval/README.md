@@ -95,6 +95,10 @@ does. A `specificTime` with no `dueDate` also sets the day's 23:59
 
 `expected.tasks` names rows by exact `title` plus row fields.
 
+`input.profile` (arbiter) sets `bedtime` / `wakeTime` as `"HH:mm"` on the
+case's profile; the default is bedtime 23:00 and wake 08:00, a quiet window
+of 22:00 to 08:30.
+
 `input.goals` (both kinds) inserts active goals: a string is a title; a
 dict may add `lastActivityAt`, `createdAt` (relative dates) and
 `isActive`. Capture cases pass them to the model exactly as the Home chat
@@ -134,7 +138,7 @@ that are days compare as `"+Nd"`; `plannedStart` compares as `"+Nd HH:mm"`.
 | `plannedIsAuto`, `estimatedMinutes`, `priority`, `sequenceIndex`, `skipCount`, `source`, `stakes` | as stored |
 | `candidates` | `{ "<kind>": true/false }`: whether the arbiter built a raw candidate of that kind for this row, before gates. Kinds: `eventBlock`, `morningPrompt`, `idle`, `prep`, `dueSoon`, `floater`, `comeBack`, `placementLead`, `placementMissed`, `goalLapse` |
 | `eligible`, `scheduled` | same shape: whether a candidate of that kind for this row passed the gates, and whether it was picked to fire. These read the clock (quiet hours, spacing), so assert them only where the fire time makes the answer stable |
-| `fireDay` | `{ "<kind>": "+Nd" }`: the day offset of the earliest raw candidate of that kind for this row (or goal), `null` when none |
+| `fireDay`, `fireAt` | `{ "<kind>": "+Nd" }` / `{ "<kind>": "+Nd HH:mm" }`: the earliest raw candidate of that kind for this row (or goal), `null` when none |
 | `goalTitle` | the linked goal's title, or `null` |
 
 Assertions are on raw candidates, before gates, so quiet hours and the time

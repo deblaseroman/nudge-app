@@ -183,6 +183,24 @@ enum EvalHarness {
         return fixture
     }
 
+    /// `input.profile`: `bedtime` / `wakeTime` as "HH:mm" on the fixture's
+    /// profile, so a case can state the quiet window it runs against
+    /// (default bedtime 23:00, wake 08:00 → quiet 22:00 to 08:30).
+    private static func applyProfile(_ input: [String: Any], to f: Fixture) throws {
+        guard let spec = input["profile"] as? [String: Any] else { return }
+        func clock(_ key: String) throws -> Date? {
+            guard let s = spec[key] as? String else { return nil }
+            let parts = s.split(separator: ":").compactMap { Int($0) }
+            guard parts.count == 2, let d = Calendar.current.date(bySettingHour: parts[0], minute: parts[1], second: 0, of: Date()) else {
+                throw HarnessError.bad("profile.\(key): expected \"HH:mm\"")
+            }
+            return d
+        }
+        if let b = try clock("bedtime") { f.profile.bedtime = b }
+        if let w = try clock("wakeTime") { f.profile.wakeTime = w }
+        try f.context.save()
+    }
+
     private static func reevaluate(_ f: Fixture) -> NudgeArbiter.DebugRunSnapshot? {
         NudgeArbiter.shared.reevaluate(reason: .taskCreatedOrEdited, profile: f.profile, modelContext: f.context)
         return (NudgeArbiter.shared as? NudgeArbiter)?.lastRunSnapshot
@@ -202,6 +220,7 @@ enum EvalHarness {
         let specs = (input["tasks"] as? [[String: Any]]) ?? []
         var goals: [NudgeGoal] = []
         do {
+            try applyProfile(input, to: fixture)
             goals = try insertGoals((input["goals"] as? [Any]) ?? [], into: fixture.context)
             for spec in specs { try insertTask(spec, into: fixture.context) }
             try fixture.context.save()
@@ -266,7 +285,7 @@ enum EvalHarness {
             guard let goal = goals.first(where: { $0.title == title }) else {
                 mismatches.append("goal \(title): not in input.goals"); continue
             }
-            for group in ["candidates", "eligible", "scheduled", "fireDay"] {
+            for group in ["candidates", "eligible", "scheduled", "fireDay", "fireAt"] {
                 guard let dict = spec[group] as? [String: Any] else { continue }
                 let set: [NudgeCandidate] = group == "eligible" ? (snapshot?.eligible ?? [])
                     : group == "scheduled" ? (snapshot?.scheduled ?? []) : (snapshot?.raw ?? [])
@@ -274,8 +293,9 @@ enum EvalHarness {
                 let kinds = Set(mine.map { $0.kind.rawValue })
                 for (kind, want) in dict {
                     let have: String
-                    if group == "fireDay" {
-                        have = mine.filter { $0.kind.rawValue == kind }.map(\.fireDate).min().map { day($0) } ?? "null"
+                    if group == "fireDay" || group == "fireAt" {
+                        let first = mine.filter { $0.kind.rawValue == kind }.map(\.fireDate).min()
+                        have = first.map { group == "fireDay" ? day($0) : dayAndClock($0) } ?? "null"
                     } else {
                         have = str(kinds.contains(kind))
                     }
@@ -298,6 +318,9 @@ enum EvalHarness {
         }
         var s = parts.joined(separator: "; ")
         if (input["rolloverSweep"] as? Bool) == true { s += " + rolloverSweep" }
+        if let prof = input["profile"] as? [String: Any], !prof.isEmpty {
+            s += " profile=" + prof.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
+        }
         if let goals = input["goals"] as? [Any], !goals.isEmpty {
             s += " goals=" + goals.map { g -> String in
                 if let title = g as? String { return "\"\(title)\"" }
@@ -552,6 +575,7 @@ enum EvalHarness {
             // Earliest raw candidate of the kind for this row, as a day offset.
             let first = (snapshot?.raw ?? []).filter { $0.taskID == task.id && $0.kind == k }.map(\.fireDate).min()
             f["fireDay.\(k.rawValue)"] = first.map { day($0) } ?? "null"
+            f["fireAt.\(k.rawValue)"] = first.map { dayAndClock($0) } ?? "null"
         }
         f["goalTitle"] = task.goalID.flatMap { id in goalTitles[id] } ?? "null"
         return f
@@ -561,7 +585,7 @@ enum EvalHarness {
         let actual = actualFields(task, snapshot: snapshot)
         var out: [String] = []
         for (key, value) in spec where key != "title" && key != "titleContains" {
-            if ["candidates", "eligible", "scheduled", "fireDay"].contains(key), let dict = value as? [String: Any] {
+            if ["candidates", "eligible", "scheduled", "fireDay", "fireAt"].contains(key), let dict = value as? [String: Any] {
                 for (kind, want) in dict {
                     let fullKey = "\(key).\(kind)"
                     guard let have = actual[fullKey] else {

@@ -856,12 +856,47 @@
             "dueSoon": true
           },
           "scheduled": {
-            "dueSoon": false
+            "dueSoon": true
+          },
+          "fireAt": {
+            "dueSoon": "+1d 05:00"
           }
         }
       ]
     },
-    "note": "Open since Sep 3: dueSoon fires inside quiet hours (seen 6am and 7am). A 7:00 deadline puts the 5:00 lead inside the fixture profile's 22:00 to 08:30 window; the candidate should build but not be scheduled. dueSoon is budget-exempt and every shared gate is keyed on that flag, so this fails today."
+    "note": "Design decision, standing since Aug 1 2026 (cycle 2026-08-01-03, restated by Roman Sep 23): a candidate anchored to a set time, an event start or a task due time, fires at its lead time regardless of quiet hours. That is the only way anything fires inside the window; the per-kind toggle is the opt-out. A 7:00 deadline's 5:00 reminder lands inside the fixture's 22:00 to 08:30 quiet window and is scheduled anyway."
+  },
+  {
+    "id": "arb-duesoon-before-quiet-hours",
+    "kind": "arbiter",
+    "input": {
+      "profile": {
+        "bedtime": "23:00"
+      },
+      "tasks": [
+        {
+          "title": "Submit lab report",
+          "dueDate": "+1d 23:59"
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Submit lab report",
+          "candidates": {
+            "dueSoon": true
+          },
+          "scheduled": {
+            "dueSoon": true
+          },
+          "fireAt": {
+            "dueSoon": "+1d 22:00"
+          }
+        }
+      ]
+    },
+    "note": "The common case: a bare due date's effective deadline is the END of the day, which sortDeadline computes as the next midnight (00:00), so the 120-minute lead fires at 22:00. With a 23:00 bedtime the quiet window opens at 22:00 (bedtime minus 60) and its comparison is strict, so 22:00 is outside it: this reminder passes the gate on its own and never touches the exemption, by exactly one minute. With a 22:00 bedtime the window would open at 21:00 and the same reminder would fire inside it, through the exemption."
   },
   {
     "id": "cap-goal-link-spanish",
