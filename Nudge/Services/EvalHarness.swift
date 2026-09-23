@@ -13,7 +13,9 @@
 //    capture  → `HomeTabView.isPlanIntent` / `ChatRouter.isSmallTalk` (the
 //               routers the Home chat runs first), `ClaudeService.sendChat` (the brain
 //               dump's only API entry point), `CaptureWriter.apply` (the
-//               write site), `ExamPrepSweep.run`, `NudgeArbiter.reevaluate`.
+//               write site), `NudgeIntelligence.refreshIfNeeded` per new row
+//               (counted: one API call per new task is the invariant),
+//               `ExamPrepSweep.run`, `NudgeArbiter.reevaluate`.
 //    arbiter  → rows built from the case, optional `PlacementRollover.sweep`,
 //               `NudgeArbiter.reevaluate`.
 //  Then both read the same fields: `NudgeTask` helpers, `CountdownState`
@@ -75,6 +77,8 @@ enum EvalHarness {
     private static var captureUncachedIn = 0
     private static var captureCacheRead = 0
     private static var captureCacheCreation = 0
+    private static var intelCalls = 0
+    private static var intelRows = 0
 
     static func run(casesPath: String, localOnly: Bool) async {
         let cases: [[String: Any]]
@@ -93,6 +97,8 @@ enum EvalHarness {
         var outcomes: [Outcome] = []
         filledCases = []
         liveFixtures = []
+        intelCalls = 0
+        intelRows = 0
         for c in cases {
             let id = (c["id"] as? String) ?? "<no id>"
             let kind = (c["kind"] as? String) ?? "<no kind>"
@@ -129,6 +135,9 @@ enum EvalHarness {
         emit("SUMMARY arbiter \(arbPassed)/\(arb.count) passed, \(capText)")
         if captureCalls > 0 {
             emit("CACHE capture calls \(captureCalls): cache_read=\(captureCacheRead) cache_creation=\(captureCacheCreation) uncached_in=\(captureUncachedIn)")
+        }
+        if intelRows > 0 {
+            emit("INTEL per-task signal calls \(intelCalls) for \(intelRows) new row(s)")
         }
         if let fillOutput {
             do {
@@ -296,6 +305,7 @@ enum EvalHarness {
         // or a capture that found nothing), "model" when the model's own
         // message is shown, "plan" for the planner lane.
         var replyKind = routedTo == "smallTalk" ? "template" : (routedTo == "plan" ? "plan" : "model")
+        var caseIntelCalls = 0
         if routedTo == "capture" {
             do {
                 let response = try await ClaudeService.shared.sendChat(
@@ -321,6 +331,15 @@ enum EvalHarness {
                 )
                 created = written.created
                 try fixture.context.save()
+                // The app's post-capture enrichment, on the fixture's own
+                // store: one API call per new row, none for a cache hit.
+                for row in created {
+                    if await NudgeIntelligence.shared.refreshIfNeeded(task: row, in: fixture.container) {
+                        caseIntelCalls += 1
+                    }
+                }
+                intelCalls += caseIntelCalls
+                intelRows += created.count
                 _ = ExamPrepSweep.shared.run(modelContext: fixture.context)
                 snapshot = reevaluate(fixture)
             } catch {
@@ -336,12 +355,19 @@ enum EvalHarness {
         if let want = expected["replyKind"] as? String, want != replyKind {
             mismatches.append("replyKind: expected \(want), actual \(replyKind)")
         }
+        // One signal call per new row is the invariant; a case may override.
+        let wantIntel = (expected["intelligenceCalls"] as? Int) ?? created.count
+        if caseIntelCalls != wantIntel {
+            mismatches.append("intelligenceCalls: expected \(wantIntel), actual \(caseIntelCalls)")
+        }
         if let count = expected["rowCount"] as? Int, created.count != count {
             mismatches.append("rowCount: expected \(count), actual \(created.count) (model returned \(returned))")
         }
         if fillOutput != nil {
             var filled = c
-            filled["expected"] = filledExpected(routedTo: routedTo, replyKind: replyKind, created: created, snapshot: snapshot)
+            var fe = filledExpected(routedTo: routedTo, replyKind: replyKind, created: created, snapshot: snapshot)
+            fe["intelligenceCalls"] = caseIntelCalls
+            filled["expected"] = fe
             filled["unverified"] = true
             var draft = (c["draft"] as? [String: Any]) ?? [:]
             let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")

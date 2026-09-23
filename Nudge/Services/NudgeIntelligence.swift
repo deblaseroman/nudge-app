@@ -26,6 +26,7 @@
 //      are free and we don't burn tokens.
 //
 
+import CryptoKit
 import Foundation
 import SwiftData
 
@@ -68,93 +69,82 @@ final class NudgeIntelligence {
 
     // MARK: - Public API — ENRICH (async, user-triggered only)
 
-    /// Triggers an LLM re-analysis for a task. Call this ONCE when a task is
-    /// created or its title changes — NOT on every read. Single-flight per
-    /// taskID (via `inFlightRefreshTaskIDs`) so overlapping calls collapse to
-    /// one network request instead of stacking up detached Tasks.
+    /// Asks for a refresh of a task's signals. Safe to call on every
+    /// lifecycle event (creation, editor open, editor save): it is a no-op
+    /// while a cached row is fresh and its `inputHash` matches the task's
+    /// current inputs, so only a new task or a changed title / category /
+    /// due line reaches the API (Sep 23 2026; before this every call paid).
+    /// Single-flight per taskID so overlapping calls collapse to one.
     ///
-    /// Note there is no `modelContext` parameter: the refresh owns its own
-    /// main-actor `ModelContext` built from the shared container, so it never
-    /// captures — or outlives — a SwiftUI view's environment context. That
-    /// removes the fragile "pass a thread-affined ModelContext into a
-    /// fire-and-forget Task" pattern that caused the off-main SwiftData
-    /// saves behind the "Call must be made on main thread" crashes.
-    func refreshSoon(for task: NudgeTask) {
+    /// `container` defaults to the shared store; the eval harness passes
+    /// its own in-memory container so nothing it does touches the app's.
+    func refreshSoon(for task: NudgeTask, in container: ModelContainer = SharedModelContainer.container) {
         let taskID = task.id
         guard inFlightRefreshTaskIDs.insert(taskID).inserted else { return }
 
         Task { @MainActor [weak self] in
-            await self?.refresh(task: task)
+            _ = await self?.refreshIfNeeded(task: task, in: container)
             self?.inFlightRefreshTaskIDs.remove(taskID)
         }
     }
 
-    // MARK: - Refresh path
-
-    private func refresh(task: NudgeTask) async {
-        // buildPrompt reads the task's fields BEFORE the suspension point —
-        // done on the main actor, before we hand off to the network.
-        let prompt = buildPrompt(for: task)
+    /// The awaitable form. Returns TRUE when an API call was made, FALSE
+    /// when the cache answered. The harness counts these.
+    @discardableResult
+    func refreshIfNeeded(task: NudgeTask, in container: ModelContainer = SharedModelContainer.container) async -> Bool {
+        // Inputs are read BEFORE the suspension point, on the main actor.
+        let inputs = Inputs(task: task)
         let taskID = task.id
-        let parsed: TaskSignalsJSON? = try? await callAI(prompt: prompt)
+        let context = ModelContext(container)
+        if let cached = fetchCached(taskID: taskID, modelContext: context),
+           isFresh(cached), cached.inputHash == inputs.hash {
+            #if DEBUG
+            print("[NudgeIntelligence] cache hit for \"\(inputs.title)\" — no call")
+            #endif
+            return false
+        }
 
-        // Resumes on the main actor (this func is @MainActor), so everything
-        // below — the SwiftData write and its @Query-invalidation commit —
-        // happens on the main thread.
+        let signals = try? await ClaudeService.shared.analyzeTask(
+            title: inputs.title, category: inputs.category, dueLine: inputs.dueLine
+        )
+
+        // Resumes on the main actor (this func is @MainActor), so the
+        // SwiftData write below happens on the main thread.
         let row: TaskIntelligence
-        if let parsed {
+        if let signals {
             row = TaskIntelligence(
                 taskID: taskID,
-                statedUrgency: parsed.statedUrgencyEnum,
-                suggestedFirstStep: parsed.suggestedFirstStep,
+                statedUrgency: StatedUrgency(rawValue: signals.statedUrgency) ?? .none,
+                suggestedFirstStep: signals.suggestedFirstStep,
                 analyzedAt: Date()
             )
         } else {
             row = fallback(for: task)
         }
-
-        // Own context from the shared container — created and used entirely
-        // within this @MainActor body, never escaping.
-        let context = ModelContext(SharedModelContainer.container)
-        upsert(row, modelContext: context)
+        row.inputHash = inputs.hash
+        upsert(row, modelContext: ModelContext(container))
+        return true
     }
 
-    // MARK: - AI call
+    // MARK: - Prompt inputs
 
-    private func callAI(prompt: String) async throws -> TaskSignalsJSON {
-        let response = try await ClaudeService.shared.send(userMessage: prompt)
-        guard let data = response.message.data(using: .utf8) else {
-            throw NudgeIntelligenceError.malformed
-        }
-        return try JSONDecoder().decode(TaskSignalsJSON.self, from: data)
-    }
+    /// Every value the prompt sees, and their hash. Anything added to the
+    /// prompt must be added here or the cache will serve stale answers.
+    private struct Inputs {
+        let title: String
+        let category: String
+        let dueLine: String
 
-    private func buildPrompt(for task: NudgeTask) -> String {
-        let dueString = task.dueDate.map(ISO8601DateFormatter().string(from:)) ?? "none"
-        let categoryString = task.category ?? "uncategorized"
-        let today = ISO8601DateFormatter().string(from: Date())
-
-        return """
-        Return ONLY valid JSON matching this exact schema (no prose, no fences):
-        {
-          "statedUrgency": "none" | "explicit",
-          "suggestedFirstStep": "<short concrete first action, under 80 chars>"
+        init(task: NudgeTask) {
+            title = task.title
+            category = task.category ?? "uncategorized"
+            dueLine = task.dueDate.map(ISO8601DateFormatter().string(from:)) ?? "none"
         }
 
-        Task title: "\(task.title)"
-        Category: \(categoryString)
-        Due: \(dueString)
-        Today: \(today)
-
-        Rules:
-        - statedUrgency: "explicit" if the title contains words like "urgent", \
-        "asap", "due tonight", "due tomorrow", "deadline", "rush", or otherwise \
-        signals time pressure directly. "none" otherwise. Do NOT mark explicit \
-        based on the due date — only language in the title.
-        - suggestedFirstStep: a tiny concrete action to lower activation energy. \
-        Example: "Open the doc and write one sentence." Avoid generic openers \
-        like "Get started" — name the first concrete move.
-        """
+        var hash: String {
+            let digest = SHA256.hash(data: Data("\(title)\u{1F}\(category)\u{1F}\(dueLine)".utf8))
+            return digest.map { String(format: "%02x", $0) }.joined()
+        }
     }
 
     // MARK: - Fallback
@@ -210,19 +200,4 @@ final class NudgeIntelligence {
         }
         try? modelContext.save()
     }
-}
-
-// MARK: - DTO
-
-private struct TaskSignalsJSON: Codable {
-    let statedUrgency: String
-    let suggestedFirstStep: String
-
-    var statedUrgencyEnum: StatedUrgency {
-        statedUrgency == "explicit" ? .explicit : .none
-    }
-}
-
-private enum NudgeIntelligenceError: Error {
-    case malformed
 }

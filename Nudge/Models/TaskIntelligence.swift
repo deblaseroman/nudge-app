@@ -44,6 +44,14 @@ final class TaskIntelligence {
     /// `NudgeConfig.intelligenceCacheDays` to decide if a refresh is due.
     var analyzedAt: Date
 
+    /// SHA-256 of every input the prompt used (title, category, due line),
+    /// set by `NudgeIntelligence` when the row is produced (Sep 23 2026).
+    /// A refresh is a no-op while the row is fresh AND this matches the
+    /// task's current inputs, so opening or saving an unchanged task costs
+    /// nothing. Nil on rows from before the column existed: they refresh
+    /// once. Additive column, no change to the three schema lists.
+    var inputHash: String? = nil
+
     /// Typed view of `statedUrgencyRaw`. Unknown values map to `.none`.
     var statedUrgency: StatedUrgency {
         get { StatedUrgency(rawValue: statedUrgencyRaw) ?? .none }

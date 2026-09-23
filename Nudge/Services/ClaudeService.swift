@@ -6,7 +6,7 @@
 //
 //  Integration points:
 //  1. sendChat()            — brain dump conversation (Feature 1)
-//  2. captureWordVomit()    — quick-capture task extraction (Feature 1)
+//  2. analyzeTask()         — two per-task signals for NudgeIntelligence (Sep 2026; the legacy send() path is gone)
 //  3. generateTimeBlocks()  — schedule generation from tasks (Feature 2)
 //  4. proposePlans()        — plan proposals for due-dated items (cycle 2026-09-16-01)
 //
@@ -593,34 +593,51 @@ class ClaudeService {
         return try await makeRequest(body: body)
     }
 
-    /// Legacy single-message send (still used by quick actions).
-    func send(userMessage: String, context: String = "") async throws -> ClaudeResponse {
+    // MARK: - Per-task signals (NudgeIntelligence)
+
+    /// Two fields from one task, on Haiku, with a prompt the size of the
+    /// question (Sep 23 2026). This used to ride the legacy `send()` path,
+    /// which prepended the whole capture rulebook (~7,000 tokens) to a
+    /// 150-token ask; `send()` and its "default dueDate to today" line are
+    /// gone with it. The caller decides whether a call is needed at all
+    /// (`NudgeIntelligence` hashes these three inputs).
+    func analyzeTask(title: String, category: String, dueLine: String) async throws -> TaskSignals {
+        let system = """
+        You extract two signals from one task in a to-do app. Return ONLY valid JSON matching this exact schema, no prose, no fences:
+        {"statedUrgency": "none" | "explicit", "suggestedFirstStep": "<short concrete first action, under 80 chars>"}
+        Rules:
+        - statedUrgency is "explicit" only when the TITLE's own words signal time pressure ("urgent", "asap", "due tonight", "rush", "deadline"). Never infer it from the due line. Otherwise "none".
+        - suggestedFirstStep is a tiny concrete move that lowers activation energy ("Open the doc and write one sentence."). Never a generic opener like "Get started". Never use an em dash.
+        """
+        let user = "Task title: \"\(title)\"\nCategory: \(category)\nDue: \(dueLine)"
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 1000,
-            "system": chatSystemPrompt + "\n\nToday's date is \(Self.todayISO()). Default dueDate to \(Self.todayISO()) if none specified.",
-            "messages": [
-                [
-                    "role": "user",
-                    "content": context.isEmpty
-                        ? userMessage
-                        : "\(context)\nUser: \(userMessage)"
-                ]
-            ]
+            "max_tokens": 200,
+            "system": system,
+            "messages": [["role": "user", "content": user]]
         ]
-        return try await makeRequest(body: body)
-    }
+        var req = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        guard !apiKey.isEmpty else { throw ClaudeError.missingAPIKey }
 
-    /// Quick-capture: parse a brain dump into structured tasks.
-    func captureWordVomit(_ text: String) async throws -> [TaskData] {
-        let prompt = """
-        Parse this brain dump into tasks. Today is \(Self.todayISO()).
-        If no date is mentioned for a task, default dueDate to \(Self.todayISO()).
-        Brain dump: "\(text)"
-        Return ONLY JSON:
-        {"message": "Got it! Found X tasks.", "new_tasks": [{"title": "", "dueDate": "YYYY-MM-DD", "dueTime": "afternoon", "priority": "high", "category": "school", "estimatedMinutes": 30, "recurrence": null}]}
-        """
-        return try await send(userMessage: prompt).tasks
+        let (data, response) = try await URLSession.shared.data(for: req)
+        try validateResponse(data: data, response: response)
+        let resp = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+        #if DEBUG
+        if let usage = resp.usage {
+            print("[ClaudeService] USAGE: in=\(usage.inputTokens ?? 0) out=\(usage.outputTokens ?? 0) model=\(model) served_by=\(resp.model ?? "?") site=taskSignals")
+        }
+        #endif
+        guard let text = resp.content.first(where: { $0.type == nil || $0.type == "text" })?.text,
+              let json = extractJSONObject(from: stripCodeFences(text)),
+              let jsonData = json.data(using: .utf8) else {
+            throw ClaudeError.parseError
+        }
+        return try JSONDecoder().decode(TaskSignals.self, from: jsonData)
     }
 
     // MARK: - Day plan refinement (AI layer over the deterministic planner)
@@ -1717,6 +1734,12 @@ struct DayPlanResult: Decodable {
     }
     let placements: [Placement]
     let rationale: String
+}
+
+/// The two per-task signals `analyzeTask` returns.
+struct TaskSignals: Codable {
+    let statedUrgency: String
+    let suggestedFirstStep: String
 }
 
 /// Codable DTO for tasks returned by the Claude API

@@ -25,7 +25,8 @@ How it reaches the real code: the runner builds the Debug app for the
 simulator and launches it with `-nudge-eval eval/cases.json`. Inside the
 app, `EvalHarness` (DEBUG only) runs each case on an in-memory store through
 the same entry points the app uses: the Home chat's routers, `sendChat`,
-`CaptureWriter.apply`, `PlacementRollover.sweep`, `NudgeArbiter.reevaluate`.
+`CaptureWriter.apply`, `NudgeIntelligence.refreshIfNeeded`,
+`PlacementRollover.sweep`, `NudgeArbiter.reevaluate`.
 Nothing is reimplemented; the case file is read by path, not bundled.
 
 ## Drafting cases from real captures
@@ -72,6 +73,10 @@ summary reports a percentage.
   (chitchat, or a capture that found nothing), `"model"` when the model's
   own message is shown, `"plan"` for the planner lane.
 - `rowCount`: rows written.
+- `intelligenceCalls`: per-task signal API calls made for the new rows.
+  Checked on every capture case even when omitted: the default expectation
+  is one call per new row (the cache answers repeats). The run ends with an
+  `INTEL` totals line.
 - `rows`: each entry names a row by `titleContains` (case-insensitive
   substring of the stored title) plus any of the row fields below.
 
