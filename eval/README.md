@@ -8,12 +8,16 @@ app behavior, writes to no app store.
 eval/run.sh                # everything: arbiter cases locally, capture cases through the API
 eval/run.sh --local-only   # arbiter cases only, free, run it often
 eval/run.sh --no-build     # reuse the last build
+eval/run.sh --model <id>   # capture model for this run only; default is what the app uses
 ```
 
 Output: one line per **failing** case (`FAIL <id> | input: … | expected: … |
 actual: …`), then `SUMMARY arbiter N/M passed, capture N/M passed (X%)`.
-Passing cases print nothing. The app's own console chatter is in
-`eval/.last-run.log`.
+Passing cases print nothing. When capture cases ran, one more line follows:
+`CACHE capture calls N: cache_read=… cache_creation=… uncached_in=…`, the
+prompt-cache totals across those calls (a second run within five minutes
+should show most of the prompt as `cache_read`). The app's own console
+chatter is in `eval/.last-run.log`.
 
 How it reaches the real code: the runner builds the Debug app for the
 simulator and launches it with `-nudge-eval eval/cases.json`. Inside the

@@ -52,6 +52,13 @@ enum EvalHarness {
         let line: String?
     }
 
+    /// Capture-call token totals for the one CACHE line after the summary:
+    /// the only place a cache regression is visible without the log.
+    private static var captureCalls = 0
+    private static var captureUncachedIn = 0
+    private static var captureCacheRead = 0
+    private static var captureCacheCreation = 0
+
     static func run(casesPath: String, localOnly: Bool) async {
         let cases: [[String: Any]]
         do {
@@ -101,6 +108,9 @@ enum EvalHarness {
             capText = "capture \(capPassed)/\(cap.count) passed (\(pct)%)"
         }
         emit("SUMMARY arbiter \(arbPassed)/\(arb.count) passed, \(capText)")
+        if captureCalls > 0 {
+            emit("CACHE capture calls \(captureCalls): cache_read=\(captureCacheRead) cache_creation=\(captureCacheCreation) uncached_in=\(captureUncachedIn)")
+        }
     }
 
     private static func emit(_ line: String) {
@@ -262,6 +272,10 @@ enum EvalHarness {
                     activeGoals: []
                 )
                 returned = response.tasks.count
+                captureCalls += 1
+                captureUncachedIn += response.usage?.inputTokens ?? 0
+                captureCacheRead += response.usage?.cacheReadInputTokens ?? 0
+                captureCacheCreation += response.usage?.cacheCreationInputTokens ?? 0
                 let written = CaptureWriter.apply(
                     response: response,
                     allTasks: [],

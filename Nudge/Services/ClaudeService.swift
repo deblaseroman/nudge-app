@@ -48,7 +48,17 @@ class ClaudeService {
     /// per call site, not per app. ~5–10¢/dump at solo scale; re-tier before
     /// launch (Pro gets the big model, free tier Haiku — the DayPlanRefiner
     /// gating pattern).
-    private let captureModel = "claude-opus-5"
+    private var captureModel: String {
+        #if DEBUG
+        // `eval/run.sh --model <id>` passes this launch argument so one eval
+        // run can try another model. Release builds never read arguments.
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-nudge-capture-model"), i + 1 < args.count {
+            return args[i + 1]
+        }
+        #endif
+        return "claude-opus-5"
+    }
     /// The daily Tasks-tab memo (Sep 2026). Opus by Roman's design: the
     /// Tasks-tab box is Opus's only user-facing surface, personalized memos
     /// written from the user's real data. Effort low, short output, at most
@@ -404,12 +414,17 @@ class ClaudeService {
         print("[ClaudeService] Injected today's date: \(todayString) (ISO: \(todayISO)) time: \(nowClock12)")
         #endif
 
-        var fullSystemPrompt = chatSystemPrompt + """
-
-
+        // Prompt caching (Sep 23 2026): the system prompt is three blocks
+        // with two breakpoints. Block 1 is the rulebook, byte-stable across
+        // users and days. Block 2 is the date context and the 21-day table,
+        // stable for a calendar day. Block 3 is everything that changes per
+        // call: the clock line, the task list, commitment sizes, goals. The
+        // clock used to sit inside block 2 (twice, once interpolated into
+        // two rules), which would have missed the cache every minute; the
+        // two rules now name the clock line instead of quoting its value.
+        let dateBlock = """
         ===== DATE & TIME CONTEXT =====
         Today's date is \(todayString) (\(todayISO)).
-        The CURRENT LOCAL CLOCK TIME is \(nowClock12) (24h: \(nowClock24)).
         Tomorrow's date is \(tomorrowISO).
 
         Mapping rules — THE PRINCIPLE FIRST: any relative reference to a day
@@ -423,8 +438,8 @@ class ClaudeService {
         - "today" → dueDate = \(todayISO)
         - "tomorrow" → dueDate = \(tomorrowISO)
         - "tonight" → dueDate = \(todayISO), dueTime in the evening (after 6 PM)
-        - "in N hours" / "in N hrs" → dueDate = \(todayISO), dueTime = (\(nowClock12) + N hours). Compute carefully — if the result crosses midnight, roll dueDate to \(tomorrowISO).
-        - "in N minutes" / "in N min" → dueDate = \(todayISO), dueTime = (\(nowClock12) + N minutes). Same midnight-rollover rule.
+        - "in N hours" / "in N hrs" → dueDate = \(todayISO), dueTime = (the CURRENT LOCAL CLOCK TIME line + N hours). Compute carefully — if the result crosses midnight, roll dueDate to \(tomorrowISO).
+        - "in N minutes" / "in N min" → dueDate = \(todayISO), dueTime = (the CURRENT LOCAL CLOCK TIME line + N minutes). Same midnight-rollover rule.
         - "at HH:MM" / "at H PM" with NO day specified → dueDate = \(todayISO) IF that clock time is still in the future, otherwise dueDate = \(tomorrowISO).
         - NEVER place dueTime in the past. If the only interpretation produces a past time on \(todayISO), use \(tomorrowISO) instead.
         - If NO date AND NO time is mentioned → leave dueDate AND dueTime null. Floater rules apply (priority "low" unless explicitly urgent/high).
@@ -465,6 +480,10 @@ class ClaudeService {
           briefly in "message".
         ================================
         """
+        // Block 3 opens with the clock, the one per-minute value.
+        var perCallBlock = """
+        The CURRENT LOCAL CLOCK TIME is \(nowClock12) (24h: \(nowClock24)).
+        """
         if !existingTasks.isEmpty {
             let taskEntries = existingTasks.map { task -> String in
                 var parts = [String]()
@@ -481,7 +500,7 @@ class ClaudeService {
                 return "  {\(parts.joined(separator: ", "))}"
             }.joined(separator: ",\n")
 
-            fullSystemPrompt += """
+            perCallBlock += """
 
             
             ===== THE USER'S CURRENT TASK LIST =====
@@ -500,7 +519,7 @@ class ClaudeService {
         // matching "is this the same kind of work" is delegated to the
         // model so it rides the one capture call.
         if !knownCommitmentSizes.isEmpty {
-            fullSystemPrompt += """
+            perCallBlock += """
 
 
             ===== KNOWN COMMITMENT SIZES =====
@@ -515,7 +534,7 @@ class ClaudeService {
         // two-character token far more reliably than 36 hex characters; the
         // write site maps the ref back to the goal's UUID.
         if !activeGoals.isEmpty {
-            fullSystemPrompt += """
+            perCallBlock += """
 
 
             ===== THE USER'S PERSONAL GOALS =====
@@ -553,7 +572,13 @@ class ClaudeService {
             "max_tokens": 8000,
             "fallbacks": "default",
             "output_config": ["effort": "low"],
-            "system": fullSystemPrompt,
+            "system": [
+                ["type": "text", "text": chatSystemPrompt,
+                 "cache_control": ["type": "ephemeral"]],
+                ["type": "text", "text": dateBlock,
+                 "cache_control": ["type": "ephemeral"]],
+                ["type": "text", "text": perCallBlock]
+            ],
             "messages": messages
         ]
 
@@ -1390,7 +1415,9 @@ class ClaudeService {
         if let usage = resp.usage {
             let inTok = usage.inputTokens ?? 0
             let outTok = usage.outputTokens ?? 0
-            print("[ClaudeService] USAGE: in=\(inTok) out=\(outTok) (out includes thinking) model=\(body["model"] as? String ?? "?")")
+            let cRead = usage.cacheReadInputTokens ?? 0
+            let cWrite = usage.cacheCreationInputTokens ?? 0
+            print("[ClaudeService] USAGE: in=\(inTok) cache_read=\(cRead) cache_creation=\(cWrite) out=\(outTok) (in is the uncached remainder; out includes thinking) model=\(body["model"] as? String ?? "?")")
         }
         #endif
         // First TEXT block, not first block: thinking-capable models
@@ -1410,7 +1437,9 @@ class ClaudeService {
             print("[ClaudeService] DROP: response had \(textBlocks.count) text blocks; only the first was read (\(textBlocks.dropFirst().map { $0.text?.count ?? 0 }.reduce(0, +)) chars discarded)")
         }
         #endif
-        return try parseResponse(text)
+        var parsed = try parseResponse(text)
+        parsed.usage = resp.usage
+        return parsed
     }
 
     // MARK: - Small-talk lane (the router's cheap side, Sep 2026)
@@ -1601,12 +1630,18 @@ struct AnthropicResponse: Codable {
     }
 
     struct Usage: Codable {
+        /// The UNCACHED remainder only; the full prompt is
+        /// `inputTokens + cacheCreationInputTokens + cacheReadInputTokens`.
         let inputTokens: Int?
         let outputTokens: Int?
+        let cacheReadInputTokens: Int?
+        let cacheCreationInputTokens: Int?
 
         enum CodingKeys: String, CodingKey {
             case inputTokens = "input_tokens"
             case outputTokens = "output_tokens"
+            case cacheReadInputTokens = "cache_read_input_tokens"
+            case cacheCreationInputTokens = "cache_creation_input_tokens"
         }
     }
 }
@@ -1649,6 +1684,10 @@ struct ActiveGoalContext {
 }
 
 struct ClaudeResponse: Codable {
+    /// Token accounting from the API envelope, attached by `makeRequest`
+    /// after the JSON body is parsed. Never part of the model's own JSON,
+    /// so it is excluded from coding. DEBUG prints read it.
+    var usage: AnthropicResponse.Usage? = nil
     let message: String
     let taskUpdates: [TaskUpdate]?
     let newTasks: [TaskData]?

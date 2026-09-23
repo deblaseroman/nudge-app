@@ -223,7 +223,8 @@ enum CaptureWriter {
         // drop named. A mismatch against what the user said is now
         // readable in one line instead of counting parsed-date prints.
         #if DEBUG
-        print("[CaptureWriter] CAPTURE: returned=\(response.tasks.count) inserted=\(newlyCreatedTasks.count) dropped=\(droppedItems.count)")
+        let u = response.usage
+        print("[CaptureWriter] CAPTURE: returned=\(response.tasks.count) inserted=\(newlyCreatedTasks.count) dropped=\(droppedItems.count) in=\(u?.inputTokens ?? 0) cache_read=\(u?.cacheReadInputTokens ?? 0) cache_creation=\(u?.cacheCreationInputTokens ?? 0) out=\(u?.outputTokens ?? 0)")
         for item in droppedItems {
             print("[CaptureWriter]   dropped \"\(item.title)\": \(item.reason)")
         }
