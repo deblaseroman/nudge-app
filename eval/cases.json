@@ -594,5 +594,185 @@
       ]
     },
     "note": "Roman's guard against the template firing on real work: a task with a day, a fuzzy time and a duration adjustment must be captured and answered by the model, never the premade line. 'Afternoon' carries no clock time, so no placement is asserted."
+  },
+  {
+    "id": "cap-appt-haircut",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "haircut"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "haircut",
+          "isEvent": false,
+          "hasDeadline": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Timeless appointment-shaped item (decision Sep 23 2026): a service from a provider with no stated day or time is a task, the thing to do is to book it or go. Before the rule the models split on these by noun."
+  },
+  {
+    "id": "cap-appt-dentist",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "dentist"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "dentist",
+          "isEvent": false,
+          "hasDeadline": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Timeless appointment-shaped item (decision Sep 23 2026): a service from a provider with no stated day or time is a task, the thing to do is to book it or go. Before the rule the models split on these by noun."
+  },
+  {
+    "id": "cap-appt-oil-change",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "oil change"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "oil",
+          "isEvent": false,
+          "hasDeadline": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Timeless appointment-shaped item (decision Sep 23 2026): a service from a provider with no stated day or time is a task, the thing to do is to book it or go. Before the rule the models split on these by noun."
+  },
+  {
+    "id": "cap-appt-eye-exam",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "eye exam"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "eye",
+          "isEvent": false,
+          "hasDeadline": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Timeless appointment-shaped item (decision Sep 23 2026): a service from a provider with no stated day or time is a task, the thing to do is to book it or go. Before the rule the models split on these by noun."
+  },
+  {
+    "id": "cap-appt-flu-shot",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "flu shot"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "flu",
+          "isEvent": false,
+          "hasDeadline": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Timeless appointment-shaped item (decision Sep 23 2026): a service from a provider with no stated day or time is a task, the thing to do is to book it or go. Before the rule the models split on these by noun."
+  },
+  {
+    "id": "cap-appt-car-inspection",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "car inspection"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "inspection",
+          "isEvent": false,
+          "hasDeadline": false,
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Timeless appointment-shaped item (decision Sep 23 2026): a service from a provider with no stated day or time is a task, the thing to do is to book it or go. Before the rule the models split on these by noun."
+  },
+  {
+    "id": "cap-appt-dentist-monday-10am",
+    "kind": "capture",
+    "author": "roman",
+    "input": {
+      "text": "dentist monday 10am"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "dentist",
+          "isEvent": true,
+          "hasDeadline": true,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "The same appointment with a stated day and time is an event: fixed and attended. The weekday offset depends on the run day, so no day is asserted."
+  },
+  {
+    "id": "cap-appt-i-have-a-dentist-appointment",
+    "kind": "capture",
+    "author": "roman",
+    "unverified": true,
+    "input": {
+      "text": "I have a dentist appointment"
+    },
+    "expected": {
+      "routedTo": "capture",
+      "replyKind": "model",
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "dentist"
+        }
+      ]
+    },
+    "note": "Already-booked language with no stated time. No assertion on isEvent: Roman is watching what both models do under the new rule before deciding whether booked-but-timeless needs its own carve-out."
   }
 ]

@@ -138,6 +138,14 @@ class ClaudeService {
       STUDYING or PREPARING for it is a TASK. These usually come as a pair.
     - An online quiz/assignment with an open/close WINDOW is a TASK, not an
       event, no matter how time-bound it sounds ("quiz closes Sunday night").
+    - An APPOINTMENT-SHAPED item (a service the user gets from a provider: a
+      checkup, a cut, a repair, a shot, an inspection) with NO stated day and
+      NO stated time is a TASK: the thing to do is to book it or go. It
+      becomes an EVENT only when the user states when it is, because only
+      then is it fixed and attended. This rule wins over the tie-breaker
+      words and over the "named event with no time" rule above, which are
+      for things that exist on someone else's schedule (a class, a shift, a
+      meeting, a plan with a person).
 
     LABELED EXAMPLES — study these classifications carefully:
 
