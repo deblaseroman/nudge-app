@@ -6,6 +6,7 @@
 //
 
 import BackgroundTasks
+import EventKit
 import SwiftData
 import SwiftUI
 import UIKit
@@ -80,6 +81,19 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         if CaptureHistoryExporter.isRequested {
             Task { @MainActor in
                 CaptureHistoryExporter.runFromLaunchArguments()
+                exit(0)
+            }
+            return true
+        }
+        // `-nudge-check-calendar`: call the real calendar request and print
+        // the result. A missing usage description kills the process before
+        // the dialog, so one console line proves the key matches the API.
+        if ProcessInfo.processInfo.arguments.contains("-nudge-check-calendar") {
+            Task { @MainActor in
+                let before = EKEventStore.authorizationStatus(for: .event)
+                let granted = await CalendarService.shared.requestCalendarAccess()
+                let after = EKEventStore.authorizationStatus(for: .event)
+                print("[CalendarCheck] requestFullAccessToEvents granted=\(granted) status before=\(before.rawValue) after=\(after.rawValue) (0 notDetermined, 1 restricted, 2 denied, 3 fullAccess, 4 writeOnly)")
                 exit(0)
             }
             return true

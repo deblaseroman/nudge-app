@@ -95,6 +95,11 @@ leaves `pending` exactly once: synchronously via `NudgeNotificationService`
 
 ---
 
+## Bundle declarations
+
+- `Nudge/Info.plist` + the app target's `INFOPLIST_KEY_*` build settings, `NudgeWidget/Info.plist` — the keys iOS gates on: `NSCalendarsFullAccessUsageDescription` (the API the app calls is `requestFullAccessToEvents`; the legacy `NSCalendarsUsageDescription` also ships, harmless), `NSSupportsLiveActivities` on both targets, `BGTaskSchedulerPermittedIdentifiers` + `UIBackgroundModes` fetch, `UIAppFonts`. Notifications, `PhotosPicker` and Vision need no usage key. No HealthKit anywhere (removed Sep 14 2026).
+- `Nudge/PrivacyInfo.xcprivacy`, `NudgeWidget/PrivacyInfo.xcprivacy` — privacy manifests (Sep 23 2026): both targets read the App Group `UserDefaults`, a required-reason API, declared as `NSPrivacyAccessedAPICategoryUserDefaults` / `CA92.1`. Tracking false, collected data types empty — the collected-data statement (what capture sends to the API) is Roman's to write before App Store submission. Uploads without the manifest are rejected, TestFlight included.
+
 ## App entry & root views
 
 - `Nudge/NudgeApp.swift` — `@main`: container, notification delegate, background refresh. DEBUG launch dumps: `TEMP-STAKES-DUMP` and `TEMP-INTENT-AUDIT` (proposes deadline-vs-intent for old rows; prints only, never writes).

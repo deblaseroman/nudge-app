@@ -202,6 +202,47 @@ struct SettingsTabView: View {
                         }
                     }
                     .buttonStyle(.plain)
+
+                    // Share the DEBUG capture log (Documents/CaptureLog.jsonl,
+                    // one line per real capture) through the system share
+                    // sheet — to Notes, AirDrop, Files. Disabled until the
+                    // first capture has been logged.
+                    Divider().padding(.vertical, 4)
+                    let logLines = (try? String(contentsOf: CaptureLog.url, encoding: .utf8))?
+                        .split(separator: "\n").count ?? 0
+                    if logLines > 0 {
+                        ShareLink(
+                            item: CaptureLog.url,
+                            preview: SharePreview("Nudge capture log", image: Image(systemName: "doc.text"))
+                        ) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Share capture log")
+                                        .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                        .foregroundColor(NudgeTheme.textPrimary)
+                                    Text("\(logLines) capture\(logLines == 1 ? "" : "s") logged. Sends CaptureLog.jsonl through the share sheet.")
+                                        .font(.custom(NudgeTheme.fontBody, size: 12))
+                                        .foregroundColor(NudgeTheme.textMuted)
+                                }
+                                Spacer()
+                                Image(systemName: "square.and.arrow.up")
+                                    .foregroundColor(NudgeTheme.textMuted)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Share capture log")
+                                    .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                    .foregroundColor(NudgeTheme.textMuted)
+                                Text("No captures logged yet. The log starts with the next brain dump.")
+                                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                                    .foregroundColor(NudgeTheme.textMuted)
+                            }
+                            Spacer()
+                        }
+                    }
                 }
 
                 settingsSection(title: "Debug: classifier harness") {
