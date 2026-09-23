@@ -184,6 +184,20 @@ final class NudgeArbiter: NudgeArbitering {
     private var lastReevaluatedAt: Date?
     private let debounceWindow: TimeInterval = 60
 
+    #if DEBUG
+    /// What the last `reevaluate` saw, recorded for the eval harness
+    /// (`EvalHarness`, `eval/run.sh`): every raw candidate the builders
+    /// produced, the subset that passed the gates, and the winners. Written
+    /// once per run, right before scheduling; read-only for everyone else.
+    /// DEBUG-only so the tool cannot become an input to anything shipped.
+    struct DebugRunSnapshot {
+        let raw: [NudgeCandidate]
+        let eligible: [NudgeCandidate]
+        let scheduled: [NudgeCandidate]
+    }
+    private(set) var lastRunSnapshot: DebugRunSnapshot?
+    #endif
+
     /// Synchronous in-memory record of every notification ID we've handed to
     /// the system. We use THIS for cancellation rather than the async
     /// `pendingNotificationRequests()` round-trip — that round-trip was
@@ -405,6 +419,7 @@ final class NudgeArbiter: NudgeArbitering {
         //    bypass the budget.
         let scheduled = pickWinners(from: eligible, context: gateContext)
         #if DEBUG
+        lastRunSnapshot = DebugRunSnapshot(raw: candidates, eligible: eligible, scheduled: scheduled)
         print("[NudgeArbiter] Scheduling \(scheduled.count) winner(s).")
         for w in scheduled {
             // Quadrant printout is currently diagnostic only — step 6 will

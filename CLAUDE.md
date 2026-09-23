@@ -94,4 +94,42 @@ Both targets read and write one SwiftData store (`Nudge.store`) and one `UserDef
 
 - **Every tunable constant lives in `NudgeConfig`** (thresholds, budgets, priors, buffers) — change behavior there, not inline. The file is deliberately kept thin and readable.
 - Stateful services expose a `.shared` singleton; scoring/planning helpers are stateless.
-- Colors/fonts come from `NudgeTheme` (Lexend font family); haptics and animation constants from `NudgeFeedback`.
+- Colors/fonts come from `NudgeTheme` (Lexend font family); haptics and animation constants from `NudgeFeedback`. 
+
+
+## Build for the category, never the instance
+
+This applies to every change — bug fixes and new features alike.
+
+A bug report or feature request describes one case. The case is an
+example, not the target. "Call grandma" is a placeholder for every
+task like it. The test for any change: would it work for a task or
+input nobody has thought of yet?
+
+Before editing, state in your reply:
+1. The category: the property that makes this case behave this way.
+   A category is something any task can carry (a time window, a due
+   kind, a source, a missing date) — never a title, keyword, or phrase.
+2. Five other cases in that category, worded differently, including
+   at least one that doesn't look like the report. Say which pass now.
+3. Whether the cause is the design or just this code path. If the
+   design, propose the design change and end the turn before editing.
+
+Then fix so every listed case passes, and add the cases to the eval
+set at eval/cases.json (`eval/run.sh --local-only` runs the free half;
+`eval/README.md` has the case shape). Create it if it doesn't exist.
+
+Signs a fix is wrong: it names the specific task, keyword, or phrase
+from the report; it adds a special case, keyword list, or "if the
+user says X" rule to a prompt or to code; it enumerates cases instead
+of stating a rule. If a special case seems necessary, the design
+doesn't cover this category — report that instead of adding it.
+
+If you encounter an existing special case while working, flag it in
+your reply with the category it was patching. Don't remove it unasked.
+
+
+
+
+
+

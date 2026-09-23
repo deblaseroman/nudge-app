@@ -62,6 +62,20 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         }
         #endif
 
+        // Eval harness (`eval/run.sh`): `-nudge-eval <cases.json>` runs the
+        // cases against the real capture / arbiter code on an isolated
+        // in-memory store, prints EVAL lines, and exits the process. DEBUG
+        // only; a normal launch never sees the flag.
+        #if DEBUG
+        if EvalHarness.isRequested {
+            Task { @MainActor in
+                await EvalHarness.runFromLaunchArguments()
+                exit(0)
+            }
+            return true
+        }
+        #endif
+
         // ⚠️ TEMP-INTENT-AUDIT (cycle 2026-09-03-01 item 4) — every open
         // dated task predates the deadline/intent split and carries a
         // possibly-fabricated deadline. This PRINTS a proposed
