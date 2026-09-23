@@ -1417,7 +1417,7 @@ class ClaudeService {
             let outTok = usage.outputTokens ?? 0
             let cRead = usage.cacheReadInputTokens ?? 0
             let cWrite = usage.cacheCreationInputTokens ?? 0
-            print("[ClaudeService] USAGE: in=\(inTok) cache_read=\(cRead) cache_creation=\(cWrite) out=\(outTok) (in is the uncached remainder; out includes thinking) model=\(body["model"] as? String ?? "?")")
+            print("[ClaudeService] USAGE: in=\(inTok) cache_read=\(cRead) cache_creation=\(cWrite) out=\(outTok) (in is the uncached remainder; out includes thinking) model=\(body["model"] as? String ?? "?") served_by=\(resp.model ?? "?")")
         }
         #endif
         // First TEXT block, not first block: thinking-capable models
@@ -1561,6 +1561,9 @@ class ClaudeService {
 
 struct AnthropicResponse: Codable {
     let content: [ContentBlock]
+    /// The model that produced the message, as the API reports it (a
+    /// server-side refusal fallback can differ from the one requested).
+    let model: String?
     /// Token accounting — decoded so DEBUG can print the input/output
     /// split per call. Output includes THINKING tokens, which is where an
     /// expensive slow capture hides (Sep 2026: a routine dump cost 24¢,
