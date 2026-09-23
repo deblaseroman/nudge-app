@@ -42,14 +42,14 @@ DEBUG builds have a **Dev notes** page under Settings where Roman writes issues 
 
 ## Commit and push
 
-Every cycle ends with a commit, and every commit is pushed to `origin` on the
-working branch in the same turn. Never merge to `main`; that is Roman's call
-through a pull request. The reason this is a rule: 42 commits sat on this Mac
-for nine days in Sep 2026 while GitHub showed the branch stuck on Sep 14, and
-Roman found out from the repo page. If the push is refused (the permission
-gate, or GitHub rejecting the keychain credential), say so in the report's
-first line and give the exact command to run with the `!` prefix; do not
-leave it to the closing summary. The "do not push" line in older plan
+The working branch is `main`. Every cycle ends with a commit straight to
+`main`, and every commit is pushed to `origin` in the same turn. Never
+force-push (the settings deny it). The reason this is a rule: 42 commits sat
+on this Mac for nine days in Sep 2026 while GitHub showed the branch stuck on
+Sep 14, and Roman found out from the repo page. If the push is refused (a
+permission rule, or GitHub rejecting the keychain credential), say so in the
+report's first line and give the exact command to run with the `!` prefix;
+do not leave it to the closing summary. The "do not push" line in older plan
 templates is superseded by this rule.
 
 ## Build & verify
