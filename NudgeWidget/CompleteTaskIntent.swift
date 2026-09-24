@@ -9,6 +9,7 @@
 import ActivityKit
 import AppIntents
 import SwiftData
+import UserNotifications
 import WidgetKit
 import UIKit
 
@@ -71,16 +72,28 @@ struct CompleteTaskIntent: AppIntent {
 
             try context.save()
 
+            let defaults = UserDefaults(suiteName: "group.com.deblaser.nudge")
+
             // Completing the task a session is running for ends the session
             // (the app does the same on its own checkbox). The coordinator
             // notices the missing key on the next foreground and tears its
             // state down. Without this the row kept its timer and, once the
             // end instant passed, the extension could not render at all.
-            let defaults = UserDefaults(suiteName: "group.com.deblaser.nudge")
             if let state = defaults?.dictionary(forKey: "activeSessionState"),
                (state["currentTaskID"] as? String) == task.id.uuidString {
                 defaults?.removeObject(forKey: "activeSessionState")
             }
+
+            // The arbiter lives in the app and cannot run here, so the
+            // completion would leave every pending nudge about this task in
+            // place until the app's next foreground (and that reevaluate is
+            // debounced). Roman, Sep 23 2026: "still open" arrived ten
+            // minutes after the checkbox. Every per-task candidate id
+            // carries the task's UUID, so drop those requests now, keep the
+            // arbiter's ownership list honest, and ask the app for an
+            // undebounced reevaluate on its next foreground for the kinds
+            // that only NAME the task (the morning prompt).
+            await Self.cancelPendingNudges(for: task.id, defaults: defaults)
 
             WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
 
@@ -107,6 +120,25 @@ struct CompleteTaskIntent: AppIntent {
     }
 
     @MainActor
+    /// Removes every pending arbiter request whose identifier carries
+    /// `taskID` (prep, floater, placementLead, placementMissed), trims them
+    /// from the arbiter's ownership list in the App Group, and sets the
+    /// flag `ContentView` reads to run an undebounced reevaluate on the
+    /// next foreground.
+    static func cancelPendingNudges(for taskID: UUID, defaults: UserDefaults?) async {
+        let needle = taskID.uuidString
+        let center = UNUserNotificationCenter.current()
+        let pending = await center.pendingNotificationRequests()
+        let mine = pending.map(\.identifier).filter { $0.hasPrefix("nudge.arb.") && $0.contains(needle) }
+        if !mine.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: mine)
+            let key = "nudge.arb.scheduledIDs"
+            let tracked = defaults?.stringArray(forKey: key) ?? []
+            defaults?.set(tracked.filter { !mine.contains($0) }, forKey: key)
+        }
+        defaults?.set(true, forKey: "nudge.arb.widgetMutated")
+    }
+
     private func fireCompletionHaptic() {
         let generator = UIImpactFeedbackGenerator(style: .heavy)
         generator.prepare()

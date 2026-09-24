@@ -221,5 +221,5 @@ leaves `pending` exactly once: synchronously via `NudgeNotificationService`
 - `NudgeWidget/NudgeWidgetControl.swift` — Control Center control (template code, not in the bundle).
 - `NudgeWidget/NudgeWidgetLiveActivity.swift` — Live Activity configuration (not registered in the bundle).
 - `NudgeWidget/TaskLiveActivityView.swift` — Live Activity content view.
-- `NudgeWidget/CompleteTaskIntent.swift` — Complete-a-task App Intent (writes the shared store).
+- `NudgeWidget/CompleteTaskIntent.swift` — Complete-a-task App Intent (writes the shared store). **Sep 23 2026:** also removes every pending arbiter request whose id carries the task's UUID (prep, floater, placementLead, placementMissed), trims the arbiter's `scheduledIDs` list, and sets `nudge.arb.widgetMutated`, which `ContentView`'s next foreground turns into an undebounced `.taskCompleted` reevaluate (the widget cannot run the arbiter; before this a completed task's follow-up still fired).
 - `NudgeWidget/FocusSessionIntents.swift` — **Widget-target copy** of the focus-session intents; the app has its own.

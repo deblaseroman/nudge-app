@@ -179,9 +179,15 @@ struct ContentView: View {
             // background → foreground, which nothing recorded before.
             recordForegroundAndClassifyOutcomes()
 
-            // Every notification decision flows through the arbiter.
+            // Every notification decision flows through the arbiter. A
+            // widget completion since the last foreground (the widget sets
+            // `nudge.arb.widgetMutated`; it cannot run the arbiter itself)
+            // is a data change, so it gets the undebounced reason.
+            let defaults = SharedModelContainer.appGroupDefaults
+            let widgetMutated = defaults.bool(forKey: "nudge.arb.widgetMutated")
+            if widgetMutated { defaults.removeObject(forKey: "nudge.arb.widgetMutated") }
             NudgeArbiter.shared.reevaluate(
-                reason: .sceneActive,
+                reason: widgetMutated ? .taskCompleted : .sceneActive,
                 profile: profile,
                 modelContext: modelContext
             )
