@@ -19,8 +19,17 @@ except Exception:
     sys.exit(0)
 for r in d.get("result", {}).get("devices", []):
     props = r.get("deviceProperties", {}); hw = r.get("hardwareProperties", {})
-    if hw.get("deviceType") == "iPhone" or "iPhone" in (props.get("name", "") + hw.get("marketingName", "")):
+    is_phone = hw.get("deviceType") == "iPhone" or "iPhone" in (props.get("name", "") + hw.get("marketingName", ""))
+    # Prefer a phone that is actually connected right now; a registered but
+    # unplugged phone (a tester's) must not win by list order.
+    state = (r.get("connectionProperties", {}) or {}).get("tunnelState", "") or ""
+    if is_phone and state.lower() == "connected":
         print(r["identifier"]); break
+else:
+    for r in d.get("result", {}).get("devices", []):
+        props = r.get("deviceProperties", {}); hw = r.get("hardwareProperties", {})
+        if hw.get("deviceType") == "iPhone" or "iPhone" in (props.get("name", "") + hw.get("marketingName", "")):
+            print(r["identifier"]); break
 PY
 )
 [ -n "$DEV" ] || { echo "No paired iPhone found. Connect it, unlock it, and trust this Mac." >&2; exit 1; }

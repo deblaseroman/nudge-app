@@ -885,7 +885,8 @@ struct TasksTabView: View {
                 onPick: { task in
                     showSessionTaskPicker = false
                     attemptStartSession(task)
-                }
+                },
+                onCreate: { text in await createSessionItem(text) }
             )
             .presentationDetents([.medium, .large])
         }
@@ -2360,6 +2361,47 @@ struct TasksTabView: View {
         try? modelContext.save()
     }
 
+    /// "Add your own" from the session picker (Roman, Sep 25 2026): the same
+    /// capture path as the Home chat, empty history, the current task list
+    /// and goals as context, then the same aftermath. Returns the first
+    /// task the dump created (the session starts on it), or reports an
+    /// event, nothing, or a failure. Rows written stay written either way.
+    private func createSessionItem(_ text: String) async -> SessionCreateResult {
+        let iso = DateFormatter(); iso.dateFormat = "yyyy-MM-dd"; iso.locale = Locale(identifier: "en_US_POSIX")
+        let existing = tasks.filter { !$0.isComplete }.map { task in
+            ExistingTaskContext(id: task.id.uuidString, title: task.title, priority: task.priority,
+                                category: task.category, estimatedMinutes: task.estimatedMinutes,
+                                dueDate: task.dueDate.map { iso.string(from: $0) })
+        }
+        let goalContexts = allGoals.filter { $0.isActive }.enumerated().map { i, g in
+            ActiveGoalContext(ref: "G\(i + 1)", id: g.id, title: g.title)
+        }
+        do {
+            let response = try await ClaudeService.shared.sendChat(
+                conversationHistory: [], userMessage: text,
+                existingTasks: existing, knownCommitmentSizes: [], activeGoals: goalContexts
+            )
+            let written = CaptureWriter.apply(
+                response: response, allTasks: tasks, goalContexts: goalContexts,
+                modelContext: modelContext, userMessage: text
+            )
+            try modelContext.save()
+            WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+            for row in written.created { NudgeIntelligence.shared.refreshSoon(for: row) }
+            ExamPrepSweep.shared.run(modelContext: modelContext)
+            PlanProposalSweep.shared.runIfNeeded(modelContext: modelContext)
+            refreshNotifications()
+            if let task = written.created.first(where: { !$0.isInformationalEvent }) { return .task(task) }
+            if let event = written.created.first(where: { $0.isInformationalEvent }) { return .event(title: event.title) }
+            return .nothing
+        } catch {
+            #if DEBUG
+            print("[SessionPicker] add-your-own failed: \(error)")
+            #endif
+            return .failed
+        }
+    }
+
     /// Starts a session unless the block it would put at now runs into an
     /// anchored item; then the alert above asks first.
     private func attemptStartSession(_ task: NudgeTask) {
@@ -3710,11 +3752,20 @@ struct SessionTaskPickerSheet: View {
     /// away, the previous behaviour.
     let suggested: NudgeTask?
     let onPick: (NudgeTask) -> Void
+    /// "Add your own" (Roman, Sep 25 2026): the typed line goes through the
+    /// real capture path, so it becomes a task or an event by the same
+    /// rules as a brain dump. A task starts the session at once; an event
+    /// is added and the user picks a task to focus on.
+    let onCreate: (String) async -> SessionCreateResult
 
     /// Flipped by the Change button — reveals the rest of the open tasks
     /// beneath the suggestion. Not persisted; every presentation starts
     /// collapsed.
     @State private var showAllTasks = false
+    @State private var newSessionText = ""
+    @State private var isCreating = false
+    @State private var createNote: String?
+    @FocusState private var newSessionFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -3788,6 +3839,8 @@ struct SessionTaskPickerSheet: View {
                             taskRow(task)
                         }
                     }
+
+                    addYourOwn
                 }
                 .padding(20)
             }
@@ -3798,6 +3851,79 @@ struct SessionTaskPickerSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
                 }
+            }
+        }
+    }
+
+    /// One line in, one capture call, one session out. Shown under every
+    /// branch, including the empty one, since "add a task first" was the
+    /// friction this replaces.
+    private var addYourOwn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Or add your own")
+                .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                .foregroundColor(NudgeTheme.textMuted)
+                .padding(.top, 12)
+            HStack(spacing: 8) {
+                TextField("What do you want to work on?", text: $newSessionText, axis: .vertical)
+                    .font(.custom(NudgeTheme.fontBody, size: 15))
+                    .foregroundColor(NudgeTheme.textPrimary)
+                    .lineLimit(1...3)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(NudgeTheme.surfaceAlt)
+                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                    .focused($newSessionFocused)
+                    .submitLabel(.go)
+                    .onSubmit { createAndStart() }
+                    .disabled(isCreating)
+                Button(action: createAndStart) {
+                    Group {
+                        if isCreating {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text("Start")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 64, height: 44)
+                    .background(newSessionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating
+                                ? NudgeTheme.textPlaceholder : NudgeTheme.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                }
+                .buttonStyle(.plain)
+                .disabled(newSessionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
+            }
+            if let createNote {
+                Text(createNote)
+                    .font(.custom(NudgeTheme.fontBody, size: 13))
+                    .foregroundColor(NudgeTheme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func createAndStart() {
+        let text = newSessionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isCreating else { return }
+        NudgeHaptics.medium()
+        isCreating = true
+        createNote = nil
+        Task { @MainActor in
+            let result = await onCreate(text)
+            isCreating = false
+            switch result {
+            case .task(let task):
+                newSessionText = ""
+                onPick(task)
+            case .event(let title):
+                newSessionText = ""
+                createNote = "Added \u{201C}\(title)\u{201D} as an event. Pick a task to focus on."
+            case .nothing:
+                createNote = "That didn\u{2019}t read as a task. Try saying what you\u{2019}ll do."
+            case .failed:
+                createNote = "That didn\u{2019}t go through, nothing was saved. Try again in a moment."
             }
         }
     }
@@ -4182,4 +4308,12 @@ struct SessionStartConflict: Identifiable {
     let id = UUID()
     let task: NudgeTask
     let conflict: TimelineReflow.AnchoredConflict
+}
+
+/// What "add your own" from the session picker produced.
+enum SessionCreateResult {
+    case task(NudgeTask)
+    case event(title: String)
+    case nothing
+    case failed
 }
