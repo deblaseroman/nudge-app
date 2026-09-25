@@ -119,8 +119,10 @@ enum EvalHarness {
                 failure = await runArbiterCase(c)
             case "capture":
                 failure = await runCaptureCase(c)
+            case "editor":
+                failure = runEditorCase(c)
             default:
-                failure = "input: ? | expected: kind is \"capture\" or \"arbiter\" | actual: kind=\"\(kind)\""
+                failure = "input: ? | expected: kind is \"capture\", \"arbiter\" or \"editor\" | actual: kind=\"\(kind)\""
             }
             outcomes.append(Outcome(id: id, kind: kind, passed: failure == nil, unverified: unverified, line: failure))
         }
@@ -130,6 +132,8 @@ enum EvalHarness {
         }
         let arb = outcomes.filter { $0.kind == "arbiter" }
         let cap = outcomes.filter { $0.kind == "capture" }
+        let edit = outcomes.filter { $0.kind == "editor" }
+        let editText = edit.isEmpty ? "" : "editor \(edit.filter(\.passed).count)/\(edit.count) passed, "
         let arbPassed = arb.filter(\.passed).count
         let capPassed = cap.filter(\.passed).count
         let capText: String
@@ -141,7 +145,7 @@ enum EvalHarness {
             let pct = Int((Double(capPassed) / Double(cap.count) * 100).rounded())
             capText = "capture \(capPassed)/\(cap.count) passed (\(pct)%)"
         }
-        emit("SUMMARY arbiter \(arbPassed)/\(arb.count) passed, \(capText)")
+        emit("SUMMARY arbiter \(arbPassed)/\(arb.count) passed, \(editText)\(capText)")
         if captureCalls > 0 {
             emit("CACHE capture calls \(captureCalls): cache_read=\(captureCacheRead) cache_creation=\(captureCacheCreation) uncached_in=\(captureUncachedIn)")
         }
@@ -373,6 +377,59 @@ enum EvalHarness {
         return goals
     }
 
+    // MARK: - Editor cases
+
+    /// `kind: "editor"`: one task, one pass through the task editor's
+    /// save (`TaskEditorSheet.apply`, the same function both the Tasks tab
+    /// and the calendar use), then row assertions. `input.task` has the
+    /// arbiter task shape; `input.edit` names what the user did in the
+    /// sheet: `scheduledDay`, `scheduledTime`, `clearScheduled`, `dueDay`,
+    /// `dueTime`, `clearDue`, `durationMinutes`, `title`.
+    private static func runEditorCase(_ c: [String: Any]) -> String? {
+        let input = (c["input"] as? [String: Any]) ?? [:]
+        let expected = (c["expected"] as? [String: Any]) ?? [:]
+        guard let spec = input["task"] as? [String: Any], let title = spec["title"] as? String else {
+            return "input: ? | expected: input.task with a title | actual: missing"
+        }
+        let edit = (input["edit"] as? [String: Any]) ?? [:]
+        let inputSummary = "task \(spec) edit \(edit)"
+        let fixture: Fixture
+        do {
+            fixture = try makeFixture()
+            try applyProfile(input, to: fixture)
+            try insertTask(spec, into: fixture.context)
+            try fixture.context.save()
+        } catch {
+            return "input: \(inputSummary) | expected: a row | actual: error: \(error)"
+        }
+        guard let task = ((try? fixture.context.fetch(FetchDescriptor<NudgeTask>())) ?? []).first(where: { $0.title == title }) else {
+            return "input: \(inputSummary) | expected: a row | actual: none"
+        }
+        // The sheet's populate step, then the user's taps.
+        var draft = TaskDraft(title: task.title, priority: task.priority, dueDate: task.dueDate,
+                              specificTime: task.specificTime, durationMinutes: task.estimatedMinutes)
+        draft.intendedDate = task.intendedDate
+        draft.plannedStart = task.plannedStartDate
+        draft.stakes = task.stakes
+        do {
+            if let v = edit["title"] as? String { draft.title = v }
+            if let v = edit["scheduledDay"], let d = try resolve(v, defaultHour: 0, defaultMinute: 0, field: "edit.scheduledDay") { draft.setScheduledDay(d) }
+            if let v = edit["scheduledTime"], let d = try resolve(v, defaultHour: nil, defaultMinute: nil, field: "edit.scheduledTime") { draft.setScheduledTime(d) }
+            if (edit["clearScheduled"] as? Bool) == true { draft.clearScheduled() }
+            if let v = edit["dueDay"], let d = try resolve(v, defaultHour: 0, defaultMinute: 0, field: "edit.dueDay") { draft.setDueDay(d) }
+            if let v = edit["dueTime"], let d = try resolve(v, defaultHour: nil, defaultMinute: nil, field: "edit.dueTime") { draft.setDueTime(d) }
+            if (edit["clearDue"] as? Bool) == true { draft.clearDueDate() }
+            if let v = edit["durationMinutes"] as? Int { draft.durationMinutes = v; draft.durationUserPicked = true }
+        } catch {
+            return "input: \(inputSummary) | expected: readable edit | actual: error: \(error)"
+        }
+        TaskEditorSheet.apply(draft.cleaned(), to: task, modelContext: fixture.context)
+        try? fixture.context.save()
+        let mismatches = compare(expected, against: task, snapshot: nil, label: title)
+        if mismatches.isEmpty { return nil }
+        return "input: \(inputSummary) | " + mismatches.joined(separator: "; ")
+    }
+
     private static func insertTask(_ spec: [String: Any], into context: ModelContext) throws {
         guard let title = spec["title"] as? String else { throw HarnessError.bad("task without a title") }
         let isEvent = (spec["isEvent"] as? Bool) ?? false
@@ -573,6 +630,7 @@ enum EvalHarness {
         f["intendedDay"] = task.intendedDate.map { day($0) } ?? "null"
         f["scheduledDay"] = task.scheduledDay.map { day($0) } ?? "null"
         f["dueDay"] = task.dueDate.map { day($0) } ?? "null"
+        f["dueAt"] = task.specificTime.map { dayAndClock($0) } ?? "null"
         f["plannedStart"] = task.plannedStartDate.map { dayAndClock($0) } ?? "null"
         f["plannedIsAuto"] = str(task.plannedIsAuto)
         f["estimatedMinutes"] = task.estimatedMinutes.map(String.init) ?? "null"

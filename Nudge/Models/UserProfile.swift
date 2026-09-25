@@ -121,6 +121,12 @@ final class UserProfile {
     /// this block.
     var goalLapseNotificationsEnabled: Bool = true
 
+    /// The Tasks-tab message box and every AI call behind it (the daily
+    /// memo, the plan proposals). Off pauses both; nothing else in the app
+    /// reads this (Roman, Sep 25 2026: "it is costing tokens").
+    /// PROPERTY-LEVEL DEFAULT, same reason as the fields above.
+    var tasksMessageBoxEnabled: Bool = true
+
     // MARK: - Quiet hours
     //
     // "When do I not want to be interrupted?" — deliberately SEPARATE from

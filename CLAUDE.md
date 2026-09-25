@@ -4,10 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Nudge is an iOS app (SwiftUI + SwiftData) that turns brain-dumped tasks into scheduled, ADHD-friendly notifications ("nudges"). Two targets in `Nudge.xcodeproj`:
+Nudge is an iOS app (SwiftUI + SwiftData) that turns brain-dumped tasks into scheduled, ADHD-friendly notifications ("nudges"). Four targets in `Nudge.xcodeproj`:
 
 - **Nudge** — the app (`com.deblaser.nudge`)
 - **NudgeWidgetExtension** — widgets, Control Center control, Live Activities (`NudgeWidget/`)
+- **NudgeActivityMonitor** — Screen Time threshold extension; posts the limit ladder and the mirror (`NudgeActivityMonitor/`, Sep 25 2026)
+- **NudgeActivityReport** — Screen Time report extension; the only reader of usage minutes, drawn inside the Stats tab (`NudgeActivityReport/`, Sep 25 2026)
 
 iOS deployment target is 26.4 — a build failure about the deployment target means the local Xcode is too old, not broken code. No SPM/CocoaPods dependencies; the Anthropic API is called directly over URLSession.
 
@@ -60,6 +62,8 @@ There are no test targets and no linter config — verification is building both
 xcodebuild -project Nudge.xcodeproj -scheme Nudge -destination 'generic/platform=iOS Simulator' build
 xcodebuild -project Nudge.xcodeproj -scheme NudgeWidgetExtension -destination 'generic/platform=iOS Simulator' build
 ```
+
+The two Screen Time extensions build as dependencies of the app scheme. `eval/run.sh --local-only` runs the free half of the eval (arbiter and editor cases) and is the other half of verification for anything it covers.
 
 When the Xcode MCP server is connected, prefer its tools (`BuildProject`, `XcodeRefreshCodeIssuesInFile`, …) over raw `xcodebuild`.
 

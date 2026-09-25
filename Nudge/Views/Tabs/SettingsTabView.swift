@@ -190,6 +190,14 @@ struct SettingsTabView: View {
 
                 #if DEBUG
                 // Debug builds only — stripped from Release.
+                settingsSection(title: "Tasks tab") {
+                    toggleSettingsRow(
+                        title: "Message box",
+                        subtitle: "The box at the top of the Tasks tab. Off hides it and stops the AI calls behind it (the daily memo and plan proposals). Nothing else changes.",
+                        isOn: $profile.tasksMessageBoxEnabled
+                    )
+                }
+
                 settingsSection(title: "Dev notes") {
                     Button {
                         NudgeHaptics.light()

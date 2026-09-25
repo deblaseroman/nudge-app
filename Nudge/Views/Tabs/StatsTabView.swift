@@ -7,6 +7,8 @@
 
 import SwiftUI
 import SwiftData
+import DeviceActivity
+import FamilyControls
 
 struct StatsTabView: View {
     @Environment(\.modelContext) private var modelContext
@@ -84,6 +86,48 @@ struct StatsTabView: View {
 
     /// Shown the week the mirror fired. Threshold-based on purpose: the app
     /// cannot read the true minutes; only the report view can.
+    /// Stage two (Sep 25 2026): the report extension draws this week in
+    /// the picked apps, split into the day window and quiet hours, with
+    /// the daily limit as a line and the yearly projection. The app only
+    /// hosts the view; the minutes never enter this process. Shown once
+    /// Screen Time is authorized and apps are picked.
+    @ViewBuilder
+    private var distractionsReport: some View {
+        let settings = DistractionSettings.load(from: SharedModelContainer.appGroupDefaults)
+        if settings.authorized,
+           let data = settings.selectionData,
+           let selection = try? JSONDecoder().decode(FamilyActivitySelection.self, from: data) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Distractions")
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                    .foregroundColor(NudgeTheme.textMuted)
+                DeviceActivityReport(.init(DistractionSettings.mirrorReportContext), filter: Self.thisWeekFilter(selection))
+                    .frame(height: 250)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(NudgeTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+        }
+    }
+
+    /// Sunday to now, hourly, over the picked apps: the same week the
+    /// mirror schedule counts.
+    private static func thisWeekFilter(_ selection: FamilyActivitySelection) -> DeviceActivityFilter {
+        var cal = Calendar(identifier: .gregorian)
+        cal.firstWeekday = 1
+        let now = Date()
+        let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start ?? cal.startOfDay(for: now)
+        return DeviceActivityFilter(
+            segment: .hourly(during: DateInterval(start: weekStart, end: now)),
+            users: .all,
+            devices: .all,
+            applications: selection.applicationTokens,
+            categories: selection.categoryTokens,
+            webDomains: selection.webDomainTokens
+        )
+    }
+
     private var mirrorCard: AnyView? {
         let defaults = SharedModelContainer.appGroupDefaults
         guard let fired = defaults.object(forKey: "nudge.distractions.mirrorLastFiredAt") as? Date,
@@ -129,6 +173,7 @@ struct StatsTabView: View {
                 // lives here. Stage one states the threshold crossed and
                 // the yearly projection from it; the report extension will
                 // replace this with the real minutes and the two-color graph.
+                distractionsReport
                 if let mirror = mirrorCard {
                     sectionLabel("Distractions")
                     mirror

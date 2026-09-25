@@ -18,6 +18,9 @@ import Foundation
 /// What the user set. Stored as JSON in App Group defaults.
 struct DistractionSettings: Codable, Equatable {
     static let defaultsKey = "nudge.distractions.settings"
+    /// The DeviceActivityReport context both the Stats tab (host) and the
+    /// report extension (renderer) name; they must agree or nothing draws.
+    static let mirrorReportContext = "nudge.mirror"
 
     /// The picked apps, as Apple's `FamilyActivitySelection` encoded by the
     /// app. Opaque here: only the FamilyControls framework can read it.

@@ -17,19 +17,25 @@ try:
     d = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
+phones = []
 for r in d.get("result", {}).get("devices", []):
     props = r.get("deviceProperties", {}); hw = r.get("hardwareProperties", {})
     is_phone = hw.get("deviceType") == "iPhone" or "iPhone" in (props.get("name", "") + hw.get("marketingName", ""))
     # Prefer a phone that is actually connected right now; a registered but
     # unplugged phone (a tester's) must not win by list order.
-    state = (r.get("connectionProperties", {}) or {}).get("tunnelState", "") or ""
-    if is_phone and state.lower() == "connected":
-        print(r["identifier"]); break
-else:
-    for r in d.get("result", {}).get("devices", []):
-        props = r.get("deviceProperties", {}); hw = r.get("hardwareProperties", {})
-        if hw.get("deviceType") == "iPhone" or "iPhone" in (props.get("name", "") + hw.get("marketingName", "")):
-            print(r["identifier"]); break
+    if not is_phone:
+        continue
+    conn = r.get("connectionProperties", {}) or {}
+    # Rank by reachability, then by most recent connection. "unavailable"
+    # is a phone that is not here at all (a tester's, unplugged); a
+    # "disconnected" tunnel is still reachable over USB or the local
+    # network and devicectl will bring it up.
+    rank = {"connected": 0, "disconnected": 1}.get((conn.get("tunnelState") or "").lower(), 2)
+    phones.append((rank, conn.get("lastConnectionDate") or "", r["identifier"]))
+if phones:
+    best_rank = min(p[0] for p in phones)
+    same = sorted((p for p in phones if p[0] == best_rank), key=lambda p: p[1], reverse=True)
+    print(same[0][2])
 PY
 )
 [ -n "$DEV" ] || { echo "No paired iPhone found. Connect it, unlock it, and trust this Mac." >&2; exit 1; }

@@ -308,6 +308,11 @@ final class PlanProposalSweep {
     func runIfNeeded(modelContext: ModelContext, now: Date = Date()) {
         // The user's own plan wins first, every time, before any call.
         Self.applyUserPlanOverrides(modelContext: modelContext, now: now)
+        // The proposals are the box's questions; a muted box asks none
+        // and spends nothing (Roman, Sep 25 2026).
+        var profileDescriptor = FetchDescriptor<UserProfile>()
+        profileDescriptor.fetchLimit = 1
+        if let profile = (try? modelContext.fetch(profileDescriptor))?.first, !profile.tasksMessageBoxEnabled { return }
         guard !inFlight else { return }
         guard PlanProposalStore.callsToday(now: now) < NudgeConfig.planProposalCallsPerDay else { return }
 

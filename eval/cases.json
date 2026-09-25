@@ -1203,5 +1203,144 @@
       "limit": ""
     },
     "note": "Limit crossed during an event: silent, by Roman's rule. The empty title is the silent decision."
+  },
+  {
+    "id": "editor-overdue-next-week",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Apply to a masters program",
+        "dueDate": "-1d",
+        "intendedDate": "-1d"
+      },
+      "edit": {
+        "scheduledDay": "+7d"
+      }
+    },
+    "expected": {
+      "intendedDay": "+7d",
+      "dueDay": "+7d",
+      "isOverdue": false,
+      "plannedStart": null
+    },
+    "note": "Roman's report: an overdue owed task rescheduled to Next Week must leave Overdue. The due clock follows the scheduled one."
+  },
+  {
+    "id": "editor-overdue-timed-keeps-clock",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Send the invoice",
+        "specificTime": "-1d 17:00"
+      },
+      "edit": {
+        "scheduledDay": "+1d"
+      }
+    },
+    "expected": {
+      "intendedDay": "+1d",
+      "dueDay": "+1d",
+      "dueAt": "+1d 17:00",
+      "isOverdue": false
+    },
+    "note": "Same rule with a due time: the day moves, 5 PM stays."
+  },
+  {
+    "id": "editor-intent-after-future-due",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Finish the report",
+        "dueDate": "+2d"
+      },
+      "edit": {
+        "scheduledDay": "+4d"
+      }
+    },
+    "expected": {
+      "intendedDay": "+4d",
+      "dueDay": "+4d",
+      "isOverdue": false
+    },
+    "note": "Not overdue at all: scheduling after the due day is the same contradiction and resolves the same way."
+  },
+  {
+    "id": "editor-intent-before-due-untouched",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Renew the passport",
+        "dueDate": "+30d"
+      },
+      "edit": {
+        "scheduledDay": "+1d"
+      }
+    },
+    "expected": {
+      "intendedDay": "+1d",
+      "dueDay": "+30d",
+      "isOverdue": false
+    },
+    "note": "Scheduling before the due day leaves the deadline alone."
+  },
+  {
+    "id": "editor-due-section-direct",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Pay the electric bill",
+        "dueDate": "-3d"
+      },
+      "edit": {
+        "dueDay": "+5d"
+      }
+    },
+    "expected": {
+      "dueDay": "+5d",
+      "intendedDay": null,
+      "isOverdue": false
+    },
+    "note": "The Due date section on an overdue task still works on its own."
+  },
+  {
+    "id": "editor-undated-schedule-only",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Clean the garage"
+      },
+      "edit": {
+        "scheduledDay": "+7d"
+      }
+    },
+    "expected": {
+      "intendedDay": "+7d",
+      "dueDay": null,
+      "hasDeadline": false
+    },
+    "note": "No due clock: rescheduling never invents one."
+  },
+  {
+    "id": "editor-timed-placement-moves",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Call the landlord",
+        "dueDate": "-1d",
+        "intendedDate": "-1d",
+        "plannedStartDate": "-1d 10:30"
+      },
+      "edit": {
+        "scheduledDay": "+3d"
+      }
+    },
+    "expected": {
+      "intendedDay": "+3d",
+      "dueDay": "+3d",
+      "plannedStart": "+3d 10:30",
+      "plannedIsAuto": false,
+      "isOverdue": false
+    },
+    "note": "A manual placement keeps its clock time on the new day and the due clock follows."
   }
 ]

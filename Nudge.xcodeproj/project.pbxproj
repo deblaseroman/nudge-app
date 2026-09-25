@@ -12,6 +12,9 @@
 		7E03C5C52F7AE83300329D80 /* NudgeWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7E03C5B12F7AE83300329D80 /* NudgeWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		7E0EEE3430670BA00045C142 /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E0EEE3330670BA00045C142 /* DeviceActivity.framework */; };
 		7E0EEE3C30670BA00045C142 /* NudgeActivityMonitor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7E0EEE3230670BA00045C142 /* NudgeActivityMonitor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		7E0EEE5430670BA00045C142 /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E0EEE3330670BA00045C142 /* DeviceActivity.framework */; };
+		7E0EEE5630670BA00045C142 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E03C5B52F7AE83300329D80 /* SwiftUI.framework */; };
+		7E0EEE5C30670BA00045C142 /* NudgeActivityReport.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 7E0EEE5230670BA00045C142 /* NudgeActivityReport.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -29,6 +32,13 @@
 			remoteGlobalIDString = 7E0EEE3130670BA00045C142;
 			remoteInfo = NudgeActivityMonitor;
 		};
+		7E0EEE5A30670BA00045C142 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7E260D3A2F746CE800D44A37 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7E0EEE5130670BA00045C142;
+			remoteInfo = NudgeActivityReport;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -44,6 +54,17 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7E0EEE6130670BA00045C142 /* Embed ExtensionKit Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				7E0EEE5C30670BA00045C142 /* NudgeActivityReport.appex in Embed ExtensionKit Extensions */,
+			);
+			name = "Embed ExtensionKit Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +74,7 @@
 		7E03C5CB2F7AEB0400329D80 /* NudgeWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NudgeWidgetExtension.entitlements; sourceTree = "<group>"; };
 		7E0EEE3230670BA00045C142 /* NudgeActivityMonitor.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NudgeActivityMonitor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7E0EEE3330670BA00045C142 /* DeviceActivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DeviceActivity.framework; path = System/Library/Frameworks/DeviceActivity.framework; sourceTree = SDKROOT; };
+		7E0EEE5230670BA00045C142 /* NudgeActivityReport.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NudgeActivityReport.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7E260D422F746CE900D44A37 /* Nudge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nudge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -112,6 +134,20 @@
 			);
 			target = 7E03C5B02F7AE83300329D80 /* NudgeWidgetExtension */;
 		};
+		7E0EEE6030670BA00045C142 /* Exceptions for "NudgeActivityReport" folder in "NudgeActivityReport" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7E0EEE5130670BA00045C142 /* NudgeActivityReport */;
+		};
+		7E0EEE9A306A0C0000A1B2C3 /* Exceptions for "Nudge" folder in "NudgeActivityReport" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Models/DistractionSettings.swift,
+			);
+			target = 7E0EEE5130670BA00045C142 /* NudgeActivityReport */;
+		};
 		7E0EEE99306A0C0000A1B2C3 /* Exceptions for "Nudge" folder in "NudgeActivityMonitor" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -138,12 +174,21 @@
 			path = NudgeActivityMonitor;
 			sourceTree = "<group>";
 		};
+		7E0EEE5530670BA00045C142 /* NudgeActivityReport */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7E0EEE6030670BA00045C142 /* Exceptions for "NudgeActivityReport" folder in "NudgeActivityReport" target */,
+			);
+			path = NudgeActivityReport;
+			sourceTree = "<group>";
+		};
 		7E260D442F746CE900D44A37 /* Nudge */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				7E260D542F759C0500D44A37 /* Exceptions for "Nudge" folder in "Nudge" target */,
 				7E8158D92F7C1E0B002A0B0F /* Exceptions for "Nudge" folder in "NudgeWidgetExtension" target */,
 				7E0EEE99306A0C0000A1B2C3 /* Exceptions for "Nudge" folder in "NudgeActivityMonitor" target */,
+				7E0EEE9A306A0C0000A1B2C3 /* Exceptions for "Nudge" folder in "NudgeActivityReport" target */,
 			);
 			path = Nudge;
 			sourceTree = "<group>";
@@ -165,6 +210,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				7E0EEE3430670BA00045C142 /* DeviceActivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7E0EEE4F30670BA00045C142 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E0EEE5430670BA00045C142 /* DeviceActivity.framework in Frameworks */,
+				7E0EEE5630670BA00045C142 /* SwiftUI.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,6 +249,7 @@
 				7E260D442F746CE900D44A37 /* Nudge */,
 				7E03C5B72F7AE83300329D80 /* NudgeWidget */,
 				7E0EEE3530670BA00045C142 /* NudgeActivityMonitor */,
+				7E0EEE5530670BA00045C142 /* NudgeActivityReport */,
 				7E03C5B22F7AE83300329D80 /* Frameworks */,
 				7E260D432F746CE900D44A37 /* Products */,
 			);
@@ -206,6 +261,7 @@
 				7E260D422F746CE900D44A37 /* Nudge.app */,
 				7E03C5B12F7AE83300329D80 /* NudgeWidgetExtension.appex */,
 				7E0EEE3230670BA00045C142 /* NudgeActivityMonitor.appex */,
+				7E0EEE5230670BA00045C142 /* NudgeActivityReport.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -257,6 +313,28 @@
 			productReference = 7E0EEE3230670BA00045C142 /* NudgeActivityMonitor.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		7E0EEE5130670BA00045C142 /* NudgeActivityReport */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7E0EEE5F30670BA00045C142 /* Build configuration list for PBXNativeTarget "NudgeActivityReport" */;
+			buildPhases = (
+				7E0EEE4E30670BA00045C142 /* Sources */,
+				7E0EEE4F30670BA00045C142 /* Frameworks */,
+				7E0EEE5030670BA00045C142 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7E0EEE5530670BA00045C142 /* NudgeActivityReport */,
+			);
+			name = NudgeActivityReport;
+			packageProductDependencies = (
+			);
+			productName = NudgeActivityReport;
+			productReference = 7E0EEE5230670BA00045C142 /* NudgeActivityReport.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
+		};
 		7E260D412F746CE900D44A37 /* Nudge */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 7E260D4F2F746CE900D44A37 /* Build configuration list for PBXNativeTarget "Nudge" */;
@@ -265,12 +343,14 @@
 				7E260D3F2F746CE900D44A37 /* Frameworks */,
 				7E260D402F746CE900D44A37 /* Resources */,
 				7E03C5CA2F7AE83300329D80 /* Embed Foundation Extensions */,
+				7E0EEE6130670BA00045C142 /* Embed ExtensionKit Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				7E03C5C42F7AE83300329D80 /* PBXTargetDependency */,
 				7E0EEE3B30670BA00045C142 /* PBXTargetDependency */,
+				7E0EEE5B30670BA00045C142 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				7E260D442F746CE900D44A37 /* Nudge */,
@@ -298,6 +378,9 @@
 					7E0EEE3130670BA00045C142 = {
 						CreatedOnToolsVersion = 26.6;
 					};
+					7E0EEE5130670BA00045C142 = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					7E260D412F746CE900D44A37 = {
 						CreatedOnToolsVersion = 26.4;
 					};
@@ -320,6 +403,7 @@
 				7E260D412F746CE900D44A37 /* Nudge */,
 				7E03C5B02F7AE83300329D80 /* NudgeWidgetExtension */,
 				7E0EEE3130670BA00045C142 /* NudgeActivityMonitor */,
+				7E0EEE5130670BA00045C142 /* NudgeActivityReport */,
 			);
 		};
 /* End PBXProject section */
@@ -333,6 +417,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		7E0EEE3030670BA00045C142 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7E0EEE5030670BA00045C142 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -363,6 +454,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7E0EEE4E30670BA00045C142 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		7E260D3E2F746CE900D44A37 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -382,6 +480,11 @@
 			isa = PBXTargetDependency;
 			target = 7E0EEE3130670BA00045C142 /* NudgeActivityMonitor */;
 			targetProxy = 7E0EEE3A30670BA00045C142 /* PBXContainerItemProxy */;
+		};
+		7E0EEE5B30670BA00045C142 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7E0EEE5130670BA00045C142 /* NudgeActivityReport */;
+			targetProxy = 7E0EEE5A30670BA00045C142 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -497,6 +600,66 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.deblaser.nudge.NudgeActivityMonitor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7E0EEE5D30670BA00045C142 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NudgeActivityReport/NudgeActivityReport.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 442U39484K;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NudgeActivityReport/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NudgeActivityReport;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.deblaser.nudge.NudgeActivityReport;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7E0EEE5E30670BA00045C142 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NudgeActivityReport/NudgeActivityReport.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 442U39484K;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NudgeActivityReport/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NudgeActivityReport;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.deblaser.nudge.NudgeActivityReport;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -720,6 +883,15 @@
 			buildConfigurations = (
 				7E0EEE3D30670BA00045C142 /* Debug */,
 				7E0EEE3E30670BA00045C142 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7E0EEE5F30670BA00045C142 /* Build configuration list for PBXNativeTarget "NudgeActivityReport" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7E0EEE5D30670BA00045C142 /* Debug */,
+				7E0EEE5E30670BA00045C142 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

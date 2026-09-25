@@ -50,7 +50,7 @@ git-ignored.
 ```json
 {
   "id": "unique-slug",
-  "kind": "capture" | "arbiter",
+  "kind": "capture" | "arbiter" | "editor",
   "input": { … },
   "expected": { … },
   "note": "one line: why this case exists",
@@ -123,6 +123,15 @@ Relative to the day the run happens: `"+1d"`, `"-2d"`, `"today"`,
 that are days compare as `"+Nd"`; `plannedStart` compares as `"+Nd HH:mm"`.
 `null` means the field must be empty.
 
+### editor
+
+One task through the task editor's save, the same `TaskEditorSheet.apply`
+the Tasks tab and the calendar call. `input.task` has the arbiter task
+shape; `input.edit` is what the user did in the sheet: `scheduledDay`,
+`scheduledTime`, `clearScheduled`, `dueDay`, `dueTime`, `clearDue`,
+`durationMinutes`, `title`. `expected` holds row fields (below). Local,
+free; runs under `--local-only`.
+
 ### Row fields you can assert on
 
 | field | meaning |
@@ -134,6 +143,7 @@ that are days compare as `"+Nd"`; `plannedStart` compares as `"+Nd HH:mm"`.
 | `isSkipped` | in the Skipped section |
 | `intentIsFuture` | intended for a day still ahead |
 | `intendedDay`, `scheduledDay`, `dueDay` | `"+Nd"` or `null` |
+| `dueAt` | the due clock time, `"+Nd HH:mm"` or `null` |
 | `plannedStart` | `"+Nd HH:mm"` or `null` |
 | `plannedIsAuto`, `estimatedMinutes`, `priority`, `sequenceIndex`, `skipCount`, `source`, `stakes` | as stored |
 | `candidates` | `{ "<kind>": true/false }`: whether the arbiter built a raw candidate of that kind for this row, before gates. Kinds: `eventBlock`, `morningPrompt`, `idle`, `prep`, `dueSoon`, `floater`, `comeBack`, `placementLead`, `placementMissed`, `goalLapse` |

@@ -273,6 +273,8 @@ struct TasksTabView: View {
     /// stands once the cap is spent. Read-only: nothing here writes to any
     /// model row.
     private func fetchTasksMemoIfNeeded() {
+        // Muted box (Roman, Sep 25 2026): no memo call, nothing else changes.
+        guard profile.tasksMessageBoxEnabled else { return }
         let now = Date()
         let fingerprint = memoFingerprint
 
@@ -645,6 +647,7 @@ struct TasksTabView: View {
                 // it's the tab's voice; Start Session moved below the
                 // timeline so the day's shape reads before the call to act.
                 header
+                if profile.tasksMessageBoxEnabled {
                 TasksMessageBox(
                     tasks: tasks,
                     tappedNudge: tappedNudgeContext,
@@ -687,6 +690,7 @@ struct TasksTabView: View {
                         acceptGoalOffer(goal)
                     }
                 )
+                }
                 // Plan my day left this row for the button stack below the
                 // timeline (cycle 2026-08-03-07); the label and the
                 // conditional Clear plan stay.
@@ -3680,6 +3684,29 @@ struct TaskEditorSheet: View {
                 task.dueDate = draft.dueDate
                 task.dueTime = draft.dueTimeLabel
                 task.specificTime = draft.specificTime
+            }
+            // A day you mean to work on it after the day it is owed is a
+            // contradiction, and the scheduled clock is the one the user
+            // just set, so the due clock follows it (Roman, Sep 25 2026:
+            // an overdue task rescheduled to next week stayed overdue
+            // because only the intention moved). Any task with both
+            // clocks can hit this, not only overdue ones; the due time of
+            // day is kept. A due day still ahead of the intention is
+            // untouched.
+            if draft.scheduleTouched, let intent = task.intendedDate, let due = task.dueDate {
+                let cal = Calendar.current
+                let intentDay = cal.startOfDay(for: intent)
+                if intentDay > cal.startOfDay(for: due) {
+                    if let time = task.specificTime {
+                        let c = cal.dateComponents([.hour, .minute], from: time)
+                        task.specificTime = cal.date(bySettingHour: c.hour ?? 0, minute: c.minute ?? 0, second: 0, of: intentDay)
+                        task.dueDate = intentDay
+                        task.dueTime = task.specificTime?.formatted(date: .omitted, time: .shortened)
+                    } else {
+                        task.dueDate = intentDay
+                        task.dueTime = intentDay.formatted(date: .abbreviated, time: .omitted)
+                    }
+                }
             }
         }
 
