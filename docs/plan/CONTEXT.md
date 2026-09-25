@@ -194,8 +194,9 @@ call. Family Controls needs Apple's approval for distribution.
 
 Stage two (same day): `NudgeActivityReport`, an ExtensionKit report
 extension, is the only process that reads Screen Time minutes; the Stats
-tab hosts its two-color week (day window vs quiet hours, the daily limit
-as a line, the yearly projection). It posts nothing and writes nothing.
+tab hosts one number (this week's minutes, Monday to Sunday, this phone)
+and one sentence (days a year at this week's rate). It posts nothing and
+writes nothing.
 
 Also Sep 25 2026: the Tasks-tab message box has a Settings switch
 (`UserProfile.tasksMessageBoxEnabled`). Off hides the box and stops its

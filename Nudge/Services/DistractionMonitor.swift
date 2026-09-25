@@ -123,11 +123,11 @@ final class DistractionMonitor {
         }
 
         if settings.mirrorEnabled {
-            // Sunday 00:00 to Saturday 23:59, repeating: the week's sum plus
-            // a quarter is the mirror's line.
+            // Monday 00:00 to Sunday 23:59 (Roman, Sep 25 2026), repeating:
+            // the week's sum plus a quarter is the mirror's line.
             let weekly = DeviceActivitySchedule(
-                intervalStart: DateComponents(hour: 0, minute: 0, weekday: 1),
-                intervalEnd: DateComponents(hour: 23, minute: 59, weekday: 7),
+                intervalStart: DateComponents(hour: 0, minute: 0, weekday: 2),
+                intervalEnd: DateComponents(hour: 23, minute: 59, weekday: 1),
                 repeats: true
             )
             let events: [DeviceActivityEvent.Name: DeviceActivityEvent] = [
@@ -145,6 +145,7 @@ final class DistractionMonitor {
             }
         }
         #if DEBUG
+        print("[DistractionMonitor] selection: \(selection.applicationTokens.count) app(s), \(selection.categoryTokens.count) categor(ies), \(selection.webDomainTokens.count) web domain(s)")
         print("[DistractionMonitor] monitoring: daily limit \(settings.dailyLimitMinutes) min (ladder \(settings.limitLadderEnabled)), weekly mirror \(settings.weeklyMirrorMinutes) min (\(settings.mirrorEnabled))")
         #endif
     }

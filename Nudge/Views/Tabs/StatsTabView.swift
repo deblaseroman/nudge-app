@@ -86,11 +86,11 @@ struct StatsTabView: View {
 
     /// Shown the week the mirror fired. Threshold-based on purpose: the app
     /// cannot read the true minutes; only the report view can.
-    /// Stage two (Sep 25 2026): the report extension draws this week in
-    /// the picked apps, split into the day window and quiet hours, with
-    /// the daily limit as a line and the yearly projection. The app only
-    /// hosts the view; the minutes never enter this process. Shown once
-    /// Screen Time is authorized and apps are picked.
+    /// Stage two (Sep 25 2026): the report extension shows this week's
+    /// minutes in the picked apps and the yearly projection at this
+    /// week's rate. The app only hosts the view; the minutes never enter
+    /// this process. Shown once Screen Time is authorized and apps are
+    /// picked.
     @ViewBuilder
     private var distractionsReport: some View {
         let settings = DistractionSettings.load(from: SharedModelContainer.appGroupDefaults)
@@ -102,7 +102,7 @@ struct StatsTabView: View {
                     .font(.custom(NudgeTheme.fontSemiBold, size: 13))
                     .foregroundColor(NudgeTheme.textMuted)
                 DeviceActivityReport(.init(DistractionSettings.mirrorReportContext), filter: Self.thisWeekFilter(selection))
-                    .frame(height: 250)
+                    .frame(height: 96)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -111,17 +111,17 @@ struct StatsTabView: View {
         }
     }
 
-    /// Sunday to now, hourly, over the picked apps: the same week the
-    /// mirror schedule counts.
+    /// Monday 00:00 to now, this phone only, over the picked apps: the
+    /// same week the mirror schedule counts (Roman, Sep 25 2026).
     private static func thisWeekFilter(_ selection: FamilyActivitySelection) -> DeviceActivityFilter {
         var cal = Calendar(identifier: .gregorian)
-        cal.firstWeekday = 1
+        cal.firstWeekday = 2
         let now = Date()
         let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start ?? cal.startOfDay(for: now)
         return DeviceActivityFilter(
-            segment: .hourly(during: DateInterval(start: weekStart, end: now)),
+            segment: .daily(during: DateInterval(start: weekStart, end: now)),
             users: .all,
-            devices: .all,
+            devices: .init([.iPhone]),
             applications: selection.applicationTokens,
             categories: selection.categoryTokens,
             webDomains: selection.webDomainTokens
