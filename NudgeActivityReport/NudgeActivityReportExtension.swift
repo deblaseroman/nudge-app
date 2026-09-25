@@ -61,14 +61,22 @@ struct MirrorReportScene: DeviceActivityReportScene {
         #if DEBUG
         var sources: [String] = []
         #endif
+        let dayFmt = DateFormatter(); dayFmt.dateFormat = "EEE"
         for await d in data {
             var forDevice: Double = 0
+            #if DEBUG
+            var perDay: [String] = []
+            #endif
             for await segment in d.activitySegments {
-                forDevice += segment.totalActivityDuration / 60
+                let minutes = segment.totalActivityDuration / 60
+                forDevice += minutes
+                #if DEBUG
+                perDay.append("\(dayFmt.string(from: segment.dateInterval.start)) \(Int(minutes))")
+                #endif
             }
             total += forDevice
             #if DEBUG
-            sources.append("\(d.device.name ?? "device")/\(d.device.model): \(Int(forDevice)) min")
+            sources.append("\(d.device.name ?? "device")/\(d.device.model): \(Int(forDevice)) min [\(perDay.joined(separator: ", "))]")
             #endif
         }
         var summary = MirrorSummary(weeklyMinutes: total, weekFractionElapsed: min(max(elapsed, 0), 1))
