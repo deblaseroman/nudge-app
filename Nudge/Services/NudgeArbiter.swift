@@ -1432,8 +1432,8 @@ final class NudgeArbiter: NudgeArbitering {
             id: "\(prefix)idle.\(stamp(calendar.startOfDay(for: fireDate)))",
             kind: .idle,
             fireDate: fireDate,
-            title: "Checking in",
-            body: "Have you gotten started on anything today?",
+            title: "Check-in",
+            body: "Have you worked on anything yet?",
             categoryID: .idle,
             interruption: idleTier.interruption,
             taskID: target.id,
@@ -1953,12 +1953,16 @@ final class NudgeArbiter: NudgeArbitering {
             )
 
             let cTier = tier(for: task, fireDate: fireDate)
-            let body = "'\(task.title)' is still open. Just \(min(estimatedMinutes, 25)) min. Start there?"
+            // The check-in names no task (Roman, Sep 25 2026): a named
+            // low-importance task trains the user to ignore every
+            // notification. It asks; the Tasks-tab box recommends after a
+            // No. `taskID` stays for outcome attribution only.
+            let body = "Have you worked on anything yet?"
             candidates.append(NudgeCandidate(
                 id: "\(prefix)floater.\(stamp(calendar.startOfDay(for: fireDate))).\(task.id.uuidString)",
                 kind: .floater,
                 fireDate: fireDate,
-                title: "Are you working on something?",
+                title: "Check-in",
                 body: body,
                 categoryID: .floater,
                 interruption: cTier.interruption,
@@ -2410,9 +2414,11 @@ final class NudgeArbiter: NudgeArbitering {
 
             for block in blocks {
                 guard let first = block.first else { continue }
-                let fireDate = first.1.addingTimeInterval(
-                    -Double(NudgeConfig.placementLeadMinutes) * 60
-                )
+                // Lead by the block's stakes (Roman, Sep 25 2026): a
+                // high-stakes anchored task gets the event's hour, a
+                // low-stakes one a short lead.
+                let leadMinutes = NudgeConfig.placementLeadMinutes(for: first.0.stakes)
+                let fireDate = first.1.addingTimeInterval(-Double(leadMinutes) * 60)
                 guard fireDate > now else { continue }
 
                 let task = first.0
@@ -2434,7 +2440,7 @@ final class NudgeArbiter: NudgeArbitering {
                     id: "\(prefix)placementLead.\(stamp(day)).\(task.id.uuidString)",
                     kind: .placementLead,
                     fireDate: fireDate,
-                    title: "Coming up",
+                    title: Self.anchoredPlaceholderTitle(for: task.stakes),
                     body: NudgeArbiter.placementLeadBody(block: block),
                     categoryID: .placementLead,
                     interruption: leadTier.interruption,
@@ -2454,6 +2460,17 @@ final class NudgeArbiter: NudgeArbitering {
 
     /// Body copy for a placement heads-up. Facts only: the slots and their
     /// times, exactly as the user (or the planner they accepted) set them.
+    /// Placeholder titles by stakes (Roman, Sep 25 2026: placeholders, no
+    /// tokens, until the system works). High reads as an event heads-up;
+    /// low reads light. The body stays factual: the block's name and time.
+    static func anchoredPlaceholderTitle(for stakes: TaskStakes?) -> String {
+        switch stakes {
+        case .high: return "ANCHORED HIGH"
+        case .medium: return "ANCHORED MEDIUM"
+        case .low, .none: return "ANCHORED LOW"
+        }
+    }
+
     static func placementLeadBody(block: [(NudgeTask, Date)]) -> String {
         let fmt = DateFormatter()
         fmt.dateFormat = "h:mm a"

@@ -1049,5 +1049,63 @@
       ]
     },
     "note": "A goal worked five days ago is not lapsed yet, but the builder is declarative: it always holds one candidate per active goal at lastActivity + goalLapseAfterDays (30), rebuilt on every reevaluate. So the candidate exists and its fire day is +25d. My first version of this case expected no candidate; that was the case's error, not the app's."
+  },
+  {
+    "id": "arb-anchored-lead-high-stakes",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Submit project",
+          "plannedStartDate": "+1d 14:00",
+          "plannedIsAuto": false,
+          "stakes": "high",
+          "estimatedMinutes": 60
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Submit project",
+          "candidates": {
+            "placementLead": true
+          },
+          "fireAt": {
+            "placementLead": "+1d 13:00"
+          }
+        }
+      ]
+    },
+    "note": "Roman, Sep 25 2026: an anchored high-stakes task gets the event's hour of lead. Stakes decides, never the title."
+  },
+  {
+    "id": "arb-anchored-lead-low-stakes",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Call grandma",
+          "plannedStartDate": "+1d 14:00",
+          "plannedIsAuto": false,
+          "stakes": "low",
+          "estimatedMinutes": 15
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Call grandma",
+          "candidates": {
+            "placementLead": true
+          },
+          "fireAt": {
+            "placementLead": "+1d 13:55"
+          }
+        }
+      ]
+    },
+    "note": "The same anchor with low stakes gets the short 'stand up' lead."
   }
 ]

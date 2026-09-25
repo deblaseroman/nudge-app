@@ -43,6 +43,24 @@ struct TappedNudgeContext {
     /// Goal-lapse taps only: which goal the bait was about.
     let goalID: UUID?
     let tappedAt: Date
+    /// Check-in taps: "no" when the answer rode with the notification's
+    /// Not yet action or the box's No; nil means the box asks first.
+    var answer: String? = nil
+
+    /// The box's No: record the answer in place and keep the context.
+    static func writeAnswer(_ answer: String) {
+        SharedModelContainer.appGroupDefaults.set(answer, forKey: NudgeNotificationService.tappedNudgeAnswerKey)
+    }
+
+    /// The box's Yes: the context is spent.
+    static func clear() {
+        let defaults = SharedModelContainer.appGroupDefaults
+        for key in [NudgeNotificationService.tappedNudgeKindKey, NudgeNotificationService.tappedNudgeTaskIDKey,
+                    NudgeNotificationService.tappedNudgeGoalIDKey, NudgeNotificationService.tappedNudgeDateKey,
+                    NudgeNotificationService.tappedNudgeAnswerKey] {
+            defaults.removeObject(forKey: key)
+        }
+    }
 
     /// Reads the context from the app group; returns nil (and tidies the
     /// keys) once it has gone stale.
@@ -60,13 +78,15 @@ struct TappedNudgeContext {
             defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeTaskIDKey)
             defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeGoalIDKey)
             defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeDateKey)
+            defaults.removeObject(forKey: NudgeNotificationService.tappedNudgeAnswerKey)
             return nil
         }
         let taskID = defaults.string(forKey: NudgeNotificationService.tappedNudgeTaskIDKey)
             .flatMap(UUID.init(uuidString:))
         let goalID = defaults.string(forKey: NudgeNotificationService.tappedNudgeGoalIDKey)
             .flatMap(UUID.init(uuidString:))
-        return TappedNudgeContext(kind: kind, taskID: taskID, goalID: goalID, tappedAt: tappedAt)
+        let answer = defaults.string(forKey: NudgeNotificationService.tappedNudgeAnswerKey)
+        return TappedNudgeContext(kind: kind, taskID: taskID, goalID: goalID, tappedAt: tappedAt, answer: answer)
     }
 }
 
@@ -661,6 +681,25 @@ enum TasksMessageComposer {
     /// The plan proposal as the box renders it: Opus's one sentence as the
     /// headline, a deterministic summary of the sessions as the detail.
     /// Equality against this builder is how the view knows to draw Yes / No.
+    /// The check-in's question in the box, with Yes / No rendered by the
+    /// box when the composed message equals this.
+    static let checkInQuestion = TasksMessage(
+        headline: "Have you worked on anything yet?",
+        detail: nil
+    )
+
+    /// After a No: one recommendation, no lecture.
+    static func checkInRecommendation(_ task: NudgeTask?) -> TasksMessage {
+        guard let task else {
+            return TasksMessage(headline: "Nothing is waiting on you right now.", detail: nil)
+        }
+        let minutes = min(task.estimatedMinutes ?? 30, 25)
+        return TasksMessage(
+            headline: "Try \u{201C}\(task.title)\u{201D} next.",
+            detail: "Just \(minutes) minutes to start. It is the most important thing open today."
+        )
+    }
+
     static func planProposalMessage(_ proposal: PlanProposalContext) -> TasksMessage {
         let fmtIn = DateFormatter()
         fmtIn.dateFormat = "yyyyMMdd"
@@ -900,11 +939,16 @@ enum TasksMessageComposer {
                 headline: "That was a heads-up before your next block of events.",
                 detail: "Event reminders go out about an hour before a stretch of calendar events begins, so the first one doesn't start without you."
             )
-        case .idle:
-            return TasksMessage(
-                headline: "That check-in asks whether today has gotten started.",
-                detail: "It goes out a few hours after wake when no session has been started and nothing has been checked off yet."
-            )
+        case .idle, .floater:
+            // The check-in (Roman, Sep 25 2026): the notification only
+            // asks. A plain tap lands here on the same question with Yes /
+            // No; a No, from the notification or the box, lands on the
+            // recommendation, the one task the shared rule picks.
+            if context.answer == "no" {
+                let pick = task ?? NudgeTask.topOpenTask(among: tasks, now: now)
+                return checkInRecommendation(pick)
+            }
+            return checkInQuestion
         // `.getAhead` survives for rows written before the Aug 2026 split;
         // `.prep` is its direct descendant and shares the explanation.
         case .getAhead, .prep:
@@ -936,17 +980,6 @@ enum TasksMessageComposer {
             return TasksMessage(
                 headline: "That was a heads-up that a deadline is close.",
                 detail: "Due-soon reminders go out about two hours before something is due. Things due within the same hour share one reminder."
-            )
-        case .floater:
-            if let task {
-                return TasksMessage(
-                    headline: "That check-in was about “\(task.title),” which has no deadline.",
-                    detail: "Undated tasks never turn urgent on their own, so the check-in points one out when the day has room."
-                )
-            }
-            return TasksMessage(
-                headline: "That check-in was about an open task with no deadline.",
-                detail: "Undated tasks never turn urgent on their own, so the check-in points one out when the day has room."
             )
         case .morningPrompt:
             // Morning-prompt taps land in Home chat, not here — but the kind
@@ -1153,6 +1186,8 @@ struct TasksMessageBox: View {
     /// Rendered with Yes / No; the owner writes on Yes and records a No.
     var planProposal: PlanProposalContext? = nil
     var onAnswerPlanProposal: ((PlanProposalContext, Bool) -> Void)? = nil
+    /// The check-in's Yes / No when the box is showing its question.
+    var onAnswerCheckIn: ((Bool) -> Void)? = nil
     /// Opens with the detail visible — the goal-lapse hook's requirement:
     /// the full message is the point of the tap, not a teaser behind a
     /// second tap.
@@ -1281,6 +1316,38 @@ struct TasksMessageBox: View {
                 // The plan's Yes / No (cycle 2026-09-16-01). Always visible
                 // while the proposal is showing; the explicit gestures keep
                 // the buttons from also opening the shell.
+                if message == TasksMessageComposer.checkInQuestion, let onAnswerCheckIn {
+                    HStack(spacing: 8) {
+                        Button {
+                            NudgeHaptics.medium()
+                            onAnswerCheckIn(true)
+                        } label: {
+                            Text("Yes")
+                                .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(NudgeTheme.primary)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            NudgeHaptics.light()
+                            onAnswerCheckIn(false)
+                        } label: {
+                            Text("No")
+                                .font(.custom(NudgeTheme.fontMedium, size: 13))
+                                .foregroundColor(NudgeTheme.textSecondary)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(NudgeTheme.surfaceAlt)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.top, 4)
+                }
+
                 if let proposal = offeredProposal {
                     HStack(spacing: 8) {
                         Button {

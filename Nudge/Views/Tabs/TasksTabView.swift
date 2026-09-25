@@ -226,6 +226,22 @@ struct TasksTabView: View {
         }
     }
 
+    /// The check-in's answer from the box (Roman, Sep 25 2026). Yes: leave
+    /// them alone for the day, same marker the notification's Yes writes,
+    /// and the context is spent. No: the answer is recorded and the box
+    /// re-reads into the recommendation.
+    private func answerCheckIn(worked: Bool) {
+        if worked {
+            SharedModelContainer.appGroupDefaults.set(true, forKey: NudgeArbiter.idleDismissedKey(for: Date()))
+            TappedNudgeContext.clear()
+        } else {
+            TappedNudgeContext.writeAnswer("no")
+        }
+        withAnimation(NudgeAnimation.standard) {
+            tappedNudgeContext = TappedNudgeContext.read()
+        }
+    }
+
     /// The user's answer to a plan proposal. Yes writes the sessions
     /// (scheduled, never due) through the sweep's writer and reevaluates;
     /// No records the decision. Either way the box moves on.
@@ -640,6 +656,7 @@ struct TasksTabView: View {
                     onAnswerPlanProposal: { proposal, accepted in
                         answerPlanProposal(proposal, accepted: accepted)
                     },
+                    onAnswerCheckIn: { worked in answerCheckIn(worked: worked) },
                     // The hook is the point of the bait's tap — it opens
                     // read-in-full, not as a teaser behind a second tap.
                     startsExpanded: tappedNudgeContext?.kind == .goalLapse,

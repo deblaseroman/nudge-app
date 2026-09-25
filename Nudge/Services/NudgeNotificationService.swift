@@ -54,6 +54,10 @@ final class NudgeNotificationService: NSObject {
     /// Goal-lapse taps only: the `NudgeGoal.id` the bait was about, so the
     /// message box's hook can name the right goal.
     static let tappedNudgeGoalIDKey = "nudge.tappedNudgeGoalID"
+    /// The check-in's answer carried with the tap (Roman, Sep 25 2026):
+    /// "no" when the user pressed Not yet, absent on a plain tap, so the
+    /// box opens on the recommendation instead of asking twice.
+    static let tappedNudgeAnswerKey = "nudge.tappedNudgeAnswer"
 
     enum AuthorizationState {
         case notDetermined
@@ -237,49 +241,30 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             // direction while outcomes are observation-only.
             outcome?.result = .tappedOpen
             outcome?.actedAt = Date()
-            let topTask = pickTopOpenTask(context: context)
-            // Capture as a sendable value — must not access the SwiftData
-            // model from inside the deferred closures (different runloop
-            // tick, potentially stale faulted reference).
-            let topTaskIDString = topTask?.id.uuidString
-
-            // DURABLE pending state. The transient .nudgeIdleNotYetTapped
-            // post is only caught if TasksTabView is already mounted and
-            // subscribed — which it is NOT on a COLD LAUNCH from the
-            // notification tap (the whole view tree is still building, so the
-            // post fires before the subscriber exists and the sheet never
-            // shows). Persisting the proposed task to the app group makes the
-            // intent survive the launch: TasksTabView reads it whenever it
-            // appears / becomes active, independent of timing or launch path.
-            if let topTaskIDString {
-                let defaults = SharedModelContainer.appGroupDefaults
-                defaults.set(topTaskIDString, forKey: Self.pendingIdleTaskIDKey)
-                defaults.set(Date(), forKey: Self.pendingIdleTaskDateKey)
+            // The answer rides with the tap (Roman, Sep 25 2026): the box
+            // on the Tasks tab opens straight on the recommendation, no
+            // second question, no modal sheet. Durable App Group keys, the
+            // same cold-launch reasoning as the body-tap context below.
+            let allTasks = (try? context.fetch(FetchDescriptor<NudgeTask>())) ?? []
+            let topTask = NudgeTask.topOpenTask(among: allTasks)
+            let kindRaw = requestContent.userInfo[NudgeNotificationUserInfoKey.kind] as? String
+                ?? NudgeOutcomeKind.idle.rawValue
+            let defaults = SharedModelContainer.appGroupDefaults
+            defaults.set(kindRaw, forKey: Self.tappedNudgeKindKey)
+            if let id = topTask?.id.uuidString {
+                defaults.set(id, forKey: Self.tappedNudgeTaskIDKey)
+            } else {
+                defaults.removeObject(forKey: Self.tappedNudgeTaskIDKey)
             }
-            // Two-step async hop: the tab-open post fires first on the next
-            // main runloop tick so SwiftUI can commit deepLinkTab → MainTabView
-            // selectedTab → TasksTabView mounts → .onReceive subscription
-            // becomes live. THEN the idleNotYet post fires on the tick after,
-            // by which time TasksTabView is in the hierarchy and its
-            // subscription will actually catch the notification. Posting both
-            // synchronously inside MainActor.run was both crashing during
-            // the foregrounding handoff AND missing the sheet observer
-            // because TasksTabView wasn't mounted yet.
+            defaults.removeObject(forKey: Self.tappedNudgeGoalIDKey)
+            defaults.set("no", forKey: Self.tappedNudgeAnswerKey)
+            defaults.set(Date(), forKey: Self.tappedNudgeDateKey)
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: .nudgeNotificationOpenTab,
                     object: nil,
                     userInfo: ["tab": "tasks"]
                 )
-                if let topTaskIDString {
-                    DispatchQueue.main.async {
-                        NotificationCenter.default.post(
-                            name: .nudgeIdleNotYetTapped,
-                            object: nil,
-                            userInfo: ["taskID": topTaskIDString]
-                        )
-                    }
-                }
             }
 
         case NudgeNotificationActionID.markUnhelpful.rawValue:
@@ -318,6 +303,8 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
                 } else {
                     defaults.removeObject(forKey: Self.tappedNudgeGoalIDKey)
                 }
+                // A plain tap carries no answer: the box asks first.
+                defaults.removeObject(forKey: Self.tappedNudgeAnswerKey)
                 defaults.set(Date(), forKey: Self.tappedNudgeDateKey)
             }
             DispatchQueue.main.async {
@@ -366,17 +353,11 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
     /// Used by the idle "Not yet" handler to pre-select a task so the user
     /// doesn't have to scan the full list to pick something.
     @MainActor
+    /// Forwarder kept for any remaining caller; the rule lives on the model
+    /// (`NudgeTask.topOpenTask`) so the message box recommends the same task.
     private func pickTopOpenTask(context: ModelContext) -> NudgeTask? {
         let allTasks = (try? context.fetch(FetchDescriptor<NudgeTask>())) ?? []
-        // Day-integrity glue (cycle 2026-09-13-01): don't hand the user a
-        // future-day intention as "the thing to start now".
-        let open = allTasks.filter {
-            !$0.isInformationalEvent && !$0.isComplete && !$0.intentIsFuture()
-        }
-        // The comparator is plan-first: an ordered plan's NEXT item wins
-        // when one exists, deadline buckets rank the rest.
-        let comparator = TaskSortComparator()
-        return open.min { comparator.compare($0, $1) }
+        return NudgeTask.topOpenTask(among: allTasks)
     }
 
     @MainActor

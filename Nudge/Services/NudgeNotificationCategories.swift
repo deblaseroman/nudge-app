@@ -232,9 +232,12 @@ enum NudgeNotificationCategories {
         // and Snooze. (It never carried Break it down either; that action
         // has since been removed everywhere, so the two categories are now
         // identical in their action list and differ only in identity.)
+        // The floater is a check-in since Sep 25 2026: it asks whether
+        // anything got worked on, so it carries the idle's Yes / Not yet
+        // pair, not Start / Snooze.
         let floater = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.floater.rawValue,
-            actions: [startSession, snooze30, markUnhelpful],
+            actions: [idleYesGood, idleNotYet, markUnhelpful],
             intentIdentifiers: [],
             options: dismissible
         )

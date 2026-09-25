@@ -190,6 +190,16 @@ extension NudgeTask {
     static func dayLens(among tasks: [NudgeTask], on day: Date, now: Date = Date()) -> [NudgeTask] {
         planTasks(among: tasks, on: day, now: now) + dayTasks(among: tasks, on: day)
     }
+
+    /// The one task to recommend when the user says they have not started:
+    /// open, not an event, not glued to a future day, ranked by the shared
+    /// comparator (plan-first, then deadline buckets). One rule for the
+    /// check-in's "Not yet" action and the message box's recommendation.
+    static func topOpenTask(among tasks: [NudgeTask], now: Date = Date()) -> NudgeTask? {
+        let open = tasks.filter { !$0.isInformationalEvent && !$0.isComplete && !$0.intentIsFuture(asOf: now) }
+        let comparator = TaskSortComparator()
+        return open.min { comparator.compare($0, $1) }
+    }
 }
 
 /// The one task ordering, with **plan-first built in** (Jul 2026 — before

@@ -474,9 +474,22 @@ enum NudgeConfig {
     // to zero.
 
     /// Minutes before the first slot of a placement cluster the heads-up
-    /// fires. Short on purpose — this is "stand up, it's about to be
-    /// laundry time", not the hour-out planning lead events get.
-    static let placementLeadMinutes: Int = 5
+    /// fires, by the block's stakes (Roman, Sep 25 2026): an anchored
+    /// high-stakes task ("Submit project") gets the event's hour; a
+    /// low-stakes one ("Call grandma") gets a short "stand up" lead. The
+    /// stakes field is capture-assigned and user-editable, so this is a
+    /// property rule, never a title rule.
+    static let placementLeadMinutesHighStakes: Int = 60
+    static let placementLeadMinutesMediumStakes: Int = 15
+    static let placementLeadMinutesLowStakes: Int = 5
+
+    static func placementLeadMinutes(for stakes: TaskStakes?) -> Int {
+        switch stakes {
+        case .high: return placementLeadMinutesHighStakes
+        case .medium: return placementLeadMinutesMediumStakes
+        case .low, .none: return placementLeadMinutesLowStakes
+        }
+    }
 
     /// Placements whose slots are within this many hours of each other
     /// share ONE heads-up (chained clustering, same mechanism as event
