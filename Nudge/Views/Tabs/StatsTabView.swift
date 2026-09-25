@@ -82,6 +82,39 @@ struct StatsTabView: View {
 
     // MARK: - Body
 
+    /// Shown the week the mirror fired. Threshold-based on purpose: the app
+    /// cannot read the true minutes; only the report view can.
+    private var mirrorCard: AnyView? {
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard let fired = defaults.object(forKey: "nudge.distractions.mirrorLastFiredAt") as? Date,
+              Calendar.current.isDate(fired, equalTo: Date(), toGranularity: .weekOfYear) else { return nil }
+        let settings = DistractionSettings.load(from: defaults)
+        let weekly = settings.weeklyMirrorMinutes
+        let yearlyHours = weekly * 52 / 60
+        let yearlyDays = Double(yearlyHours) / 24
+        let projection = yearlyDays >= 2
+            ? String(format: "%.1f days", yearlyDays)
+            : "\(yearlyHours) hours"
+        return AnyView(
+            VStack(alignment: .leading, spacing: 8) {
+                Text("MIRROR")
+                    .font(.custom(NudgeTheme.fontSemiBold, size: 13))
+                    .foregroundColor(NudgeTheme.textMuted)
+                Text("This week passed \(weekly) minutes in the apps you picked.")
+                    .font(.custom(NudgeTheme.fontMedium, size: 15))
+                    .foregroundColor(NudgeTheme.textPrimary)
+                Text("At that pace, a year is at least \(projection) in those apps. Keep it in mind the next time the limit hits.")
+                    .font(.custom(NudgeTheme.fontBody, size: 13))
+                    .foregroundColor(NudgeTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(NudgeTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusCard))
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -89,6 +122,16 @@ struct StatsTabView: View {
                     AccountShortcutButton(selectedTab: $selectedTab)
                     ScreenHeader(title: "Stats", subtitle: "Task completion, session timing, and sleep accuracy.")
                     Spacer(minLength: 0)
+                }
+
+                // The mirror's landing (Roman's brief, Sep 25 2026): the
+                // weekly notification says only "got a sec?"; the number
+                // lives here. Stage one states the threshold crossed and
+                // the yearly projection from it; the report extension will
+                // replace this with the real minutes and the two-color graph.
+                if let mirror = mirrorCard {
+                    sectionLabel("Distractions")
+                    mirror
                 }
 
                 // Today section

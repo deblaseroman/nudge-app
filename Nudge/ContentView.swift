@@ -141,6 +141,10 @@ struct ContentView: View {
                 profile: profile,
                 modelContext: modelContext
             )
+            // Screen Time schedules follow the profile's day window; a
+            // launch re-registers them only when that window, the limit,
+            // or the picked apps changed since the last registration.
+            DistractionMonitor.shared.apply(profile: profile)
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Always pause the 60s countdown ticker when leaving the

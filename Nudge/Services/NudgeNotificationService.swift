@@ -285,7 +285,11 @@ extension NudgeNotificationService: UNUserNotificationCenterDelegate {
             // through normal brain-dump capture. Every other notification's
             // home remains the Tasks tab.
             let kindRaw = requestContent.userInfo[NudgeNotificationUserInfoKey.kind] as? String
-            let tab = (kindRaw == NudgeOutcomeKind.morningPrompt.rawValue) ? "home" : "tasks"
+            // The Screen Time extension's kinds carry no arbiter kind; they
+            // route by category: the mirror's breakdown lives on Stats.
+            let extensionMirror = requestContent.categoryIdentifier == NudgeNotificationCategoryID.mirror.rawValue
+            let tab = extensionMirror ? "stats"
+                : (kindRaw == NudgeOutcomeKind.morningPrompt.rawValue) ? "home" : "tasks"
             // Durable context for the Tasks tab's message box: which nudge
             // the user arrived from, so the box can explain it in more room
             // than a banner has. Same survives-cold-launch reasoning as the

@@ -477,6 +477,10 @@ final class NudgeArbiter: NudgeArbitering {
             schedule(cand, modelContext: modelContext)
         }
 
+        // The Screen Time extension cannot open the store; give it today
+        // (Roman's brief, Sep 25 2026). As fresh as this pass.
+        DistractionMonitor.shared.writeSnapshot(profile: profile, modelContext: modelContext)
+
         #if DEBUG
         debugDumpPendingCensus()
         #endif

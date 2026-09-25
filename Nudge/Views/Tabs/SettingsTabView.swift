@@ -5,6 +5,7 @@
 //  Core behavior and notification controls.
 //
 
+import FamilyControls
 import SwiftUI
 import SwiftData
 import UIKit
@@ -17,6 +18,11 @@ struct SettingsTabView: View {
     @State private var activeTimeEditor: TimeSettingDestination?
     /// Roman's in-app notebook (DEBUG only).
     @State private var showDevNotes = false
+    @State private var distractionSettings = DistractionSettings()
+    @State private var distractionSelection = FamilyActivitySelection()
+    @State private var distractionAuthorized = false
+    @State private var showAppPicker = false
+    @State private var distractionError: String?
     @State private var notificationAuthorizationState: NudgeNotificationService.AuthorizationState = .notDetermined
 
     var body: some View {
@@ -179,6 +185,8 @@ struct SettingsTabView: View {
                 }
 
                 settingsCard(title: "Calendar source", value: profile.calendarSource.isEmpty ? "Not connected yet" : profile.calendarSource)
+
+                distractionsSection
 
                 #if DEBUG
                 // Debug builds only — stripped from Release.
@@ -374,6 +382,122 @@ struct SettingsTabView: View {
             RoundedRectangle(cornerRadius: NudgeTheme.radiusCard)
                 .stroke(NudgeTheme.border, lineWidth: 1)
         )
+    }
+
+    // MARK: - Distractions (Roman's notification brief, Sep 25 2026)
+
+    /// The apps that pull the user away, and the daily limit. The picker
+    /// is Apple's; the app never sees the list, only the tokens it hands
+    /// back. Saving re-registers the Screen Time schedules.
+    private var distractionsSection: some View {
+        settingsSection(title: "Distractions") {
+            if !distractionAuthorized {
+                Text("Nudge can notice when time in the apps you pick passes a limit, and check in. Nothing about your usage leaves the phone.")
+                    .font(.custom(NudgeTheme.fontBody, size: 13))
+                    .foregroundColor(NudgeTheme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: authorizeDistractions) {
+                    Text("Turn on Screen Time access")
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 14))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(NudgeTheme.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                }
+                .buttonStyle(.plain)
+                if let distractionError {
+                    Text(distractionError)
+                        .font(.custom(NudgeTheme.fontBody, size: 12))
+                        .foregroundColor(NudgeTheme.overdue)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Button {
+                    NudgeHaptics.light()
+                    showAppPicker = true
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Apps that pull you away")
+                                .font(.custom(NudgeTheme.fontMedium, size: 15))
+                                .foregroundColor(NudgeTheme.textPrimary)
+                            Text(distractionSelection.applicationTokens.isEmpty && distractionSelection.categoryTokens.isEmpty
+                                 ? "None picked yet"
+                                 : "\(distractionSelection.applicationTokens.count) app\(distractionSelection.applicationTokens.count == 1 ? "" : "s"), \(distractionSelection.categoryTokens.count) categor\(distractionSelection.categoryTokens.count == 1 ? "y" : "ies")")
+                                .font(.custom(NudgeTheme.fontBody, size: 12))
+                                .foregroundColor(NudgeTheme.textMuted)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundColor(NudgeTheme.textMuted)
+                    }
+                }
+                .buttonStyle(.plain)
+                .familyActivityPicker(isPresented: $showAppPicker, selection: $distractionSelection)
+                .onChange(of: distractionSelection) { _, _ in saveDistractions() }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Daily limit")
+                            .font(.custom(NudgeTheme.fontMedium, size: 15))
+                            .foregroundColor(NudgeTheme.textPrimary)
+                        Text("\(distractionSettings.dailyLimitMinutes) minutes a day in those apps. The mirror looks at \(distractionSettings.weeklyMirrorMinutes) a week.")
+                            .font(.custom(NudgeTheme.fontBody, size: 12))
+                            .foregroundColor(NudgeTheme.textMuted)
+                    }
+                    Spacer()
+                    Stepper("", value: Binding(
+                        get: { distractionSettings.dailyLimitMinutes },
+                        set: { distractionSettings.dailyLimitMinutes = max(5, min(480, $0)); saveDistractions() }
+                    ), step: 5)
+                    .labelsHidden()
+                }
+
+                toggleSettingsRow(
+                    title: "Limit check-ins",
+                    subtitle: "Up to three a day when you pass the limit, quieter if you have worked since the last one.",
+                    isOn: Binding(get: { distractionSettings.limitLadderEnabled },
+                                  set: { distractionSettings.limitLadderEnabled = $0; saveDistractions() })
+                )
+                toggleSettingsRow(
+                    title: "Weekly mirror",
+                    subtitle: "Once a week at most, when the week's time passes the limit by a quarter.",
+                    isOn: Binding(get: { distractionSettings.mirrorEnabled },
+                                  set: { distractionSettings.mirrorEnabled = $0; saveDistractions() })
+                )
+            }
+        }
+        .onAppear { loadDistractions() }
+    }
+
+    private func loadDistractions() {
+        distractionSettings = DistractionSettings.load(from: SharedModelContainer.appGroupDefaults)
+        distractionAuthorized = DistractionMonitor.shared.isAuthorized
+        if let data = distractionSettings.selectionData,
+           let selection = try? JSONDecoder().decode(FamilyActivitySelection.self, from: data) {
+            distractionSelection = selection
+        }
+    }
+
+    private func saveDistractions() {
+        distractionSettings.selectionData = try? JSONEncoder().encode(distractionSelection)
+        distractionSettings.authorized = DistractionMonitor.shared.isAuthorized
+        distractionSettings.save(to: SharedModelContainer.appGroupDefaults)
+        DistractionMonitor.shared.apply(profile: profile, force: true)
+    }
+
+    private func authorizeDistractions() {
+        NudgeHaptics.medium()
+        distractionError = nil
+        Task { @MainActor in
+            do {
+                try await DistractionMonitor.shared.requestAuthorization()
+                distractionAuthorized = DistractionMonitor.shared.isAuthorized
+                if !distractionAuthorized { distractionError = "Screen Time access was not granted." }
+            } catch {
+                distractionError = "Screen Time access is not available on this build: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func toggleSettingsRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {

@@ -1107,5 +1107,101 @@
       ]
     },
     "note": "The same anchor with low stakes gets the short 'stand up' lead."
+  },
+  {
+    "id": "limit-bedtime-task-fits",
+    "kind": "arbiter",
+    "input": {
+      "profile": {
+        "bedtime": "23:00"
+      },
+      "tasks": [
+        {
+          "title": "Fold laundry",
+          "intendedDate": "+0d",
+          "estimatedMinutes": 20
+        },
+        {
+          "title": "Write essay",
+          "intendedDate": "+0d",
+          "estimatedMinutes": 120
+        }
+      ],
+      "limit": {
+        "rung": 1,
+        "now": "+0d 22:20"
+      }
+    },
+    "expected": {
+      "limit": "LIMIT BEDTIME"
+    },
+    "note": "Limit crossed 40 minutes before bed with a 20-minute task open: the ladder names the task that fits (Roman's late-day branch)."
+  },
+  {
+    "id": "limit-bedtime-nothing-fits",
+    "kind": "arbiter",
+    "input": {
+      "profile": {
+        "bedtime": "23:00"
+      },
+      "tasks": [
+        {
+          "title": "Write essay",
+          "intendedDate": "+0d",
+          "estimatedMinutes": 120
+        }
+      ],
+      "limit": {
+        "rung": 1,
+        "now": "+0d 22:20"
+      }
+    },
+    "expected": {
+      "limit": "LIMIT WINDDOWN"
+    },
+    "note": "Same moment, nothing short enough: wind down."
+  },
+  {
+    "id": "limit-afternoon-rung-1",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Write essay",
+          "intendedDate": "+0d",
+          "estimatedMinutes": 60
+        }
+      ],
+      "limit": {
+        "rung": 1,
+        "now": "+0d 14:00"
+      }
+    },
+    "expected": {
+      "limit": "LIMIT 1"
+    },
+    "note": "Limit crossed mid-afternoon: the plain first rung."
+  },
+  {
+    "id": "limit-inside-event-silent",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Work shift",
+          "isEvent": true,
+          "specificTime": "+0d 13:00",
+          "estimatedMinutes": 300
+        }
+      ],
+      "limit": {
+        "rung": 1,
+        "now": "+0d 14:00"
+      }
+    },
+    "expected": {
+      "limit": ""
+    },
+    "note": "Limit crossed during an event: silent, by Roman's rule. The empty title is the silent decision."
   }
 ]

@@ -67,6 +67,9 @@ enum NudgeNotificationCategoryID: String {
     /// says almost nothing (the real message waits in the message box), so
     /// any button would be answering a question the bait hasn't asked yet.
     case goalLapse = "category.goalLapse"
+    /// Posted by the Screen Time extension, not the arbiter (Sep 25 2026).
+    case limit = "category.limit"
+    case mirror = "category.mirror"
 }
 
 enum NudgeNotificationActionID: String {
@@ -244,6 +247,22 @@ enum NudgeNotificationCategories {
         // Come-back: actionless like the event heads-up — its ask is
         // tap-to-open itself. `dismissible` stays so `.dismissed` rows
         // get written.
+        // Screen Time kinds (Roman's brief, Sep 25 2026): posted by the
+        // NudgeActivityMonitor extension with placeholder copy; actionless
+        // until the words are decided. Tap-to-open routes limit → Tasks,
+        // mirror → Stats.
+        let limit = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.limit.rawValue,
+            actions: [],
+            intentIdentifiers: [],
+            options: dismissible
+        )
+        let mirror = UNNotificationCategory(
+            identifier: NudgeNotificationCategoryID.mirror.rawValue,
+            actions: [],
+            intentIdentifiers: [],
+            options: dismissible
+        )
         let comeBack = UNNotificationCategory(
             identifier: NudgeNotificationCategoryID.comeBack.rawValue,
             actions: [],
@@ -275,7 +294,6 @@ enum NudgeNotificationCategories {
 
         UNUserNotificationCenter.current().setNotificationCategories([
             eventBlock, idle, getAhead, prep, dueSoon, morningPrompt, floater,
-            comeBack, placementLead, placementMissed, goalLapse
-        ])
+            comeBack, placementLead, placementMissed, goalLapse, limit, mirror])
     }
 }

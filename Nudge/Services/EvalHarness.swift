@@ -260,6 +260,23 @@ enum EvalHarness {
         let rows = (try? fixture.context.fetch(FetchDescriptor<NudgeTask>())) ?? []
 
         var mismatches: [String] = []
+        // `input.limit`: the Screen Time ladder's pure decision, run on the
+        // snapshot the arbiter just wrote for this fixture. The extension
+        // itself cannot run here; its one decision can.
+        if let limit = input["limit"] as? [String: Any] {
+            do {
+                let now = try resolve(limit["now"] ?? "+0d 12:00", defaultHour: 12, defaultMinute: 0, field: "limit.now") ?? Date()
+                let lastRung = try limit["lastRungAt"].flatMap { try resolve($0, defaultHour: 12, defaultMinute: 0, field: "limit.lastRungAt") }
+                DistractionMonitor.shared.writeSnapshot(profile: fixture.profile, modelContext: fixture.context, now: now)
+                let snap = DistractionSnapshot.load(from: SharedModelContainer.appGroupDefaults)
+                let decision = LimitDecider.decide(snapshot: snap, now: now, rung: (limit["rung"] as? Int) ?? 1, lastRungAt: lastRung)
+                if let want = expected["limit"] as? String, want != decision.placeholderTitle {
+                    mismatches.append("limit: expected \(want), actual \(decision.placeholderTitle) (\(decision.placeholderBody))")
+                }
+            } catch {
+                mismatches.append("limit: \(error)")
+            }
+        }
         for spec in (expected["tasks"] as? [[String: Any]]) ?? [] {
             guard let title = spec["title"] as? String else {
                 mismatches.append("expected row without a title"); continue

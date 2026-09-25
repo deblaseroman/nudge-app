@@ -82,7 +82,7 @@ The most important invariant: **UI never schedules notifications directly.** Vie
 
 Time-triggered reasons (`appLaunch`, `sceneActive`, `backgroundTask`) are debounced 60s; data-driven reasons always run. Triggers live in `ContentView` (launch/scene-phase), `NudgeApp` (BGTask), and the tabs after mutations.
 
-The arbiter is the ONLY scheduling site. `NotificationScheduler` is retired — it no longer schedules anything and survives only for the shared session-start key and the one-time cleanup of the old `nudge.daily.*` repeating notifications (which outlive the code that scheduled them). `NudgeNotificationService` is the delegate side: taps/actions → deep-link tab routing + `NudgeOutcome` write-back, which feeds future fatigue gating. The morning prompt's tap routes to Home chat; everything else routes to Tasks.
+The arbiter is the ONLY scheduling site inside the app process. Since Sep 25 2026 one deliberate second poster exists outside it: the `NudgeActivityMonitor` extension, which iOS runs when a Screen Time threshold is crossed and which posts the limit ladder and the mirror from a snapshot the arbiter writes (`DistractionMonitor.writeSnapshot`); it never reads the store and never touches the arbiter's requests. `NotificationScheduler` is retired — it no longer schedules anything and survives only for the shared session-start key and the one-time cleanup of the old `nudge.daily.*` repeating notifications (which outlive the code that scheduled them). `NudgeNotificationService` is the delegate side: taps/actions → deep-link tab routing + `NudgeOutcome` write-back, which feeds future fatigue gating. The morning prompt's tap routes to Home chat; everything else routes to Tasks.
 
 ### App ↔ widget sharing
 
