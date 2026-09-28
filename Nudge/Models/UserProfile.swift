@@ -123,9 +123,12 @@ final class UserProfile {
 
     /// The Tasks-tab message box and every AI call behind it (the daily
     /// memo, the plan proposals). Off pauses both; nothing else in the app
-    /// reads this (Roman, Sep 25 2026: "it is costing tokens").
+    /// reads this. OFF BY DEFAULT (Roman, Sep 27 2026: "that needs to be
+    /// turned off"); the switch in Settings turns it on. Stores that got
+    /// the column while the default was true are flipped once by
+    /// `ContentView` (Sep 27 2026), keyed on an App Group flag.
     /// PROPERTY-LEVEL DEFAULT, same reason as the fields above.
-    var tasksMessageBoxEnabled: Bool = true
+    var tasksMessageBoxEnabled: Bool = false
 
     // MARK: - Quiet hours
     //

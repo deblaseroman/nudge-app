@@ -131,6 +131,15 @@ struct ContentView: View {
             // Fold any stored "urgent" priority into "high" (retired value;
             // idempotent, zero rows after the first pass).
             LegacyPriorityNormalizer.sweep(modelContext: modelContext)
+            // One-time: the message box shipped on by default for two days
+            // (Sep 25 to 27 2026); Roman wants it off unless switched on.
+            // Existing stores keep the value the column was created with,
+            // so flip once and remember that it was done.
+            let boxFlipKey = "nudge.tasksMessageBox.defaultedOffOnce"
+            if !SharedModelContainer.appGroupDefaults.bool(forKey: boxFlipKey) {
+                profile.tasksMessageBoxEnabled = false
+                SharedModelContainer.appGroupDefaults.set(true, forKey: boxFlipKey)
+            }
             // Sweep the retired fixed daily notifications (pre-Jul-2026
             // repeating requests that outlive the code that scheduled them).
             NotificationScheduler.shared.cancelRetiredDailyNotifications()
