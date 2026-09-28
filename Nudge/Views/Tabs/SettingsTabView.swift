@@ -188,8 +188,6 @@ struct SettingsTabView: View {
 
                 distractionsSection
 
-                #if DEBUG
-                // Debug builds only — stripped from Release.
                 settingsSection(title: "Tasks tab") {
                     toggleSettingsRow(
                         title: "Message box",
@@ -198,6 +196,8 @@ struct SettingsTabView: View {
                     )
                 }
 
+                #if DEBUG
+                // Debug builds only — stripped from Release.
                 settingsSection(title: "Dev notes") {
                     Button {
                         NudgeHaptics.light()
@@ -286,6 +286,15 @@ struct SettingsTabView: View {
                     .buttonStyle(.plain)
                 }
                 #endif
+
+                // Which build this is. Every build says 1.0 (1), so the
+                // binary's own timestamp is the only honest tell when two
+                // phones disagree (Roman, Sep 27 2026).
+                Text("Build \(Self.buildStamp)")
+                    .font(.custom(NudgeTheme.fontBody, size: 11))
+                    .foregroundColor(NudgeTheme.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 8)
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -391,6 +400,24 @@ struct SettingsTabView: View {
                 .stroke(NudgeTheme.border, lineWidth: 1)
         )
     }
+
+    /// The app binary's modification time, formatted: when this build was
+    /// compiled on the Mac. Plus the configuration, so a Release build
+    /// reads differently from a Debug one.
+    private static let buildStamp: String = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, h:mm a"
+        var when = "unknown"
+        if let url = Bundle.main.executableURL,
+           let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date {
+            when = f.string(from: date)
+        }
+        #if DEBUG
+        return "\(when) (debug)"
+        #else
+        return "\(when) (release)"
+        #endif
+    }()
 
     // MARK: - Distractions (Roman's notification brief, Sep 25 2026)
 
