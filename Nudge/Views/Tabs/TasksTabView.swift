@@ -174,6 +174,14 @@ struct TasksTabView: View {
     /// failure path (no key, offline, parse) is silent — the fallback IS
     /// the message then.
     private func fetchGoalLapseHookIfNeeded() {
+        // The hook is written for the message box and shown nowhere else,
+        // so with the box switched off (Roman's dev note, Sep 25 2026:
+        // the switch must stop every API call behind the box) the call is
+        // never made; the deterministic fallback is what the tap shows.
+        guard profile.tasksMessageBoxEnabled else {
+            goalLapseHookMessage = nil
+            return
+        }
         guard let context = tappedNudgeContext,
               context.kind == .goalLapse,
               let goalID = context.goalID,
