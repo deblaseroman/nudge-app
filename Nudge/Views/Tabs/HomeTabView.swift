@@ -453,10 +453,36 @@ struct HomeTabView: View {
                             didChangeTimeFields = true
                         }
                         if didChangeTimeFields {
-                            existingTask.specificTime = CaptureWriter.parseSpecificTime(
+                            let resolved = CaptureWriter.parseSpecificTime(
                                 timeString: newDueTime,
                                 on: newDueDate
                             )
+                            // The two-clock rule reaches the update path
+                            // (Sep 28 2026): a date answered for a TASK
+                            // lands on the clock the item would have had.
+                            // "start" is the schedule clock — intended day
+                            // plus a manual placement when a time came
+                            // with it — and the owed fields stay clear so
+                            // no countdown is minted from an intention.
+                            // "deadline" (and every event) keeps the owed
+                            // write above.
+                            if !existingTask.isInformationalEvent,
+                               update.dueKind?.lowercased() == "start",
+                               let day = newDueDate {
+                                existingTask.dueDate = nil
+                                existingTask.dueTime = nil
+                                existingTask.specificTime = nil
+                                existingTask.intendedDate = Calendar.current.startOfDay(for: day)
+                                if let start = resolved {
+                                    existingTask.plannedStartDate = start
+                                    existingTask.plannedIsAuto = false
+                                    if existingTask.estimatedMinutes == nil {
+                                        existingTask.estimatedMinutes = NudgeConfig.defaultTimedIntentMinutes
+                                    }
+                                }
+                            } else {
+                                existingTask.specificTime = resolved
+                            }
                         }
                     }
                 }

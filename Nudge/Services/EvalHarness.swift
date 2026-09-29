@@ -573,9 +573,12 @@ enum EvalHarness {
     private static func runCaptureCase(_ c: [String: Any]) async -> String? {
         let input = (c["input"] as? [String: Any]) ?? [:]
         let expected = (c["expected"] as? [String: Any]) ?? [:]
-        guard let text = input["text"] as? String else {
+        guard let rawText = input["text"] as? String else {
             return "input: ? | expected: input.text | actual: missing"
         }
+        // Date tokens in the text resolve against the run day, so one
+        // case covers every weekday and month edge (see `expandDateTemplates`).
+        let text = expandDateTemplates(rawText)
         var inputSummary = "\"\(text)\""
         if let goals = input["goals"] as? [Any], !goals.isEmpty {
             inputSummary += " goals=" + goals.compactMap { ($0 as? String).map { "\"\($0)\"" } }.joined(separator: ", ")
@@ -609,6 +612,7 @@ enum EvalHarness {
         // or a capture that found nothing), "model" when the model's own
         // message is shown, "plan" for the planner lane.
         var replyKind = routedTo == "smallTalk" ? "template" : (routedTo == "plan" ? "plan" : "model")
+        var replyMessage = ""
         var caseIntelCalls = 0
         if routedTo == "capture" {
             do {
@@ -620,6 +624,7 @@ enum EvalHarness {
                     activeGoals: goalContexts
                 )
                 returned = response.tasks.count
+                replyMessage = response.message
                 if ChatRouter.isEmptyCapture(response, questionOutstanding: false) { replyKind = "template" }
                 captureCalls += 1
                 captureUncachedIn += response.usage?.inputTokens ?? 0
@@ -658,6 +663,13 @@ enum EvalHarness {
         }
         if let want = expected["replyKind"] as? String, want != replyKind {
             mismatches.append("replyKind: expected \(want), actual \(replyKind)")
+        }
+        // `replyAsks`: the model's closing message ends in a question —
+        // the observable for the ambiguous-day rule (and the two-question
+        // ceiling's "ask nothing" cases).
+        if let want = expected["replyAsks"] as? Bool {
+            let asks = replyMessage.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
+            if asks != want { mismatches.append("replyAsks: expected \(want), actual \(asks) (reply: \"\(replyMessage)\")") }
         }
         // One signal call per new row is the invariant; a case may override.
         let wantIntel = (expected["intelligenceCalls"] as? Int) ?? created.count
@@ -709,6 +721,53 @@ enum EvalHarness {
             return r
         }
         return ["routedTo": routedTo, "replyKind": replyKind, "rowCount": created.count, "rows": rows]
+    }
+
+    // MARK: - Date tokens in capture text
+
+    /// Expands run-day-relative tokens in a capture case's text so the same
+    /// case covers every weekday and month edge without a pinned clock:
+    ///   {{weekday:+k}}  → the weekday name of today+k ("Thursday")
+    ///   {{dom:+k}}      → the ordinal day of month of today+k ("24th")
+    ///   {{monthref:+k}} → "this month" / "next month" / "in N months" for today+k
+    ///   {{mdy:+k}}      → today+k as M/d/yy ("10/17/26")
+    /// Expectations then stay plain offsets: "two {{weekday:+1}}s from now"
+    /// is always +8d. Unknown tokens are left as written.
+    static func expandDateTemplates(_ text: String, now: Date = Date()) -> String {
+        guard text.contains("{{") else { return text }
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: now)
+        let pattern = try! NSRegularExpression(pattern: "\\{\\{(weekday|dom|monthref|mdy):([+-]?\\d+)\\}\\}")
+        let ns = text as NSString
+        var out = text
+        for m in pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let kind = ns.substring(with: m.range(at: 1))
+            let k = Int(ns.substring(with: m.range(at: 2))) ?? 0
+            guard let d = cal.date(byAdding: .day, value: k, to: today) else { continue }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            let value: String
+            switch kind {
+            case "weekday":
+                f.dateFormat = "EEEE"; value = f.string(from: d)
+            case "dom":
+                let n = cal.component(.day, from: d)
+                let suffix: String
+                switch n % 100 {
+                case 11, 12, 13: suffix = "th"
+                default:
+                    switch n % 10 { case 1: suffix = "st"; case 2: suffix = "nd"; case 3: suffix = "rd"; default: suffix = "th" }
+                }
+                value = "\(n)\(suffix)"
+            case "monthref":
+                let months = cal.dateComponents([.month], from: cal.startOfDay(for: today).monthStart(cal), to: d.monthStart(cal)).month ?? 0
+                value = months == 0 ? "this month" : (months == 1 ? "next month" : "in \(months) months")
+            default:
+                f.dateFormat = "M/d/yy"; value = f.string(from: d)
+            }
+            out = (out as NSString).replacingCharacters(in: m.range, with: value)
+        }
+        return out
     }
 
     // MARK: - Field comparison (shared by both kinds)
@@ -882,6 +941,13 @@ enum EvalHarness {
         f.dateFormat = "h:mm a"
         f.locale = Locale(identifier: "en_US_POSIX")
         return f.string(from: d)
+    }
+}
+
+private extension Date {
+    /// The first day of this date's month, for month-distance arithmetic.
+    func monthStart(_ cal: Calendar) -> Date {
+        cal.date(from: cal.dateComponents([.year, .month], from: self)) ?? self
     }
 }
 #endif

@@ -197,10 +197,10 @@ class ClaudeService {
     Dump 10: "group project meeting at 6 in the library then I should outline my part after, presentation is next thurs at 1"
       - group project meeting 6pm → EVENT
       - outline my part → TASK
-      - presentation next thursday 1pm → EVENT (attended — same logic as the exam)
+      - presentation next thursday 1pm → EVENT (attended — same logic as the exam), saved with dayPending true and no date: "next thursday" has two readings, so the closing question asks which Thursday
 
     FLOATER tasks:
-    A "floater" is a task with no date AND no time. It's something the user will get to whenever — low pressure. Floaters MUST have priority "low" (unless the user explicitly says it's urgent or high-priority). Do NOT default a missing date to today — leave dueDate null so the task is a true floater. Examples that should be floaters: "I should read more", "remember to clean my desk", "study spanish" (no time given).
+    A "floater" is a task with no date AND no time — except an item saved with "dayPending": true, whose day is being asked about (see AMBIGUOUS DAY REFERENCES in the date context); that keeps its priority. A floater is something the user will get to whenever — low pressure. Floaters MUST have priority "low" (unless the user explicitly says it's urgent or high-priority). Do NOT default a missing date to today — leave dueDate null so the task is a true floater. Examples that should be floaters: "I should read more", "remember to clean my desk", "study spanish" (no time given).
 
     CRITICAL — Duplicate prevention and scope of "new":
     - You will receive an EXISTING_TASKS list. These tasks are ALREADY saved in the app from previous conversations (including previous days). Treat them as historical context, NOT as instructions to add now.
@@ -234,8 +234,8 @@ class ClaudeService {
       "plan_consent": [{"title": "<exam title>", "wants": true}]  — only in the turn where the user answered it.
 
     new_tasks format:
-    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "deadline", "sequenceIndex": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
-    The "isEvent" boolean is REQUIRED on every new item.
+    {"title": "...", "isEvent": false, "priority": "...", "category": "...", "stakes": "medium", "estimatedMinutes": 45, "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "deadline", "dayPending": false, "sequenceIndex": null, "timeWindow": "anytime", "commitmentShape": null, "commitmentDailyCount": null, "commitmentSessionTitle": null, "goalRef": null}
+    The "isEvent" boolean is REQUIRED on every new item. "dayPending" is false unless AMBIGUOUS DAY REFERENCES (date context) applies.
 
     TITLES (the list, the timeline, and the widget have one line each): a short noun phrase, at most five words where the scope allows, condensed the way a person would write it on a sticky note — "Apply to a Masters program" → "Masters Application"; "go pick up the package from the mail room" → "Pick up package"; "I need to finish the reading for bio" → "Bio reading". Drop lead-in verbs and filler ("go", "try to", "I need to", "make sure I") unless the verb IS the task. Keep every identifying number or name (module 4, Chem 101, Portland), and keep an EVENT's own name as the calendar would show it. Never abbreviate into something the user would not recognize.
 
@@ -299,8 +299,8 @@ class ClaudeService {
     STUDY PLAN: when this dump creates an exam-category EVENT with a date and the dump contains NO study task of the user's own for it, end "message" with ONE question, "Want me to build a study plan for <exam title>?", and set "plan_question": {"title": "<exam title>"}. It counts toward the two-question ceiling. If the dump DOES include the user's own study task for that exam, ask nothing: the app follows what they said. When the user's next message answers that question ("yes", "sure", "no", "not now"), set "plan_consent": [{"title": "<exam title>", "wants": true or false}], create nothing, update nothing, and reply in one short line. Never re-ask for an exam already answered.
 
     task_updates format (for updating existing tasks by id):
-    {"id": "uuid-string", "estimatedMinutes": 60, "priority": "high", "dueDate": "YYYY-MM-DD"}
-    Only include fields that changed. The "id" field is required.
+    {"id": "uuid-string", "estimatedMinutes": 60, "priority": "high", "dueDate": "YYYY-MM-DD", "dueTime": "3:00 PM", "dueKind": "start"}
+    Only include fields that changed. The "id" field is required. "dueKind" travels with a date you set on a TASK (never on an event): "start" puts the day on the task's schedule, "deadline" makes it owed.
 
     Example — floater tasks (no date / no time → priority "low", no dueDate):
     {
@@ -394,7 +394,7 @@ class ClaudeService {
             return f.string(from: tomorrow)
         }()
 
-        // Concrete weekday → ISO-date lookup for the next 14 days. The model
+        // Concrete weekday → ISO-date lookup for the next 28 days. The model
         // is BAD at computing "which date is next Thursday" on its own (it
         // put "Thursdays and Fridays" on the wrong dates), so we hand it an
         // exact table and forbid it from calculating.
@@ -408,9 +408,10 @@ class ClaudeService {
             let cal = Calendar.current
             let today = Date()
             var lines: [String] = []
-            // 21 days so "repeat for the next two weeks" always has every
-            // occurrence available to look up (2 weeks + buffer).
-            for offset in 0..<21 {
+            // 28 days: four rows per weekday, so "repeat for the next two
+            // weeks" and "three Thursdays from now" are both inside the
+            // table (Roman, Sep 28 2026; 21 put the third row on the edge).
+            for offset in 0..<28 {
                 guard let d = cal.date(byAdding: .day, value: offset, to: today) else { continue }
                 let tag = offset == 0 ? "  (today)" : (offset == 1 ? "  (tomorrow)" : "")
                 lines.append("- \(weekday.string(from: d)) → \(iso.string(from: d))\(tag)")
@@ -424,7 +425,7 @@ class ClaudeService {
 
         // Prompt caching (Sep 23 2026): the system prompt is three blocks
         // with two breakpoints. Block 1 is the rulebook, byte-stable across
-        // users and days. Block 2 is the date context and the 21-day table,
+        // users and days. Block 2 is the date context and the 28-day table,
         // stable for a calendar day. Block 3 is everything that changes per
         // call: the clock line, the task list, commitment sizes, goals. The
         // clock used to sit inside block 2 (twice, once interpolated into
@@ -456,15 +457,45 @@ class ClaudeService {
         - Always return dates as ISO 8601 yyyy-MM-dd. Always return times as "h:mm a" (e.g. "9:00 PM", "3:30 PM").
 
         NAMED WEEKDAYS — do NOT calculate these yourself. Look them up in this
-        table of the next 14 days and copy the exact ISO date:
+        table of the next 28 days and copy the exact ISO date:
         \(upcomingDays)
 
-        - A single named weekday ("Thursday", "this Friday", "next Monday") → use
-          the ISO date of the SOONEST matching day in the table. Today counts as
-          a match only if the event's clock time is still in the future today;
-          otherwise use the following week's matching date.
-        - A single "this <weekday>" / "next <weekday>" ("meet a friend this
-          Saturday") → one event on the SOONEST matching date from the table.
+        - A bare weekday or "this <weekday>" ("Thursday", "this Friday", "meet
+          a friend this Saturday") → the SOONEST matching row. Today counts
+          only if the item's clock time is still ahead today; otherwise the
+          following week's row.
+        - "N <weekday>s from now" / "the <weekday> after next" → count the
+          matching rows STRICTLY AHEAD of today (today is never row one) and
+          take the Nth. Said ON that weekday ("two Wednesdays from now" on a
+          Wednesday) the count has two readings → AMBIGUOUS DAY REFERENCES.
+        - "next <weekday>" ALWAYS has two readings (the coming one, or the one
+          a week later) → AMBIGUOUS DAY REFERENCES. Never resolve it yourself.
+        - Calendar dates ("the 24th", "the 17th of next month", "10/17/26",
+          "Oct 3") are arithmetic on Today's date above, not table lookups:
+          resolve them to the ISO date. A stated calendar day that has ALREADY
+          PASSED ("the 24th" said on the 28th; a month/day earlier than today
+          with no year) is never rolled forward silently → AMBIGUOUS DAY
+          REFERENCES.
+        - A weekday count that runs past the table → AMBIGUOUS DAY REFERENCES.
+
+        AMBIGUOUS DAY REFERENCES — one rule, not a list: a stated day resolves
+        to exactly ONE date by the rules above, or it is asked about. Never
+        pick the likelier reading, never save a guess and confirm it. The
+        shapes named above are examples of the rule; any other phrasing with
+        two defensible dates is handled the same way.
+        - Save the item anyway, with dueDate null AND dueTime null and
+          "dayPending": true. It is NOT a floater: keep the priority and stakes
+          its wording gives it. Everything else in the dump saves normally.
+        - End "message" with ONE short question naming the item and the
+          candidate dates as weekday + date ("Which Thursday for the dentist —
+          Thu Oct 1 or Thu Oct 8?"; for a passed day: "The 24th already passed
+          — did you mean Oct 24?"). Several pending items share one question.
+          It counts toward the two-question ceiling.
+        - When the user answers, use task_updates on that saved item: dueDate
+          = the chosen ISO date, dueTime = the clock time the ORIGINAL message
+          stated (if any), dueKind = what the original item would have carried
+          ("start" for an intention, "deadline" for owed work; omit on events).
+          Create nothing new.
 
         RECURRENCE — the app has no recurring-event type, so you MUST expand
         every recurrence into individual dated events: one object per
@@ -1750,6 +1781,7 @@ struct TaskData: Codable {
     let dueDate: String?
     let dueTime: String?
     let dueKind: String?            // "deadline" (work is owed then) | "start" (user means to do it then); nil/unknown reads as "start" — the cheap wrong guess (cycle 2026-09-03-01)
+    let dayPending: Bool?           // true when the stated day had two readings and the reply asks which (Sep 28 2026): saved undated, NOT a floater
     let priority: String?
     let category: String?
     let stakes: String?             // "high" | "medium" | "low" — consequence signal; unknown/missing → nil via TaskStakes.parse
@@ -1769,6 +1801,7 @@ struct TaskData: Codable {
         case dueDate = "dueDate"
         case dueTime = "dueTime"
         case dueKind = "dueKind"
+        case dayPending = "dayPending"
         case priority
         case category
         case stakes
@@ -1793,6 +1826,7 @@ struct TaskUpdate: Codable {
     let estimatedMinutes: Int?
     let priority: String?
     let dueTime: String?
+    let dueKind: String?             // "start" | "deadline" with a date set on a task — the answer to a day question lands on the clock the item would have had (Sep 28 2026)
     let category: String?
     let commitmentStartDay: String?  // "today" | "tomorrow" — the user's answer to the app-asked start-day question
     let commitmentDailyCount: Int?   // the user's answer to a per-day count question ("how many a day?")

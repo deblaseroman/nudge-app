@@ -1509,5 +1509,200 @@
       ]
     },
     "note": "The boundary: a brain-dump deadline task has no schedule day and stays eligible for the planner to pull ahead. Only imported rows get the calendar-day rule."
+  },
+  {
+    "id": "cap-day-bare-weekday",
+    "kind": "capture",
+    "input": {
+      "text": "dentist {{weekday:+3}} at 10am"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": false,
+      "rows": [
+        {
+          "titleContains": "dentist",
+          "isEvent": true,
+          "dueAt": "+3d 10:00"
+        }
+      ]
+    },
+    "note": "A bare weekday is the soonest matching row strictly ahead (Roman, Sep 28 2026). The token keeps the case true on every run day."
+  },
+  {
+    "id": "cap-day-this-weekday-intent",
+    "kind": "capture",
+    "input": {
+      "text": "call the bank this {{weekday:+2}}"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": false,
+      "rows": [
+        {
+          "titleContains": "bank",
+          "isEvent": false,
+          "intendedDay": "+2d",
+          "hasDeadline": false
+        }
+      ]
+    },
+    "note": "'this <weekday>' is the soonest row too; an intention, so the day lands on the schedule clock with no countdown."
+  },
+  {
+    "id": "cap-day-next-weekday-asks",
+    "kind": "capture",
+    "input": {
+      "text": "dentist next {{weekday:+2}} at 10am"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": true,
+      "rows": [
+        {
+          "titleContains": "dentist",
+          "isEvent": true,
+          "dueDay": null,
+          "dueAt": null
+        }
+      ]
+    },
+    "note": "Roman's ruling: 'next <weekday>' has two readings (on a Tuesday, 'next Thursday' may be the week after). Saved undated, one question names both dates."
+  },
+  {
+    "id": "cap-day-n-weekdays-from-now",
+    "kind": "capture",
+    "input": {
+      "text": "two {{weekday:+1}}s from now I have a haircut at 3pm"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": false,
+      "rows": [
+        {
+          "titleContains": "haircut",
+          "isEvent": true,
+          "dueAt": "+8d 15:00"
+        }
+      ]
+    },
+    "note": "Counting rows strictly ahead: tomorrow is the first, the second is +8d."
+  },
+  {
+    "id": "cap-day-n-weekdays-on-that-weekday-asks",
+    "kind": "capture",
+    "input": {
+      "text": "two {{weekday:+0}}s from now, dentist at 9am"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": true,
+      "rows": [
+        {
+          "titleContains": "dentist",
+          "isEvent": true,
+          "dueAt": null
+        }
+      ]
+    },
+    "note": "Said on that weekday, does today count as the first? Two readings, so ask (Roman, Sep 28 2026)."
+  },
+  {
+    "id": "cap-day-three-weekdays-from-now",
+    "kind": "capture",
+    "input": {
+      "text": "three {{weekday:+1}}s from now, oil change at noon"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": false,
+      "rows": [
+        {
+          "titleContains": "oil",
+          "isEvent": true,
+          "dueAt": "+15d 12:00"
+        }
+      ]
+    },
+    "note": "The third row of a weekday can sit at day 21; the table is 28 days so it is still a lookup, not arithmetic."
+  },
+  {
+    "id": "cap-day-calendar-day-ahead",
+    "kind": "capture",
+    "input": {
+      "text": "pay the electric bill by the {{dom:+3}} of {{monthref:+3}}"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": false,
+      "rows": [
+        {
+          "titleContains": "electric",
+          "isEvent": false,
+          "dueDay": "+3d",
+          "hasDeadline": true
+        }
+      ]
+    },
+    "note": "A day-of-month still ahead resolves by arithmetic on today's date; 'by' makes it owed."
+  },
+  {
+    "id": "cap-day-calendar-day-passed-asks",
+    "kind": "capture",
+    "input": {
+      "text": "pay the electric bill by the {{dom:-2}}"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": true,
+      "rows": [
+        {
+          "titleContains": "electric",
+          "isEvent": false,
+          "dueDay": null,
+          "priority": "medium"
+        }
+      ]
+    },
+    "note": "A stated calendar day already passed is never rolled forward silently: ask, and the item keeps its priority (not a floater). Invalid on the 1st and 2nd of a month, when -2d is last month and the bare day is genuinely ahead."
+  },
+  {
+    "id": "cap-day-slash-date",
+    "kind": "capture",
+    "input": {
+      "text": "flight on {{mdy:+10}} at 6am"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": false,
+      "rows": [
+        {
+          "titleContains": "flight",
+          "isEvent": true,
+          "dueAt": "+10d 06:00"
+        }
+      ]
+    },
+    "note": "A full M/d/yy date is unambiguous arithmetic."
+  },
+  {
+    "id": "cap-day-next-month",
+    "kind": "capture",
+    "input": {
+      "text": "rent is due the {{dom:+31}} {{monthref:+31}}"
+    },
+    "expected": {
+      "rowCount": 1,
+      "replyAsks": false,
+      "rows": [
+        {
+          "titleContains": "rent",
+          "isEvent": false,
+          "dueDay": "+31d",
+          "hasDeadline": true
+        }
+      ]
+    },
+    "note": "'the Nth of next month' is arithmetic past the table's reach; resolves without a lookup."
   }
 ]

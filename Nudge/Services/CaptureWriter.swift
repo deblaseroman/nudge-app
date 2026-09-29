@@ -131,7 +131,11 @@ enum CaptureWriter {
             // Floater detection: no date AND no time → low-priority,
             // "get to it whenever" task. Force low priority unless the
             // AI explicitly said high.
+            // A day the reply is asking about (`dayPending`, Sep 28 2026)
+            // is not "no date": the item keeps its stated priority until
+            // the answer lands via task_updates.
             let isFloater = !isEvent && newDueDate == nil && specificTime == nil
+                && taskData.dayPending != true
             // Canonical set is high|medium|low. "urgent" left the
             // prompt's allowed values (Jul 2026) but the model may
             // still emit it — fold it into "high" at the write site

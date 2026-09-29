@@ -63,7 +63,12 @@ git-ignored.
 
 `input.text` is the message, sent exactly as if typed into the Home chat
 with an empty history and an empty task list. Non-deterministic, so the
-summary reports a percentage.
+summary reports a percentage. Date tokens in the text expand against the
+run day, so one case covers every weekday and month edge and the expected
+dates stay plain offsets: `{{weekday:+k}}` (weekday name of today+k),
+`{{dom:+k}}` (ordinal day of month, "24th"), `{{monthref:+k}}` ("this
+month" / "next month"), `{{mdy:+k}}` ("10/17/26"). "two {{weekday:+1}}s from
+now" is always `+8d`.
 
 `expected`:
 - `routedTo`: `"capture"` (default), `"smallTalk"`, or `"plan"`. The two
@@ -73,6 +78,9 @@ summary reports a percentage.
   (chitchat, or a capture that found nothing), `"model"` when the model's
   own message is shown, `"plan"` for the planner lane.
 - `rowCount`: rows written.
+- `replyAsks`: whether the model's closing message ends in a question —
+  the observable for the ambiguous-day rule ("next Thursday" asks which)
+  and for the ask-nothing cases.
 - `intelligenceCalls`: per-task signal API calls made for the new rows.
   Checked on every capture case even when omitted: the default expectation
   is one call per new row (the cache answers repeats). The run ends with an
