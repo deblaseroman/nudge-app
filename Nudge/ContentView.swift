@@ -140,6 +140,10 @@ struct ContentView: View {
                 profile.tasksMessageBoxEnabled = false
                 SharedModelContainer.appGroupDefaults.set(true, forKey: boxFlipKey)
             }
+            // One-time (Sep 28 2026): imported tasks get their calendar day
+            // on the schedule clock; rows imported before the rule are
+            // caught up here so the planner stops pulling them into Today.
+            CalendarService.backfillImportedScheduleOnce(modelContext: modelContext)
             // Sweep the retired fixed daily notifications (pre-Jul-2026
             // repeating requests that outlive the code that scheduled them).
             NotificationScheduler.shared.cancelRetiredDailyNotifications()
@@ -367,6 +371,32 @@ struct ContentView: View {
                 for e in events.sorted(by: { ($0.specificTime ?? .distantPast) < ($1.specificTime ?? .distantPast) }) {
                     print("[DEBUG import] row: \(e.title) @ \(e.specificTime.map { fmt.string(from: $0) } ?? "-") \(e.estimatedMinutes ?? 0) min")
                 }
+            }
+        }
+        // -nudge-import-ical <path>: run the real iCal import on a local
+        // .ics file (the fetch skipped), then today's planner and the
+        // arbiter, and print every imported row with both clocks. How the
+        // "calendar rows land in Today" report is reproduced without a
+        // feed URL; the before/after for the Sep 28 2026 import rule.
+        if let i = args.firstIndex(of: "-nudge-import-ical"), i + 1 < args.count,
+           let text = try? String(contentsOfFile: args[i + 1], encoding: .utf8),
+           let profile = profiles.first ?? (try? modelContext.fetch(FetchDescriptor<UserProfile>()))?.first {
+            let context = modelContext
+            let result = CalendarService.shared.importICalText(text, modelContext: context)
+            print("[DEBUG ical] imported=\(result.importedCount) duplicates=\(result.skippedDuplicates) errors=\(result.errors)")
+            let outcome = DayPlanEngine.planToday(profile: profile, modelContext: context, clearAutoFirst: true)
+            print("[DEBUG ical] planToday → \(outcome)")
+            NudgeArbiter.shared.reevaluate(reason: .taskCreatedOrEdited, profile: profile, modelContext: context)
+            let rows = (try? context.fetch(FetchDescriptor<NudgeTask>(
+                predicate: #Predicate<NudgeTask> { $0.source == "calendar" }
+            ))) ?? []
+            let fmt = DateFormatter(); fmt.dateFormat = "EEE yyyy-MM-dd h:mm a"
+            let day = DateFormatter(); day.dateFormat = "EEE yyyy-MM-dd"
+            func f(_ d: Date?) -> String { d.map { fmt.string(from: $0) } ?? "-" }
+            for r in rows.sorted(by: { ($0.specificTime ?? $0.dueDate ?? .distantPast) < ($1.specificTime ?? $1.dueDate ?? .distantPast) }) {
+                let kind = r.isInformationalEvent ? "EVENT" : "TASK "
+                let lens = r.isInformationalEvent ? "-" : (r.scheduledDay.map { day.string(from: $0) } ?? "none (Unscheduled)")
+                print("[DEBUG ical] \(kind) \(r.title) | owed \(f(r.specificTime ?? r.dueDate)) | intended \(r.intendedDate.map { day.string(from: $0) } ?? "-") | slot \(f(r.plannedStartDate))\(r.plannedStartDate != nil ? (r.plannedIsAuto ? " auto" : " anchored") : "") | day lens: \(lens) | est \(r.estimatedMinutes ?? 0)m")
             }
         }
         if let i = args.firstIndex(of: "-nudge-tab"), i + 1 < args.count {

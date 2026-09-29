@@ -5,7 +5,7 @@ the real app code and prints pass/fail. Read-and-report only: it changes no
 app behavior, writes to no app store.
 
 ```
-eval/run.sh                # everything: arbiter cases locally, capture cases through the API
+eval/run.sh                # everything: arbiter, editor and import cases locally, capture cases through the API
 eval/run.sh --local-only   # arbiter cases only, free, run it often
 eval/run.sh --no-build     # reuse the last build
 eval/run.sh --model <id>   # capture model for this run only; default is what the app uses
@@ -50,7 +50,7 @@ git-ignored.
 ```json
 {
   "id": "unique-slug",
-  "kind": "capture" | "arbiter" | "editor",
+  "kind": "capture" | "arbiter" | "editor" | "import",
   "input": { … },
   "expected": { … },
   "note": "one line: why this case exists",
@@ -131,6 +131,20 @@ shape; `input.edit` is what the user did in the sheet: `scheduledDay`,
 `scheduledTime`, `clearScheduled`, `dueDay`, `dueTime`, `clearDue`,
 `durationMinutes`, `title`. `expected` holds row fields (below). Local,
 free; runs under `--local-only`.
+
+### import
+
+A calendar feed through the real iCal import (`CalendarService.importICalText`,
+the write half of `importCanvasICal` with the network fetch skipped).
+`input.ics` lists the feed's entries: `summary`, `start` (relative date,
+with a clock for a timed entry), optional `end`, optional `allDay: true`.
+No `end` is a zero-length entry, which is how a Canvas deadline row arrives.
+`input.tasks` (arbiter row shape) may seed rows first. `input.plan: true`
+runs today's deterministic planner after the import — the check that an
+imported row stays on its own day instead of being pulled into today.
+`expected.rowCount` counts imported rows; `expected.rows` names rows by
+`titleContains` plus row fields (below). Local, free; runs under
+`--local-only`.
 
 ### Row fields you can assert on
 

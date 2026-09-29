@@ -1342,5 +1342,172 @@
       "isOverdue": false
     },
     "note": "A manual placement keeps its clock time on the new day and the due clock follows."
+  },
+  {
+    "id": "import-zero-length-task-keeps-its-day",
+    "kind": "import",
+    "input": {
+      "ics": [
+        {
+          "summary": "Homework 5",
+          "start": "+3d 23:59"
+        }
+      ],
+      "plan": true
+    },
+    "expected": {
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "Homework 5",
+          "isEvent": false,
+          "hasDeadline": true,
+          "countdown": true,
+          "intendedDay": "+3d",
+          "scheduledDay": "+3d",
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "Roman's report (Sep 28 2026): a calendar row days away landed in Today. A zero-length feed entry (Canvas deadline shape) is a task with its day on the schedule clock and no slot; today's planner leaves it alone. The owed clock keeps its countdown."
+  },
+  {
+    "id": "import-timed-task-gets-anchored-slot",
+    "kind": "import",
+    "input": {
+      "ics": [
+        {
+          "summary": "Pay rent",
+          "start": "+5d 09:00",
+          "end": "+5d 09:30"
+        }
+      ],
+      "plan": true
+    },
+    "expected": {
+      "rows": [
+        {
+          "titleContains": "Pay rent",
+          "isEvent": false,
+          "intendedDay": "+5d",
+          "plannedStart": "+5d 09:00",
+          "plannedIsAuto": false,
+          "estimatedMinutes": 30
+        }
+      ]
+    },
+    "note": "A feed entry with a real span is a block on its day: anchored placement at the calendar's start, never moved by the planner."
+  },
+  {
+    "id": "import-task-without-event-keyword",
+    "kind": "import",
+    "input": {
+      "ics": [
+        {
+          "summary": "Grocery run",
+          "start": "+2d 10:00",
+          "end": "+2d 11:00"
+        }
+      ],
+      "plan": true
+    },
+    "expected": {
+      "rows": [
+        {
+          "titleContains": "Grocery run",
+          "isEvent": false,
+          "intendedDay": "+2d",
+          "plannedStart": "+2d 10:00",
+          "plannedIsAuto": false
+        }
+      ]
+    },
+    "note": "A timed entry no keyword recognises still gets its day from the calendar: the day rule is structural, not lexical."
+  },
+  {
+    "id": "import-event-unchanged",
+    "kind": "import",
+    "input": {
+      "ics": [
+        {
+          "summary": "Team standup",
+          "start": "+4d 09:00",
+          "end": "+4d 09:15"
+        }
+      ],
+      "plan": true
+    },
+    "expected": {
+      "rows": [
+        {
+          "titleContains": "Team standup",
+          "isEvent": true,
+          "dueAt": "+4d 09:00",
+          "intendedDay": null,
+          "plannedStart": null
+        }
+      ]
+    },
+    "note": "An imported event is untouched by the task rule: its one time is its anchor."
+  },
+  {
+    "id": "import-allday-task-day-only",
+    "kind": "import",
+    "input": {
+      "ics": [
+        {
+          "summary": "Submit reimbursement",
+          "start": "+6d",
+          "allDay": true
+        }
+      ],
+      "plan": true
+    },
+    "expected": {
+      "rows": [
+        {
+          "titleContains": "Submit reimbursement",
+          "isEvent": false,
+          "intendedDay": "+6d",
+          "plannedStart": null,
+          "hasDeadline": true
+        }
+      ]
+    },
+    "note": "An all-day entry with a task keyword: day on the schedule clock, no slot (no clock to anchor to); that day's planner places it."
+  },
+  {
+    "id": "import-deadline-brain-dump-still-eligible",
+    "kind": "import",
+    "input": {
+      "ics": [
+        {
+          "summary": "Homework 5",
+          "start": "+3d 23:59"
+        }
+      ],
+      "tasks": [
+        {
+          "title": "Finish essay",
+          "dueDate": "+4d"
+        }
+      ],
+      "plan": false
+    },
+    "expected": {
+      "rows": [
+        {
+          "titleContains": "Finish essay",
+          "intendedDay": null,
+          "scheduledDay": null,
+          "hasDeadline": true
+        },
+        {
+          "titleContains": "Homework 5",
+          "intendedDay": "+3d"
+        }
+      ]
+    },
+    "note": "The boundary: a brain-dump deadline task has no schedule day and stays eligible for the planner to pull ahead. Only imported rows get the calendar-day rule."
   }
 ]

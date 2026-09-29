@@ -121,8 +121,10 @@ enum EvalHarness {
                 failure = await runCaptureCase(c)
             case "editor":
                 failure = runEditorCase(c)
+            case "import":
+                failure = runImportCase(c)
             default:
-                failure = "input: ? | expected: kind is \"capture\", \"arbiter\" or \"editor\" | actual: kind=\"\(kind)\""
+                failure = "input: ? | expected: kind is \"capture\", \"arbiter\", \"editor\" or \"import\" | actual: kind=\"\(kind)\""
             }
             outcomes.append(Outcome(id: id, kind: kind, passed: failure == nil, unverified: unverified, line: failure))
         }
@@ -134,6 +136,8 @@ enum EvalHarness {
         let cap = outcomes.filter { $0.kind == "capture" }
         let edit = outcomes.filter { $0.kind == "editor" }
         let editText = edit.isEmpty ? "" : "editor \(edit.filter(\.passed).count)/\(edit.count) passed, "
+        let imp = outcomes.filter { $0.kind == "import" }
+        let importText = imp.isEmpty ? "" : "import \(imp.filter(\.passed).count)/\(imp.count) passed, "
         let arbPassed = arb.filter(\.passed).count
         let capPassed = cap.filter(\.passed).count
         let capText: String
@@ -145,7 +149,7 @@ enum EvalHarness {
             let pct = Int((Double(capPassed) / Double(cap.count) * 100).rounded())
             capText = "capture \(capPassed)/\(cap.count) passed (\(pct)%)"
         }
-        emit("SUMMARY arbiter \(arbPassed)/\(arb.count) passed, \(editText)\(capText)")
+        emit("SUMMARY arbiter \(arbPassed)/\(arb.count) passed, \(editText)\(importText)\(capText)")
         if captureCalls > 0 {
             emit("CACHE capture calls \(captureCalls): cache_read=\(captureCacheRead) cache_creation=\(captureCacheCreation) uncached_in=\(captureUncachedIn)")
         }
@@ -466,6 +470,102 @@ enum EvalHarness {
         if let skips = spec["skipCount"] as? Int { task.skipCount = skips }
         if let stakes = spec["stakes"] as? String { task.setStakesFromAutomation(TaskStakes.parse(stakes)) }
         context.insert(task)
+    }
+
+    // MARK: - Import cases
+
+    /// `kind: "import"`: a calendar feed written through the real iCal
+    /// import (`CalendarService.importICalText`, the write half of
+    /// `importCanvasICal` with the fetch skipped), optionally followed by
+    /// today's planner run, then row assertions. `input.ics` lists the
+    /// feed's entries (`summary`, `start`, optional `end`, `allDay`) with
+    /// the harness's relative dates; `input.tasks` may seed rows first;
+    /// `input.plan: true` runs `DayPlanEngine.planToday` after the import —
+    /// the check that an imported row stays on its own day. Rows are named
+    /// by `titleContains`, as in capture cases.
+    private static func runImportCase(_ c: [String: Any]) -> String? {
+        let input = (c["input"] as? [String: Any]) ?? [:]
+        let expected = (c["expected"] as? [String: Any]) ?? [:]
+        guard let entries = input["ics"] as? [[String: Any]], !entries.isEmpty else {
+            return "input: ? | expected: input.ics with at least one entry | actual: missing"
+        }
+        let inputSummary = "ics \(entries)" + ((input["plan"] as? Bool) == true ? " + plan" : "")
+        let fixture: Fixture
+        let ics: String
+        do {
+            fixture = try makeFixture()
+            try applyProfile(input, to: fixture)
+            for spec in (input["tasks"] as? [[String: Any]]) ?? [] {
+                try insertTask(spec, into: fixture.context)
+            }
+            try fixture.context.save()
+            ics = try icsText(entries)
+        } catch {
+            return "input: \(inputSummary) | expected: a readable case | actual: error: \(error)"
+        }
+        let result = CalendarService.shared.importICalText(ics, modelContext: fixture.context)
+        if !result.errors.isEmpty {
+            return "input: \(inputSummary) | expected: an import | actual: \(result.errors)"
+        }
+        if (input["plan"] as? Bool) == true {
+            _ = DayPlanEngine.planToday(profile: fixture.profile, modelContext: fixture.context, clearAutoFirst: true)
+            try? fixture.context.save()
+        }
+        let rows = (try? fixture.context.fetch(FetchDescriptor<NudgeTask>())) ?? []
+        var mismatches: [String] = []
+        if let want = expected["rowCount"] as? Int {
+            let have = rows.filter { $0.source == "calendar" }.count
+            if have != want { mismatches.append("rowCount: expected \(want), actual \(have)") }
+        }
+        for spec in (expected["rows"] as? [[String: Any]]) ?? [] {
+            guard let needle = spec["titleContains"] as? String else {
+                mismatches.append("expected row without titleContains"); continue
+            }
+            guard let task = rows.first(where: { $0.title.localizedCaseInsensitiveContains(needle) }) else {
+                mismatches.append("row \"\(needle)\": expected a row, actual none"); continue
+            }
+            mismatches += compare(spec, against: task, snapshot: nil, label: needle)
+        }
+        if mismatches.isEmpty { return nil }
+        return "input: \(inputSummary) | " + mismatches.joined(separator: "; ")
+    }
+
+    /// A minimal RFC 5545 body from the case's entries. Timed entries are
+    /// written as floating local date-times (the parser's format 2); an
+    /// `allDay` entry as `VALUE=DATE`. No `end` → no DTEND, which is how a
+    /// Canvas deadline row arrives (or with DTEND == DTSTART; both read as
+    /// zero length downstream).
+    private static func icsText(_ entries: [[String: Any]]) throws -> String {
+        let stamp = DateFormatter()
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        stamp.dateFormat = "yyyyMMdd'T'HHmmss"
+        let dayStamp = DateFormatter()
+        dayStamp.locale = Locale(identifier: "en_US_POSIX")
+        dayStamp.dateFormat = "yyyyMMdd"
+        var lines = ["BEGIN:VCALENDAR", "VERSION:2.0"]
+        for e in entries {
+            guard let summary = e["summary"] as? String else { throw HarnessError.bad("ics entry without a summary") }
+            let allDay = (e["allDay"] as? Bool) ?? false
+            guard let start = try e["start"].flatMap({ try resolve($0, defaultHour: 0, defaultMinute: 0, field: "ics.start") }) else {
+                throw HarnessError.bad("ics entry \"\(summary)\" without a start")
+            }
+            lines.append("BEGIN:VEVENT")
+            lines.append("SUMMARY:\(summary)")
+            if allDay {
+                lines.append("DTSTART;VALUE=DATE:\(dayStamp.string(from: start))")
+                if let end = try e["end"].flatMap({ try resolve($0, defaultHour: 0, defaultMinute: 0, field: "ics.end") }) {
+                    lines.append("DTEND;VALUE=DATE:\(dayStamp.string(from: end))")
+                }
+            } else {
+                lines.append("DTSTART:\(stamp.string(from: start))")
+                if let end = try e["end"].flatMap({ try resolve($0, defaultHour: nil, defaultMinute: nil, field: "ics.end") }) {
+                    lines.append("DTEND:\(stamp.string(from: end))")
+                }
+            }
+            lines.append("END:VEVENT")
+        }
+        lines.append("END:VCALENDAR")
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Capture cases

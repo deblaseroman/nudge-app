@@ -278,6 +278,8 @@ enum DayPlanEngine {
             } else if task.source == "prep" || task.source == "commitment" {
                 let day = task.dueDate?.formatted(date: .abbreviated, time: .omitted) ?? "undated"
                 reason = "generated for another day (due \(day)) — places only on its own day"
+            } else if belongsElsewhere(task), let d = task.scheduledDay {
+                reason = "belongs to \(d.formatted(date: .abbreviated, time: .omitted)) — that day's run places it"
             } else {
                 reason = "unexpected — open, unplaced, yet not a candidate"
             }

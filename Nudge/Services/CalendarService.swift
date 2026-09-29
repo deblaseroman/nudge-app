@@ -308,6 +308,7 @@ final class CalendarService {
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
             task.setStakesFromAutomation(inferStakes(title: title, category: category))
+            applyImportedSchedule(to: task, start: event.startDate, isAllDay: event.isAllDay)
             modelContext.insert(task)
             importedCount += 1
         }
@@ -408,7 +409,27 @@ final class CalendarService {
         case .success(let events):
             parsedEvents = events
         }
+        return writeICalEvents(parsedEvents, modelContext: modelContext)
+    }
 
+    /// The iCal import with the fetch skipped: `text` is the feed body.
+    /// The DEBUG launch flag `-nudge-import-ical <file>` and the eval
+    /// harness's `import` cases enter here so a feed can be reproduced
+    /// without a server; the app's own doors go through `importCanvasICal`.
+    /// Same validation, same write, same result shape.
+    func importICalText(_ text: String, modelContext: ModelContext) -> CalendarImportResult {
+        guard text.contains("BEGIN:VCALENDAR") else {
+            let message = "Not an iCal feed."
+            lastImportError = message
+            return CalendarImportResult(importedCount: 0, skippedDuplicates: 0, errors: [message])
+        }
+        lastImportDate = Date()
+        return writeICalEvents(parseICalEvents(from: text), modelContext: modelContext)
+    }
+
+    /// Writes parsed feed entries as rows: the horizon filter, the
+    /// title+day dedupe, the task/event split, and both clocks.
+    private func writeICalEvents(_ parsedEvents: [ParsedICalEvent], modelContext: ModelContext) -> CalendarImportResult {
         // Filter to the import horizon and map to tasks
         let now = Date()
         let cutoff = Calendar.current.date(byAdding: .day, value: Self.rollingWindowDays, to: now)!
@@ -450,6 +471,7 @@ final class CalendarService {
                 isInformationalEvent: shouldImportAsInformationalEvent(title: title, isAllDay: event.isAllDay)
             )
             task.setStakesFromAutomation(inferStakes(title: title, category: "school"))
+            applyImportedSchedule(to: task, start: startDate, isAllDay: event.isAllDay)
             modelContext.insert(task)
             importedCount += 1
         }
@@ -461,6 +483,80 @@ final class CalendarService {
 
         lastImportError = nil
         return CalendarImportResult(importedCount: importedCount, skippedDuplicates: skippedDuplicates, errors: [])
+    }
+
+    // MARK: - The schedule clock on imported tasks
+
+    /// A calendar entry says when something HAPPENS (Roman, Sep 28 2026).
+    /// For an imported EVENT that is its one time and nothing more is
+    /// needed. For an imported TASK the entry's day is the task's day: it
+    /// gets `intendedDate`, so the day lenses, the calendar and the planner
+    /// all read it as belonging there instead of as owed-but-unscheduled
+    /// (which the planner may pull into any day — the bug that filled
+    /// Today with next week's Canvas rows). The owed clock (`dueDate`,
+    /// `specificTime`) is written by the caller exactly as before; nothing
+    /// here removes a countdown.
+    ///
+    /// Slot rule, structural not lexical: an entry with a REAL span is a
+    /// block on that day's timeline, so it also gets an anchored placement
+    /// at its start (`plannedIsAuto == false`: the planner and the reflow
+    /// never move it). A zero-length entry carries no slot information —
+    /// Canvas deadline rows arrive with DTEND == DTSTART, all-day rows have
+    /// no clock — so it gets the day only and that day's planner run
+    /// places it inside the day. `estimatedMinutes` is already nil for the
+    /// zero-length case (`importedDurationMinutes`), so the two rules read
+    /// one field.
+    private func applyImportedSchedule(to task: NudgeTask, start: Date, isAllDay: Bool) {
+        guard !task.isInformationalEvent else { return }
+        task.intendedDate = Calendar.current.startOfDay(for: start)
+        guard !isAllDay, let minutes = task.estimatedMinutes, minutes > 0 else { return }
+        task.plannedStartDate = start
+        task.plannedDurationMinutes = minutes
+        task.plannedIsAuto = false
+    }
+
+    /// One-time backfill for rows imported before the rule above existed
+    /// (stamped in App Group defaults, like the message-box flip): every
+    /// open imported task with an owed day and no schedule day gets the
+    /// same two writes, and an AUTO placement the planner made for it on a
+    /// different day is released — that placement is the visible symptom.
+    /// A manual placement is the user's and stays. Idempotent; runs once.
+    static func backfillImportedScheduleOnce(modelContext: ModelContext, now: Date = Date()) {
+        let key = "nudge.calendarImport.scheduleBackfilledOnce"
+        let defaults = SharedModelContainer.appGroupDefaults
+        guard !defaults.bool(forKey: key) else { return }
+        let source = "calendar"
+        let descriptor = FetchDescriptor<NudgeTask>(
+            predicate: #Predicate<NudgeTask> { task in
+                task.source == source && task.isInformationalEvent == false && task.isComplete == false
+            }
+        )
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+        let cal = Calendar.current
+        var touched = 0
+        for task in rows {
+            guard task.intendedDate == nil, let owedDay = task.dueDate else { continue }
+            let day = cal.startOfDay(for: owedDay)
+            task.intendedDate = day
+            if task.plannedIsAuto, let p = task.plannedStartDate, !cal.isDate(p, inSameDayAs: day) {
+                task.plannedStartDate = nil
+                task.plannedDurationMinutes = nil
+                task.plannedIsAuto = false
+            }
+            if task.plannedStartDate == nil, let start = task.specificTime,
+               let minutes = task.estimatedMinutes, minutes > 0,
+               start >= cal.startOfDay(for: now) {
+                task.plannedStartDate = start
+                task.plannedDurationMinutes = minutes
+                task.plannedIsAuto = false
+            }
+            touched += 1
+        }
+        if touched > 0 { try? modelContext.save() }
+        #if DEBUG
+        print("📆 CalendarService.backfillImportedScheduleOnce — \(touched) imported task(s) given their day")
+        #endif
+        defaults.set(true, forKey: key)
     }
 
     // MARK: - Imported duration
