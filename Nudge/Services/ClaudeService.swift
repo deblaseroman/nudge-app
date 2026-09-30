@@ -40,12 +40,15 @@ class ClaudeService {
     private let model = "claude-haiku-4-5-20251001"
     /// Brain-dump capture ONLY (Sep 2026, Roman's call): the one call site
     /// where judgment quality is the product — reading "study python at 9am
-    /// then work on my app" like a person. Opus 5 thinks before answering
-    /// (adaptive thinking is on by default; no param needed), which is the
-    /// step Haiku was structurally denied by "respond ONLY with JSON".
-    /// Everything else (per-task enrichment, stakes, screenshots) stays on
-    /// Haiku — cost discipline for the published-app future: tier the model
-    /// per call site, not per app. ~5–10¢/dump at solo scale; re-tier before
+    /// then work on my app" like a person. A thinking model answers after
+    /// reasoning (adaptive thinking is on by default; no param needed),
+    /// which is the step Haiku was structurally denied by "respond ONLY
+    /// with JSON". Opus 5 from Sep 3 2026; Sonnet 5 since Sep 23 2026
+    /// (Roman's call after the eval set passed 23/23 on both models across
+    /// four runs). Everything else (per-task enrichment, screenshots,
+    /// notification copy) stays on Haiku; the Tasks-tab memo and plan
+    /// proposals run on `memoModel` — cost discipline for the published-app
+    /// future: tier the model per call site, not per app. Re-tier before
     /// launch (Pro gets the big model, free tier Haiku — the DayPlanRefiner
     /// gating pattern).
     private var captureModel: String {
@@ -597,7 +600,7 @@ class ClaudeService {
 
         // max_tokens covers thinking + the JSON — 1500 was Haiku's ceiling
         // and adaptive thinking would eat it and truncate the JSON.
-        // `fallbacks: "default"` (server-side, beta): if Opus 5's safety
+        // `fallbacks: "default"` (server-side, beta): if the capture model's safety
         // layer refuses a message, the request reroutes to a fallback model
         // instead of surfacing an error bubble for a grocery list.
         // effort "low" (cycle-less fix, Sep 2026): capture is structured
@@ -1478,7 +1481,7 @@ class ClaudeService {
         }
         #endif
         // First TEXT block, not first block: thinking-capable models
-        // (capture runs Opus 5) lead with a thinking block whose text is
+        // (capture runs Sonnet 5) lead with a thinking block whose text is
         // empty/absent, and reading content[0] blindly would hand the parser
         // an empty string.
         guard let text = resp.content.first(where: { $0.type == nil || $0.type == "text" })?.text,
@@ -1627,7 +1630,7 @@ struct AnthropicResponse: Codable {
     /// ~70% of it thinking at default effort).
     let usage: Usage?
 
-    // `type`/`text` optional: thinking-capable models (capture runs Opus 5)
+    // `type`/`text` optional: thinking-capable models (capture runs Sonnet 5)
     // return thinking blocks with no `text` field, and a required `text`
     // made ONE thinking block fail the decode of the whole response.
     struct ContentBlock: Codable {
