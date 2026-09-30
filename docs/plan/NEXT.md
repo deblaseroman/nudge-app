@@ -1,8 +1,11 @@
 # NEXT — The day model (remodel, cycle 1 of 4)
 
-**Status:** approved — Roman's "go along with that plan", Sep 30 2026, after
-the revert point `pre-remodel-2026-09-30` (tag + `archive/` branch, both on
-origin) was confirmed saved.
+**Status:** SHIPPED — commit 3673a3d, Sep 30 2026; report at
+`reports/2026-09-30-01-day-model.md` (the phone audit section is filled at
+the next unlocked launch). Approved by Roman's "go along with that plan"
+after the revert point `pre-remodel-2026-09-30` (tag + `archive/` branch,
+both on origin) was confirmed saved. Cycle 2 (the planner as the brain) is
+next; see the outline below and the report's open question.
 **Cycle ID:** 2026-09-30-01
 **Source:** Roman, Sep 30 2026: "if it can't even tell the difference
 between a task or event, or understand how to organize the timeline, what
