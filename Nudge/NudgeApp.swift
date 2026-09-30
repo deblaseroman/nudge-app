@@ -112,6 +112,16 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
         }
         #endif
 
+        // ⚠️ TEMP-VISIBILITY-AUDIT (cycle 2026-09-30-01 item 4) — for every
+        // open task, the Tasks-tab lists it is in under the OLD rules
+        // (frozen inline here) and under `NudgeTask.lists(on:)`. The
+        // before/after evidence for the day model. Grep the tag to delete.
+        #if DEBUG
+        Task { @MainActor in
+            Self.tempDumpVisibilityAudit()
+        }
+        #endif
+
         return true
     }
 
@@ -233,6 +243,50 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
             print("  \(day) \(time)\tsrc=\(t.source)\t\(proposal)\t\(t.title)")
         }
         print("── TEMP-INTENT-AUDIT end (review by hand; no auto-apply exists) ──\n")
+    }
+
+    /// ⚠️ TEMP-VISIBILITY-AUDIT — old rules frozen here on purpose so the
+    /// dump keeps meaning after the readers switch: Today = intent day ??
+    /// placement day == today (a dateless plan task reads as today);
+    /// Unscheduled = not a plan row, not skipped, unplaced or placed on
+    /// another day; Overdue = past deadline and stakes != low; Skipped =
+    /// skipped twice, undated, unplaced.
+    @MainActor
+    static func tempDumpVisibilityAudit() {
+        let context = SharedModelContainer.container.mainContext
+        let cal = Calendar.current
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+        let open = ((try? context.fetch(FetchDescriptor<NudgeTask>())) ?? [])
+            .filter { !$0.isComplete && !$0.isInformationalEvent }
+            .sorted { $0.title < $1.title }
+        print("\n── TEMP-VISIBILITY-AUDIT · \(open.count) open task(s) · today \(today.formatted(date: .abbreviated, time: .omitted)) ──")
+        var hiddenOld = 0, hiddenNew = 0
+        for t in open {
+            let oldDay = t.intendedDate.map { cal.startOfDay(for: $0) }
+                ?? t.plannedStartDate.map { cal.startOfDay(for: $0) }
+            let oldSkipped = !t.hasDeadline && t.linkedEventId == nil && t.commitmentShapeRaw == nil
+                && t.skipCount >= NudgeTask.skipsBeforeSkippedSection && t.plannedStartDate == nil
+            var old: [String] = []
+            let inTodayLens = t.sequenceIndex != nil
+                ? cal.isDate(oldDay ?? today, inSameDayAs: today)
+                : (oldDay.map { cal.isDate($0, inSameDayAs: today) } ?? false)
+            if inTodayLens { old.append("today") }
+            if t.sequenceIndex == nil, !oldSkipped,
+               t.plannedStartDate.map({ !cal.isDateInToday($0) }) ?? true { old.append("unscheduled") }
+            if t.isOverdue, t.stakes != .low { old.append("overdue") }
+            if oldSkipped { old.append("skipped") }
+            let new = t.lists(on: today, now: now).sorted().map(\.rawValue)
+            if old.isEmpty { hiddenOld += 1 }
+            if new.isEmpty { hiddenNew += 1 }
+            let flag = old.isEmpty && !new.isEmpty ? "  ← was hidden" : (new.isEmpty ? "  ← STILL HIDDEN" : "")
+            let due = t.dueDate.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "—"
+            let plan = t.intendedDate.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "—"
+            let placed = t.plannedStartDate.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "—"
+            print("  \(t.title)\n      due \(due) · plan \(plan) · placed \(placed) · stakes \(t.stakes?.rawValue ?? "nil") · slips \(t.skipCount)\n      OLD [\(old.joined(separator: ", "))]  NEW [\(new.joined(separator: ", "))]\(flag)")
+        }
+        print("  → hidden under OLD rules: \(hiddenOld)   hidden under NEW rules: \(hiddenNew)")
+        print("── TEMP-VISIBILITY-AUDIT end ──\n")
     }
     #endif
 }

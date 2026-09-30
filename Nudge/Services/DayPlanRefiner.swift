@@ -195,9 +195,7 @@ final class DayPlanRefiner {
             let fits = gaps.contains { start >= $0.start && end <= $0.end }
             guard fits else { continue }
 
-            task.plannedStartDate = start
-            task.plannedDurationMinutes = placement.durationMinutes
-            task.plannedIsAuto = true
+            task.setPlanStart(start, durationMinutes: placement.durationMinutes, auto: true)
         }
     }
 

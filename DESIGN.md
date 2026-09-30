@@ -128,3 +128,36 @@ response to slippage is to make the next nudge land better, never to make the
 user feel worse about the last one. The target user has usually supplied plenty
 of self-criticism already; adding to it makes the app something to avoid, and
 an avoided app nudges nobody.
+
+## The day model
+
+*Roman's decision, Sep 30 2026, after two weeks in which every bug lived in
+the same layer: what a task IS on a given day.*
+
+Every item carries **two facts** and nothing else decides where it shows:
+
+1. **The anchor** — when it happens (an event) or when it is owed (a task).
+   Optional on tasks.
+2. **The plan** — the day the user will work on it, and optionally the time.
+   The app owns this and fills it; a day without a time is legal.
+
+**Five rules**, and no sixth:
+
+- A task belongs to a day if its plan day or its anchor day is that day. An
+  event belongs to its anchor day.
+- Overdue means the anchor passed. Stakes changes tone and ranking, never
+  visibility.
+- Unscheduled means no plan day and not on today's list. Nothing is ever
+  hidden by a rule, only sorted by day. A task that slips is re-planned
+  once, then released with its slip count showing — never filed away.
+- Kind (task or event) is decided once at capture, shown, and flippable in
+  one tap. No downstream rule branches on it silently.
+- The planner is the only automatic writer of plans. The user's own
+  writes are manual and survive the planner's undo.
+
+**Why.** "Design for someone at their least capable": the user who says
+"today" has made the decision, and the app's job is to keep it, not to file
+the task somewhere they must go find it. "The app should create a plan for
+the user": it cannot plan a day it cannot define. A rule that hides a task
+(low stakes, a slipped day, an old intent) converts the user's input into
+silence, which is the failure this product exists to prevent.

@@ -172,12 +172,11 @@ struct CalendarTabView: View {
                 guard let anchor = t.specificTime ?? t.dueDate,
                       cal.isDate(anchor, inSameDayAs: day) else { continue }
                 items.append(.init(task: t, kind: .event, time: t.specificTime))
-            } else if let d = t.scheduledDay {
-                guard cal.isDate(d, inSameDayAs: day) else { continue }
+            } else if let d = t.planDay, cal.isDate(d, inSameDayAs: day) {
+                // R1: planned for this day. A task planned for one day and
+                // owed on another shows on both, each in its own kind.
                 items.append(.init(task: t, kind: .scheduled, time: t.plannedStartDate))
-            } else if t.hasDeadline {
-                guard let due = t.specificTime ?? t.dueDate,
-                      cal.isDate(due, inSameDayAs: day) else { continue }
+            } else if let a = t.anchorDay, cal.isDate(a, inSameDayAs: day) {
                 items.append(.init(task: t, kind: .deadline, time: t.specificTime))
             }
         }

@@ -464,7 +464,7 @@ struct NudgeTaskProvider: TimelineProvider {
             // from the one rule on the model: the plan section, then the
             // day's tasks by start time, completed rows sunk. Rows completed
             // moments ago still animate out because they are in the pool.
-            let lensPool = openActionable.filter { !$0.isSkipped } + recentDone
+            let lensPool = openActionable + recentDone
             let visibleTasks = NudgeTask.dayLens(among: lensPool, on: startOfToday, now: now)
             let recentlyCompletedTasks = recentlyAnimatedDone
 

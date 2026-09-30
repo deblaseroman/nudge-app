@@ -784,7 +784,9 @@ enum EvalHarness {
         // exactly when this is non-nil on an open row.
         f["countdown"] = str(!task.isComplete && CountdownState.dueDateLine(dueDate: task.dueDate, specificTime: task.specificTime) != nil)
         f["isOverdue"] = str(task.isOverdue)
-        f["isSkipped"] = str(task.isSkipped)
+        f["slipCount"] = String(task.slipCount)
+        f["lists"] = task.lists(on: Calendar.current.startOfDay(for: Date()))
+            .sorted().map(\.rawValue).joined(separator: ",")
         f["intentIsFuture"] = str(task.intentIsFuture())
         f["intendedDay"] = task.intendedDate.map { day($0) } ?? "null"
         f["scheduledDay"] = task.scheduledDay.map { day($0) } ?? "null"
@@ -833,7 +835,9 @@ enum EvalHarness {
             guard let have = actual[key] else {
                 out.append("\(label) \(key): unknown field"); continue
             }
-            let wantStr = normalizeExpected(value)
+            // `lists` names the Tasks-tab lists ("today" is a list here,
+            // not a day token).
+            let wantStr = key == "lists" ? "\(value)" : normalizeExpected(value)
             if wantStr != have { out.append("\(label) \(key): expected \(wantStr), actual \(have)") }
         }
         return out

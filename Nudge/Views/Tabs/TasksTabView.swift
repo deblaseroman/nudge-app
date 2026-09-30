@@ -477,16 +477,7 @@ struct TasksTabView: View {
     private var sortedTasks: [NudgeTask] {
         let comparator = TaskSortComparator()
         return actionableTasks
-            .filter { !$0.isComplete && $0.sequenceIndex == nil && !$0.isSkipped }
-            .sorted { comparator.compare($0, $1) }
-    }
-
-    /// The Skipped section: skipped twice, no due date, not a subtask.
-    /// Comparator order, so the list reads like the others.
-    private var skippedTasks: [NudgeTask] {
-        let comparator = TaskSortComparator()
-        return actionableTasks
-            .filter { $0.isSkipped }
+            .filter { !$0.isComplete && $0.sequenceIndex == nil }
             .sorted { comparator.compare($0, $1) }
     }
 
@@ -553,27 +544,17 @@ struct TasksTabView: View {
         return planTasks.first { !$0.isComplete && !$0.intentIsFuture() }
     }
 
-    /// Open tasks not on today's timeline: unplaced, OR placed on some other
-    /// day. Including stale (non-today) placements keeps such a task visible
-    /// in a list instead of belonging to no section — the vanishing-task
-    /// shape. The rollover sweep that clears stale placements is still a
-    /// separate roadmap item; this is presentation only.
+    /// R3: open tasks with no plan day. May overlap Overdue; never hides.
     private var unscheduledTasks: [NudgeTask] {
-        sortedTasks.filter { task in
-            guard let p = task.plannedStartDate else { return true }
-            return !Calendar.current.isDateInToday(p)
-        }
+        sortedTasks.filter { $0.isUnscheduled }
     }
 
     // MARK: Day membership (cycle 2026-09-04-01)
 
-    /// The day a TASK belongs to — forwards to `NudgeTask.scheduledDay`
-    /// (hoisted to the model in cycle 2026-09-13-02 so the calendar view
-    /// reads the same rule). Deadline-only tasks return nil on purpose —
-    /// a bare due date is owed, not scheduled (Roman's rule), so they keep
-    /// living in Unscheduled/Overdue rather than under a day lens.
+    /// The plan day (`NudgeTask.planDay`). Membership is `belongs(to:)`
+    /// (R1: plan day OR anchor day); this is only for labels.
     private func scheduledDay(of task: NudgeTask) -> Date? {
-        task.scheduledDay
+        task.planDay
     }
 
     /// A plan task with no day of its own reads as TODAY — a dateless
@@ -836,18 +817,19 @@ struct TasksTabView: View {
                         )
                         // The scheduled clock from the editor (day, and a
                         // manual placement when a time was picked).
-                        if let day = draft.intendedDate {
-                            newTask.intendedDate = Calendar.current.startOfDay(for: day)
-                            if let start = draft.plannedStart {
-                                newTask.plannedStartDate = start
-                                newTask.plannedIsAuto = false
-                            }
+                        if let start = draft.plannedStart {
+                            newTask.setPlanStart(start, auto: false)
+                        } else if let day = draft.intendedDate {
+                            newTask.setPlanDay(day)
+                        } else if let anchor = newTask.anchorDay,
+                                  Calendar.current.isDateInToday(anchor) {
+                            // Owed today is planned today (the rent rule).
+                            newTask.setPlanDay(anchor)
                         }
                         // If "New task" was chosen from a timeline slot, land
                         // the new task at that time.
                         if let placeAt = pendingPlacementTime {
-                            newTask.plannedStartDate = placeAt
-                            newTask.intendedDate = Calendar.current.startOfDay(for: placeAt)
+                            newTask.setPlanStart(placeAt, auto: false)
                             pendingPlacementTime = nil
                         }
                         // Hand-set stakes: write directly + flag as user-set
@@ -1151,15 +1133,14 @@ struct TasksTabView: View {
     /// tab label.
     private enum TaskListTab: String, CaseIterable {
         // Chip order is declaration order (Roman, Sep 21 2026): Tasks,
-        // Events, Unscheduled, Overdue, Skipped. The `today` case keeps its
-        // name in code; its chip reads "Tasks" and holds the day lenses.
+        // Events, Unscheduled, Overdue. The `today` case keeps its name in
+        // code; its chip reads "Tasks" and holds the day lenses. The Skipped
+        // tab is gone (cycle 2026-09-30-01, R3): a slipped task lives in
+        // Unscheduled with its slip count showing, never out of every list.
         case today = "Tasks"
         case events = "Events"
         case unscheduled = "Unscheduled"
         case overdue = "Overdue"
-        /// Single no-due-date tasks skipped twice (Roman, Sep 16 2026),
-        /// kept apart from Overdue, which is for owed work only.
-        case skipped = "Skipped"
     }
 
     /// The Events tab's two lenses over the same event data.
@@ -1176,14 +1157,13 @@ struct TasksTabView: View {
         case important = "Important"
     }
 
-    /// Overdue tab membership: past due, open, excluding deliberately
-    /// low-stakes tasks — the same rule as the row treatment (nil stakes is
-    /// not low, so unclassified tasks still count). Includes plan tasks so
-    /// the badge count never understates.
+    /// R2: past due and open. No stakes filter — stakes colors the row
+    /// (`rowTreatment`), it never hides one. Includes plan tasks so the
+    /// badge count never understates.
     private var overdueTasks: [NudgeTask] {
         let comparator = TaskSortComparator()
         return actionableTasks
-            .filter { !$0.isComplete && $0.isOverdue && $0.stakes != .low }
+            .filter { !$0.isComplete && $0.isOverdue }
             .sorted { comparator.compare($0, $1) }
     }
 
@@ -1221,13 +1201,13 @@ struct TasksTabView: View {
             let today = cal.startOfDay(for: Date())
             guard let horizon = cal.date(byAdding: .day, value: 7, to: today) else { return hasActivePlan }
             let anyDayTask = actionableTasks.contains { task in
-                guard !task.isComplete, let d = scheduledDay(of: task) else { return false }
-                return d >= today && d <= horizon
+                guard !task.isComplete else { return false }
+                let days = [task.planDay, task.anchorDay].compactMap { $0 }
+                return days.contains { $0 >= today && $0 <= horizon }
             }
             return anyDayTask || !thisWeekEvents.isEmpty
         case .events:      return !thisWeekEvents.isEmpty || !importantEvents.isEmpty
         case .overdue:     return !overdueTasks.isEmpty
-        case .skipped:     return !skippedTasks.isEmpty
         }
     }
 
@@ -1291,7 +1271,6 @@ struct TasksTabView: View {
         case .today:       todayTab
         case .events:      eventsTab
         case .overdue:     overdueTab
-        case .skipped:     skippedTab
         }
     }
 
@@ -1614,8 +1593,8 @@ struct TasksTabView: View {
     private func fillerCandidates(today: Date) -> [NudgeTask] {
         sortedTasks
             .filter { task in
-                guard task.linkedEventId == nil || task.intendedDate == nil else { return false }
-                if let day = task.scheduledDay { return day <= today }
+                guard task.linkedEventId == nil || task.planDay == nil else { return false }
+                if let day = task.planDay { return day <= today }
                 if task.hasDeadline { return task.sortDeadline >= Date() }
                 return true
             }
@@ -1769,22 +1748,6 @@ struct TasksTabView: View {
         } else {
             VStack(spacing: 12) {
                 ForEach(overdueTasks, id: \.id) { taskRow($0) }
-            }
-        }
-    }
-
-    /// Skipped (Roman, Sep 16 2026): a task the user put on Today twice
-    /// and did not finish. Dating or placing it again brings it back.
-    @ViewBuilder
-    private var skippedTab: some View {
-        if skippedTasks.isEmpty {
-            tabEmptyLine("Nothing skipped.")
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Put on Today twice and not finished. Date it or place it again to bring it back.")
-                    .font(.custom(NudgeTheme.fontBody, size: 13))
-                    .foregroundColor(NudgeTheme.textMuted)
-                ForEach(skippedTasks, id: \.id) { taskRow($0) }
             }
         }
     }
@@ -2095,21 +2058,19 @@ struct TasksTabView: View {
     private func placeTask(_ task: NudgeTask, at time: Date) {
         NudgeHaptics.light()
         withAnimation(NudgeAnimation.standard) {
-            task.plannedStartDate = time
-            task.plannedIsAuto = false   // user-placed
-            task.skipCount = 0           // a fresh request from the user
+            task.setPlanStart(time, auto: false)   // user-placed
+            task.skipCount = 0                      // a fresh request from the user
         }
         try? modelContext.save()
         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
         refreshNotifications()
     }
 
-    /// Clears a task's timeline placement (back to Unscheduled).
+    /// Clears a task's plan, day and time (back to Unscheduled).
     private func unscheduleTask(_ task: NudgeTask) {
         NudgeHaptics.light()
         withAnimation(NudgeAnimation.standard) {
-            task.plannedStartDate = nil
-            task.plannedIsAuto = false
+            task.clearPlan()
         }
         try? modelContext.save()
         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -2180,9 +2141,7 @@ struct TasksTabView: View {
             for task in tasks {
                 guard task.plannedIsAuto, let p = task.plannedStartDate,
                       Calendar.current.isDateInToday(p) else { continue }
-                task.plannedStartDate = nil
-                task.plannedDurationMinutes = nil
-                task.plannedIsAuto = false
+                task.releaseAutoPlan()
             }
         }
         try? modelContext.save()
@@ -2612,6 +2571,12 @@ struct TaskRowView: View {
                 // overdue red. The day is information; urgency would be
                 // fabrication.
                 Text(intendedDayLabel(intended))
+                    .font(.custom(NudgeTheme.fontBody, size: 12))
+                    .foregroundColor(NudgeTheme.textMuted)
+            } else if !task.isComplete, task.slipCount > 0 {
+                // A released task's history (R3): information, muted,
+                // never a verdict.
+                Text(task.slipCount == 1 ? "Slipped 1 day" : "Slipped \(task.slipCount) days")
                     .font(.custom(NudgeTheme.fontBody, size: 12))
                     .foregroundColor(NudgeTheme.textMuted)
             }
@@ -3669,29 +3634,29 @@ struct TaskEditorSheet: View {
             // the user touched it, so opening a row and saving can't
             // clobber an auto placement or a captured deadline.
             if draft.scheduleTouched {
-                if let day = draft.intendedDate {
-                    task.intendedDate = Calendar.current.startOfDay(for: day)
-                    task.skipCount = 0
-                    if let time = draft.plannedStart {
-                        // A picked clock time is the user scheduling the
-                        // start: a manual placement, same as a timed intent.
-                        task.plannedStartDate = time
-                        task.plannedIsAuto = false
-                    } else {
-                        task.plannedStartDate = nil
-                        task.plannedIsAuto = false
-                    }
+                task.skipCount = 0
+                if let time = draft.plannedStart {
+                    // A picked clock time is the user scheduling the
+                    // start: a manual placement, same as a timed intent.
+                    task.setPlanStart(time, auto: false)
+                } else if let day = draft.intendedDate {
+                    task.setPlanDay(day)
+                    task.clearPlanTime()
                 } else {
                     // "No date": released back to a floater.
-                    task.intendedDate = nil
-                    task.plannedStartDate = nil
-                    task.plannedIsAuto = false
+                    task.clearPlan()
                 }
             }
             if draft.dueTouched {
                 task.dueDate = draft.dueDate
                 task.dueTime = draft.dueTimeLabel
                 task.specificTime = draft.specificTime
+                // Owed today is planned today (the rent rule) when no day
+                // was chosen.
+                if task.planDay == nil, let anchor = task.anchorDay,
+                   Calendar.current.isDateInToday(anchor) {
+                    task.setPlanDay(anchor)
+                }
             }
             // A day you mean to work on it after the day it is owed is a
             // contradiction, and the scheduled clock is the one the user

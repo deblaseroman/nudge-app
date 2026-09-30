@@ -508,11 +508,11 @@ final class CalendarService {
     /// one field.
     private func applyImportedSchedule(to task: NudgeTask, start: Date, isAllDay: Bool) {
         guard !task.isInformationalEvent else { return }
-        task.intendedDate = Calendar.current.startOfDay(for: start)
-        guard !isAllDay, let minutes = task.estimatedMinutes, minutes > 0 else { return }
-        task.plannedStartDate = start
-        task.plannedDurationMinutes = minutes
-        task.plannedIsAuto = false
+        guard !isAllDay, let minutes = task.estimatedMinutes, minutes > 0 else {
+            task.setPlanDay(start)
+            return
+        }
+        task.setPlanStart(start, durationMinutes: minutes, auto: false)
     }
 
     /// One-time backfill for rows imported before the rule above existed
@@ -537,18 +537,11 @@ final class CalendarService {
         for task in rows {
             guard task.intendedDate == nil, let owedDay = task.dueDate else { continue }
             let day = cal.startOfDay(for: owedDay)
-            task.intendedDate = day
-            if task.plannedIsAuto, let p = task.plannedStartDate, !cal.isDate(p, inSameDayAs: day) {
-                task.plannedStartDate = nil
-                task.plannedDurationMinutes = nil
-                task.plannedIsAuto = false
-            }
+            task.setPlanDay(day)   // releases a placement on another day (I1)
             if task.plannedStartDate == nil, let start = task.specificTime,
                let minutes = task.estimatedMinutes, minutes > 0,
                start >= cal.startOfDay(for: now) {
-                task.plannedStartDate = start
-                task.plannedDurationMinutes = minutes
-                task.plannedIsAuto = false
+                task.setPlanStart(start, durationMinutes: minutes, auto: false)
             }
             touched += 1
         }

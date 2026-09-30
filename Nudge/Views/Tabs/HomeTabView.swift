@@ -472,16 +472,20 @@ struct HomeTabView: View {
                                 existingTask.dueDate = nil
                                 existingTask.dueTime = nil
                                 existingTask.specificTime = nil
-                                existingTask.intendedDate = Calendar.current.startOfDay(for: day)
+                                existingTask.setPlanDay(day)
                                 if let start = resolved {
-                                    existingTask.plannedStartDate = start
-                                    existingTask.plannedIsAuto = false
+                                    existingTask.setPlanStart(start, auto: false)
                                     if existingTask.estimatedMinutes == nil {
                                         existingTask.estimatedMinutes = NudgeConfig.defaultTimedIntentMinutes
                                     }
                                 }
                             } else {
                                 existingTask.specificTime = resolved
+                                // Owed today is planned today (the rent rule).
+                                if !existingTask.isInformationalEvent, existingTask.planDay == nil,
+                                   let anchor = existingTask.anchorDay, Calendar.current.isDateInToday(anchor) {
+                                    existingTask.setPlanDay(anchor)
+                                }
                             }
                         }
                     }

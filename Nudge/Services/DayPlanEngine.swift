@@ -143,9 +143,7 @@ enum DayPlanEngine {
             for task in tasks {
                 guard task.plannedIsAuto, let p = task.plannedStartDate,
                       cal.isDate(p, inSameDayAs: day) else { continue }
-                task.plannedStartDate = nil
-                task.plannedDurationMinutes = nil
-                task.plannedIsAuto = false
+                task.releaseAutoPlan()
                 released += 1
             }
             #if DEBUG
@@ -238,16 +236,15 @@ enum DayPlanEngine {
                 return isToday
             }
             .sorted { ($0.sequenceIndex ?? .max) < ($1.sequenceIndex ?? .max) }
-        // Tasks the user said they'd do on THIS day outrank score — the
-        // user already decided the day; the planner's job is placing it,
-        // not re-deciding it. After plan tasks (a stated order is the
-        // stronger claim), before score-ranked fill. Oldest first within
-        // the group — score would re-litigate the decision this group
-        // exists to honor.
+        // Tasks that BELONG to this day (R1: planned for it, or owed on
+        // it) outrank score — the day is already decided; the planner's
+        // job is placing, not re-deciding. After plan tasks (a stated
+        // order is the stronger claim), before score-ranked fill. Oldest
+        // first within the group — score would re-litigate the decision
+        // this group exists to honor.
         let intentCandidates = openUnplaced
             .filter { task in
-                task.sequenceIndex == nil
-                    && (task.intendedDate.map { cal.isDate($0, inSameDayAs: day) } ?? false)
+                task.sequenceIndex == nil && task.belongs(to: day)
             }
             .sorted { $0.createdAt < $1.createdAt }
         let intentIDs = Set(intentCandidates.map(\.id))
@@ -379,9 +376,7 @@ enum DayPlanEngine {
 
             // A displaced task returns to Unscheduled — visible and
             // re-placeable, never silently moved to another day.
-            evict.task.plannedStartDate = nil
-            evict.task.plannedDurationMinutes = nil
-            evict.task.plannedIsAuto = false
+            evict.task.releaseAutoPlan()
             busy.removeAll {
                 $0.start == evict.interval.start && $0.end == evict.interval.end
             }
@@ -486,14 +481,12 @@ enum DayPlanEngine {
                 print("   ✓ \(task.title) (\(Int(duration / 60))m) [\(band.rawValue)] → placed \(traceTime(start))")
             }
             #endif
-            task.plannedStartDate = start
-            task.plannedDurationMinutes = planningMinutes(for: task)
             // The staleness rule (cycle 2026-09-13-03): FUTURE-day
             // placements are marked manual, so that day's morning auto-run
             // respects them (never releases, fills remaining gaps around
             // them). Today's placements stay auto — Clear plan and replan
             // keep their existing meaning.
-            task.plannedIsAuto = isToday
+            task.setPlanStart(start, durationMinutes: planningMinutes(for: task), auto: isToday)
             if isPrep { prepPlacedCount += 1 }
             placedTitles.append(task.title)
             // Occupy this slot + 15 min spacing for the next placement.

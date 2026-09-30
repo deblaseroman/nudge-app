@@ -88,29 +88,153 @@ extension NudgeTask {
         return sortDeadline < Date()
     }
 
-    /// The Skipped rule's subject: a single task with no due date, not a
-    /// subtask of an anchored thing, not a commitment. Only these are ever
-    /// counted or shown as skipped; anything owed is Overdue's business.
-    var isSkipCandidate: Bool {
-        !isInformationalEvent && !hasDeadline && linkedEventId == nil && commitmentShapeRaw == nil
+    // MARK: - The day model (cycle 2026-09-30-01)
+    //
+    // Two facts per task, everything else derived:
+    //   • the ANCHOR — when it is owed (`dueDate` / `specificTime`); for an
+    //     event, when it happens (`specificTime`). Optional on tasks.
+    //   • the PLAN — the day the user will work on it (`intendedDate`, read
+    //     as `planDay`) and optionally the time (`plannedStartDate`,
+    //     `plannedDurationMinutes`, `plannedIsAuto`).
+    // Invariants: I1 a day without a time is legal, a time without a day is
+    // not; I2 events never carry a plan; I3 a plan is today-or-later at all
+    // times (the rollover moves or clears anything earlier).
+    // Rules, all of which live HERE because the widget compiles Models only:
+    //   R1 a task belongs to day D if its plan day is D or its anchor day
+    //      is D; an event belongs to its anchor day only.
+    //   R2 overdue = an open task whose anchor passed. No stakes filter.
+    //   R3 unscheduled = an open task with no plan day that is not on
+    //      today's list. Overlap with Overdue is allowed; hiding is not.
+    //   R4 kind is decided once at capture; no downstream rule branches on
+    //      it silently.
+    //   R5 the planner is the only automatic writer of plans; user writes
+    //      are manual; capture and import write the stated day.
+
+    /// The day the anchor falls on: an event's start, else a task's due day.
+    var anchorDay: Date? {
+        if let specificTime { return Calendar.current.startOfDay(for: specificTime) }
+        if let dueDate { return Calendar.current.startOfDay(for: dueDate) }
+        return nil
     }
 
-    /// Skipped twice (Roman, Sep 16 2026): shown in the Skipped section,
-    /// out of Unscheduled and the day lists, until the user dates or places
-    /// it again (which resets the count) or completes it. While Plan my
-    /// day has it on today's timeline it is NOT skipped for display (the
-    /// list, widget and timeline must agree), but the count is untouched
-    /// (Roman, Sep 21): if the day passes again it returns here.
-    var isSkipped: Bool {
-        !isComplete && isSkipCandidate
-            && skipCount >= Self.skipsBeforeSkippedSection
-            && plannedStartDate == nil
+    /// The day this task is planned for — `intendedDate` at day granularity.
+    var planDay: Date? {
+        intendedDate.map { Calendar.current.startOfDay(for: $0) }
     }
 
-    /// The Skipped threshold lives on the model, not in `NudgeConfig`, only
-    /// because the widget target compiles this file without the config;
-    /// `NudgeConfig.skipsBeforeSkippedSection` forwards here so the tunable
-    /// stays discoverable where every other one lives.
+    /// Days this task sat on a plan day and was not finished, counted by the
+    /// rollover. A row label and the one-retry rule read it; nothing hides
+    /// on it (R3).
+    var slipCount: Int { skipCount }
+
+    /// Whether the rollover counts a slip for this row: any open task except
+    /// the generated rows with their own rules (`prep` sessions are counted
+    /// as missed and removed; `commitment` dailies carry over).
+    var countsSlips: Bool {
+        !isInformationalEvent && source != "prep" && source != "commitment"
+    }
+
+    /// R1.
+    func belongs(to day: Date) -> Bool {
+        let cal = Calendar.current
+        if isInformationalEvent {
+            return anchorDay.map { cal.isDate($0, inSameDayAs: day) } ?? false
+        }
+        if let p = planDay, cal.isDate(p, inSameDayAs: day) { return true }
+        if let a = anchorDay, cal.isDate(a, inSameDayAs: day) { return true }
+        return false
+    }
+
+    /// R3: open, no plan day, and not on today's list (a task owed today
+    /// belongs to today by R1 and is not "unscheduled" in any useful
+    /// sense). May overlap Overdue; never hides.
+    var isUnscheduled: Bool {
+        !isInformationalEvent && !isComplete && planDay == nil
+            && !belongs(to: Calendar.current.startOfDay(for: Date()))
+    }
+
+    /// The Tasks tab's lists. `today` is the day lens for the reference day.
+    enum TaskList: String, Hashable, Comparable {
+        case today, unscheduled, overdue
+        static func < (lhs: TaskList, rhs: TaskList) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
+
+    /// THE membership function: which lists this row appears in on `today`.
+    /// The Tasks tab, the widget, the calendar and the eval harness read
+    /// this and nothing else; a row is never in zero lists while open unless
+    /// it belongs to another day (then it is in that day's lens).
+    func lists(on today: Date, now: Date = Date()) -> Set<TaskList> {
+        var out = Set<TaskList>()
+        guard !isInformationalEvent else { return out }
+        if belongs(to: today) { out.insert(.today) }
+        guard !isComplete else { return out }
+        if planDay == nil, !out.contains(.today) { out.insert(.unscheduled) }
+        if sortDeadline < now { out.insert(.overdue) }
+        return out
+    }
+
+    // MARK: Plan writers (I1, I2) — the only way to write a plan.
+
+    /// Plans the task for a day with no time. A placement on another day is
+    /// released; one on the same day is kept.
+    func setPlanDay(_ day: Date) {
+        assert(!isInformationalEvent, "events never carry a plan (I2)")
+        guard !isInformationalEvent else { return }
+        let cal = Calendar.current
+        intendedDate = cal.startOfDay(for: day)
+        planDayIsAuto = false
+        if let p = plannedStartDate, !cal.isDate(p, inSameDayAs: day) {
+            clearPlanTime()
+        }
+    }
+
+    /// Places the task at a start time; the plan day follows the time.
+    /// `auto` marks a planner placement (the undo and the reflow treat it
+    /// as movable); a user's own time is anchored.
+    func setPlanStart(_ start: Date, durationMinutes: Int? = nil, auto: Bool) {
+        assert(!isInformationalEvent, "events never carry a plan (I2)")
+        guard !isInformationalEvent else { return }
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: start)
+        if intendedDate.map({ !cal.isDate($0, inSameDayAs: day) }) ?? true {
+            // The day is new: it came from whoever is placing.
+            planDayIsAuto = auto
+        }
+        intendedDate = day
+        plannedStartDate = start
+        if let durationMinutes { plannedDurationMinutes = durationMinutes }
+        plannedIsAuto = auto
+    }
+
+    /// Drops the time, keeps the day.
+    func clearPlanTime() {
+        plannedStartDate = nil
+        plannedDurationMinutes = nil
+        plannedIsAuto = false
+    }
+
+    /// Drops the day and the time: the task is unscheduled again.
+    func clearPlan() {
+        clearPlanTime()
+        intendedDate = nil
+        planDayIsAuto = false
+    }
+
+    /// A planner taking back what it wrote: the time always, the day only
+    /// when the planner set it. A user's day survives.
+    func releaseAutoPlan() {
+        clearPlanTime()
+        if planDayIsAuto {
+            intendedDate = nil
+            planDayIsAuto = false
+        }
+    }
+
+    /// The rollover's one-retry threshold (Roman, Sep 16 2026): a task
+    /// whose plan day slips is re-planned for today once; at this count it
+    /// is released to Unscheduled with its slip count showing. Lives on the
+    /// model because the widget compiles this file without `NudgeConfig`
+    /// (which forwards here).
     static let skipsBeforeSkippedSection: Int = 2
 
     /// True when this task is actually OWED at a moment — the deadline half
@@ -135,47 +259,34 @@ extension NudgeTask {
         return intendedDate > Calendar.current.startOfDay(for: reference)
     }
 
-    /// The day this TASK is scheduled to — intent day, else placement day,
-    /// else nil (the day-membership rule, cycle 2026-09-04-01; hoisted to
-    /// the model in 2026-09-13-02 so the Today lenses and the calendar view
-    /// read ONE implementation). Deadline-only tasks return nil: owed is
-    /// not scheduled. Meaningless on events — their anchor is
-    /// `specificTime ?? dueDate`.
-    var scheduledDay: Date? {
-        if let intendedDate { return Calendar.current.startOfDay(for: intendedDate) }
-        if let plannedStartDate { return Calendar.current.startOfDay(for: plannedStartDate) }
-        return nil
-    }
+    /// Alias of `planDay`, kept for the eval observable and older call
+    /// sites. Membership itself is `belongs(to:)` (R1), never this alone.
+    var scheduledDay: Date? { planDay }
 
     // MARK: - The day lens (one rule, two readers)
 
-    /// The ordered plan section of a day: plan tasks (`sequenceIndex`) whose
-    /// day is `day`, a dateless plan reading as today; open first, in stated
+    /// The ordered plan section of a day: plan tasks (`sequenceIndex`) that
+    /// belong to `day` (capture gives a dateless plan item today's plan
+    /// day, so no read-side exception remains); open first, in stated
     /// order. Hoisted here Sep 23 2026 so the widget shows exactly the
     /// Tasks tab's Today lens (it had its own all-tasks list and showed
     /// tomorrow's rows over today's).
     static func planTasks(among tasks: [NudgeTask], on day: Date, now: Date = Date()) -> [NudgeTask] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: now)
         return tasks
-            .filter { !$0.isInformationalEvent && $0.sequenceIndex != nil }
-            .filter { cal.isDate($0.scheduledDay ?? today, inSameDayAs: day) }
+            .filter { !$0.isInformationalEvent && $0.sequenceIndex != nil && $0.belongs(to: day) }
             .sorted { lhs, rhs in
                 if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
                 return (lhs.sequenceIndex ?? .max) < (rhs.sequenceIndex ?? .max)
             }
     }
 
-    /// Non-plan tasks belonging to `day`: intended OR placed that day
-    /// (`scheduledDay`). Open rows in start-time order so the list reads
-    /// like the timeline; unplaced intents follow; completed rows sink.
+    /// Non-plan tasks belonging to `day` (R1: plan day or anchor day).
+    /// Open rows in start-time order so the list reads like the timeline;
+    /// unplaced rows follow; completed rows sink.
     static func dayTasks(among tasks: [NudgeTask], on day: Date) -> [NudgeTask] {
-        let cal = Calendar.current
         return tasks
             .filter { task in
-                guard !task.isInformationalEvent, task.sequenceIndex == nil,
-                      let d = task.scheduledDay else { return false }
-                return cal.isDate(d, inSameDayAs: day)
+                !task.isInformationalEvent && task.sequenceIndex == nil && task.belongs(to: day)
             }
             .sorted { lhs, rhs in
                 if lhs.isComplete != rhs.isComplete { return !lhs.isComplete }
@@ -297,25 +408,30 @@ final class NudgeTask {
     /// reorderable list, not a placement.
     var sequenceIndex: Int?
 
-    /// The day the user MEANS to do this — never a deadline (cycle
-    /// 2026-09-03-01). "Study Python tomorrow at 7" is an intention, not
-    /// something owed; before this field existed, capture had nowhere to put
-    /// that day except `dueDate`, and the whole app then treated it as due —
-    /// countdowns, overdue red, dueSoon nudges, fake urgency. Day
-    /// granularity, normalized to startOfDay at every write. Unlike a
-    /// placement (`plannedStartDate`), this SURVIVES its day passing — a
-    /// slipped intention is information (it's what makes a floater check-in
-    /// meaningful), where a stale placement is just clutter and gets swept.
-    /// Never set on informational events; an event's time is its time.
+    /// The PLAN DAY (read as `planDay`; column name kept — never rename
+    /// existing fields): the day this task is currently planned for, today
+    /// or later (I3). Introduced as an "intent day" in cycle 2026-09-03-01
+    /// so a stated day would never be mistaken for a deadline; since cycle
+    /// 2026-09-30-01 it is the plan's day, written only through the plan
+    /// helpers, and a day that passes is re-planned or released by the
+    /// rollover instead of surviving as history (`skipCount` keeps the
+    /// history). Never set on informational events; an event's time is
+    /// its time.
     var intendedDate: Date? = nil
 
-    /// How many days this task sat on Today and was not finished (Roman,
-    /// Sep 16 2026). Counted by `PlacementRollover` for single tasks with
-    /// no due date that are not subtasks of an anchored thing; reset to 0
-    /// whenever the user places or dates the task again. At
-    /// `NudgeConfig.skipsBeforeSkippedSection` the task reads as skipped
-    /// (`isSkipped`) and lives in the Skipped section, apart from Overdue.
+    /// How many days this task sat on a plan day and was not finished
+    /// (Roman, Sep 16 2026), counted by `PlacementRollover` for every open
+    /// task except generated rows; reset to 0 whenever the user places or
+    /// dates the task again. Read as `slipCount`. A row label and the
+    /// one-retry rule use it; nothing hides on it (R3).
     var skipCount: Int = 0
+
+    /// True while the plan day was written by a planner rather than the
+    /// user, capture or import — so releasing an automatic placement
+    /// (replan, displacement, Clear plan) can take the day back too, and
+    /// a day the user chose survives the same release. Additive,
+    /// property-level default; no migration.
+    var planDayIsAuto: Bool = false
 
     /// DEPRECATED tombstone column (Sep 2026). Held the exam study-lead
     /// band (3, 7, or 14) the old silent exam sweep read; the plan reader

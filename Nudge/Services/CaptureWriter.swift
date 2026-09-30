@@ -86,9 +86,9 @@ enum CaptureWriter {
             // sitting in Overdue or Skipped REPLACES it — the old row
             // is deleted and the fresh one is created below. The
             // user restating the task is the decision.
-            if let duplicateOf, duplicateOf.isOverdue || duplicateOf.isSkipped {
+            if let duplicateOf, duplicateOf.isOverdue || duplicateOf.slipCount > 0 {
                 #if DEBUG
-                print("[CaptureWriter] REPLACE: \"\(duplicateOf.title)\" (\(duplicateOf.isOverdue ? "overdue" : "skipped")) replaced by the new \"\(taskData.title)\"")
+                print("[CaptureWriter] REPLACE: \"\(duplicateOf.title)\" (\(duplicateOf.isOverdue ? "overdue" : "slipped")) replaced by the new \"\(taskData.title)\"")
                 #endif
                 modelContext.delete(duplicateOf)
             } else if let duplicateOf {
@@ -162,15 +162,24 @@ enum CaptureWriter {
                 // placement; a plan is a numbered list, not a schedule.
                 sequenceIndex: isEvent ? nil : taskData.sequenceIndex
             )
-            task.intendedDate = intentDay
-            // "Study at 7" is the user scheduling it themselves —
-            // a MANUAL placement (plannedIsAuto stays false), which
-            // the timeline, planners, and placement nudges already
-            // understand. PlacementRollover clears it if the day
-            // passes unstarted; intendedDate above survives as the
-            // record of the slip.
-            if let intentStart {
-                task.plannedStartDate = intentStart
+            // The plan (cycle 2026-09-30-01, the day model): a stated
+            // start is the user placing it (manual); a stated day plans
+            // the day; a deadline falling TODAY is planned today (the
+            // rent rule — "today" says both owed and do-it-today); a
+            // plan item with no stated day is today's plan. Events never
+            // carry a plan.
+            if !isEvent {
+                if let intentStart {
+                    task.setPlanStart(intentStart, auto: false)
+                } else if let intentDay {
+                    task.setPlanDay(intentDay)
+                } else if let anchor = task.anchorDay, Calendar.current.isDateInToday(anchor) {
+                    task.setPlanDay(anchor)
+                } else if task.sequenceIndex != nil {
+                    task.setPlanDay(Calendar.current.startOfDay(for: Date()))
+                }
+            }
+            if intentStart != nil {
                 // A stated start with no stated length is an hour
                 // (Roman's rule, Sep 2026) — without this the block
                 // draws at the 30-minute task fallback and the busy

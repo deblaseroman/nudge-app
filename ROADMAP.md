@@ -32,6 +32,23 @@ Unblocked and closest to the product's core. Everything here changes what the
 arbiter does, so **every item needs a DEBUG before/after on real data** per
 `CLAUDE.md`.
 
+**The remodel (Roman, Sep 30 2026; `docs/plan/archive/2026-09-30-01-plan.md`)
+comes first** — its later cycles read the fields the items below read:
+
+- ~~Cycle 1, the day model~~ — **done Sep 30 2026** (cycle `2026-09-30-01`).
+- Cycle 2, the planner is the brain: `DayPlanEngine` the sole automatic plan
+  writer; anchor-today and plan-today tasks must-place; the model orders
+  candidates into gaps with reasons (promote `DayPlanRefiner`), validated
+  before writing; a kind-reading rule can never reach an event (the
+  work-shift bug). Acceptance: Roman's post-office-after-the-shift note —
+  *blocked: nothing.*
+- Cycle 3, notifications carry the plan: ten kinds → three (morning plan,
+  one mid-day check, anchor reminders); copy written at scheduling time from
+  the candidate list and swapped into the pending requests; placementMissed
+  retired. Folds in "schedule-based nudge timing" and "gates find the next
+  viable slot" below — *blocked: cycle 2.*
+- Cycle 4, the message box on triggers, not a daily memo — *blocked: cycle 3.*
+
 - Schedule-based nudge timing: replace every fixed wake+N offset with real gap-finding — largest remaining piece, touches all six builders — *blocked: gap-finding logic must be extracted first (duplicated in `planMyDay` and privately in `DayPlanRefiner`).*
 - Gates find the next viable slot instead of rejecting — *blocked: nothing.*
 - Split get-ahead into separate prep and due-soon kinds — *blocked: nothing.*

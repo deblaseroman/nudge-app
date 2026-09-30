@@ -30,6 +30,7 @@ Sequencing constraints in force right now. Each is a deliberate state, not an ov
 3. **`NudgeConfig.fatigueGateEnabled` is false deliberately.** Outcomes are being recorded and observed before anything consumes them.
 4. **Break-it-down was removed entirely (Jul 2026).** The kind, builder, category, `tappedBreakDown`, toggle and Settings row are gone; `deadlinePrepNotificationsEnabled` survives only as a deprecated tombstone column on `UserProfile`. Don't resurrect any of it.
 5. **Any change that alters what the arbiter does gets a DEBUG before/after comparison on real data before it goes live.** This has caught several wrong assumptions already.
+6. **The day model is in force (Sep 30 2026, cycle 2026-09-30-01, Roman's decision after the revert point `pre-remodel-2026-09-30` was saved).** Two facts per task — the anchor (`dueDate`/`specificTime`) and the plan (`intendedDate` read as `planDay`, plus `plannedStartDate`/`plannedDurationMinutes`/`plannedIsAuto`) — and five rules on `NudgeTask` (`belongs(to:)`, `lists(on:)`, `isUnscheduled`, `isOverdue`): a task belongs to a day if its plan day or its anchor day is that day; Overdue has no stakes filter; Unscheduled is no plan day and not on today's list; nothing is hidden by a rule. Plans are written ONLY through `setPlanDay` / `setPlanStart` / `clearPlanTime` / `clearPlan` / `releaseAutoPlan`; a plan is today-or-later (the rollover re-plans a slipped day once, then releases it). The Sep 4 "owed ≠ scheduled" rule and the Sep 16 Skipped tab are retired — do not reintroduce a visibility filter on stakes or on slips. Cycles 2–4 of the remodel (the planner as the brain, notifications carry the plan, message box on triggers) are outlined in `docs/plan/archive/2026-09-30-01-plan.md`.
 
 ### Known bugs, not yet fixed
 
@@ -103,7 +104,7 @@ Both targets read and write one SwiftData store (`Nudge.store`) and one `UserDef
 ### AI vs deterministic split
 
 - All Anthropic calls live in `ClaudeService` (Haiku). `NudgeIntelligence` caches per-task AI signals in `TaskIntelligence` (7-day TTL, single-flight).
-- **Plan-my-day has two implementations.** The deterministic one is `DayPlanEngine` (entered from `planMyDay()` in `Nudge/Views/Tabs/TasksTabView.swift`). `DayPlanRefiner` is the AI layer over it (cached once per day; no tier gate, the app ships as one version). Both write only `plannedStartDate` / `plannedDurationMinutes` / `plannedIsAuto`.
+- **Plan-my-day has two implementations.** The deterministic one is `DayPlanEngine` (entered from `planMyDay()` in `Nudge/Views/Tabs/TasksTabView.swift`). `DayPlanRefiner` is the AI layer over it (cached once per day; no tier gate, the app ships as one version). Both write placements only through the plan helpers on `NudgeTask` (`setPlanStart(auto: true)`, `releaseAutoPlan`).
 - The notification path is fully deterministic: `EisenhowerScorer` (urgency×importance → quadrant), `DurationModel` (category priors + learned `CategoryDurationStats`), `StartByPlanner`, `BusyWindowResolver`. No LLM calls in the arbiter.
 
 ### Conventions

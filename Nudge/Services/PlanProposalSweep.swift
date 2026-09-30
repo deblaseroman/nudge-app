@@ -559,7 +559,7 @@ final class PlanProposalSweep {
                 estimatedMinutes: session.minutes,
                 linkedEventId: parentIDString
             )
-            task.intendedDate = Calendar.current.startOfDay(for: day)
+            task.setPlanDay(day)
             task.setStakesFromAutomation(parent?.stakes ?? .medium)
             modelContext.insert(task)
             written += 1

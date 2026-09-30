@@ -117,10 +117,7 @@ enum TimelineReflow {
     static func sessionStarted(_ subject: NudgeTask, at now: Date, minutes: Int, modelContext: ModelContext) -> Result {
         guard !subject.isInformationalEvent else { return Result() }
         let start = floorToMinute(now)
-        subject.plannedStartDate = start
-        subject.plannedDurationMinutes = minutes
-        subject.plannedIsAuto = false
-        subject.intendedDate = Calendar.current.startOfDay(for: start)
+        subject.setPlanStart(start, durationMinutes: minutes, auto: false)
         return reflow(subject: subject, start: start, minutes: minutes, pinStart: true, modelContext: modelContext)
     }
 
@@ -171,7 +168,7 @@ enum TimelineReflow {
                 if earlier.addingTimeInterval(Double(minutes) * 60) <= hit.start {
                     subjectStart = earlier
                     subjectEnd = earlier.addingTimeInterval(Double(minutes) * 60)
-                    subject.plannedStartDate = subjectStart
+                    subject.setPlanStart(subjectStart, auto: subject.plannedIsAuto)
                     result.startMovedEarlierTo = subjectStart
                 } else {
                     result.unresolvedAnchorOverlap = "no room before the anchored item at \(clock(hit.start)); block left overlapping"
@@ -214,14 +211,14 @@ enum TimelineReflow {
                 guardCount += 1
             }
             if candidate.addingTimeInterval(len) > dayEnd {
-                t.plannedStartDate = nil
-                t.plannedDurationMinutes = nil
-                t.plannedIsAuto = false
+                // No room left today: the slot goes, the day stays (it is
+                // still today's work, just unplaced).
+                t.clearPlanTime()
                 result.unscheduled.append(t.title)
                 continue
             }
             result.pushed.append((t.title, s, candidate))
-            t.plannedStartDate = candidate
+            t.setPlanStart(candidate, auto: t.plannedIsAuto)
             cursor = candidate.addingTimeInterval(len)
         }
 

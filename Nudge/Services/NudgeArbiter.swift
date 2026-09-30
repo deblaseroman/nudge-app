@@ -2034,19 +2034,14 @@ final class NudgeArbiter: NudgeArbitering {
         excludePlacedOnFireDay: Bool,
         modelContext: ModelContext
     ) -> (targets: [NudgeTask], placedOut: [NudgeTask]) {
-        // "Floating" = no deadline AND no intent day still ahead (cycle
-        // 2026-09-03-01). A task intended for Friday isn't "whenever" work
-        // before Friday — but once its fire-day dawns with the intent day
-        // behind it, the slipped intention is exactly what a check-in is
-        // for. `distantPast` stands in for nil so nil-intent tasks pass the
-        // comparison (the #Predicate macro can't unwrap optionals).
-        let fireDayStart = Calendar.current.startOfDay(for: fireDate)
-        let distantPastSentinel = Date.distantPast
+        // "Floating" = no deadline AND no plan day (the day model, cycle
+        // 2026-09-30-01: a plan day is today-or-later by I3, so a slipped
+        // day never lingers — the rollover re-plans it once, then releases
+        // the task, and a released task is exactly what a check-in is for).
         var floaterDescriptor = FetchDescriptor<NudgeTask>(
             predicate: #Predicate<NudgeTask> { task in
                 !task.isComplete && !task.isInformationalEvent
-                    && task.dueDate == nil
-                    && (task.intendedDate ?? distantPastSentinel) < fireDayStart
+                    && task.dueDate == nil && task.intendedDate == nil
             }
         )
         floaterDescriptor.fetchLimit = 50

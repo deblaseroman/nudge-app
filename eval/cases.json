@@ -250,9 +250,11 @@
       "tasks": [
         {
           "title": "Sort receipts",
-          "intendedDate": "-1d"
+          "intendedDate": "-1d",
+          "skipCount": 1
         }
-      ]
+      ],
+      "rolloverSweep": true
     },
     "expected": {
       "tasks": [
@@ -265,11 +267,14 @@
           "candidates": {
             "floater": true,
             "dueSoon": false
-          }
+          },
+          "lists": "unscheduled",
+          "intendedDay": null,
+          "skipCount": 2
         }
       ]
     },
-    "note": "An intent whose day passed: never overdue (never-shame), and exactly what the floater check-in targets."
+    "note": "Cycle 2026-09-30-01 (the day model): a plan day never lingers in the past — the rollover re-plans a slipped task once, then releases it. Released (second slip) = no plan day = Unscheduled = the floater check-in's target. (Before the day model this asserted a past intent day as the floater target.)"
   },
   {
     "id": "arb-pure-floater",
@@ -377,7 +382,7 @@
           "plannedStart": null,
           "skipCount": 1,
           "intendedDay": "today",
-          "isSkipped": false,
+          "lists": "today",
           "isOverdue": false,
           "countdown": false,
           "candidates": {
@@ -1704,5 +1709,201 @@
       ]
     },
     "note": "'the Nth of next month' is arithmetic past the table's reach; resolves without a lookup."
+  },
+  {
+    "id": "arb-daymodel-slipped-placed-overdue-low",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Course reading",
+          "dueDate": "-6d",
+          "intendedDate": "-6d",
+          "plannedStartDate": "+0d 10:45",
+          "estimatedMinutes": 60,
+          "stakes": "low",
+          "category": "school"
+        }
+      ],
+      "rolloverSweep": true
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Course reading",
+          "lists": "overdue,today",
+          "skipCount": 1,
+          "intendedDay": "+0d",
+          "plannedStart": "+0d 10:45",
+          "isOverdue": true,
+          "hasDeadline": true
+        }
+      ]
+    },
+    "note": "Cycle 2026-09-30-01 (the day model): the vanishing-task shape from Roman's phone — owed six days ago, planned then, placed today by the planner, low stakes. Under the old rules it was in no list. R1 puts it in Today (plan day re-planned to today by the one-retry rule), R2 keeps it in Overdue regardless of stakes."
+  },
+  {
+    "id": "arb-daymodel-owed-today-unplanned",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Renew the parking permit",
+          "dueDate": "+0d",
+          "stakes": "medium"
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Renew the parking permit",
+          "lists": "today",
+          "intendedDay": null,
+          "hasDeadline": true,
+          "isOverdue": false
+        }
+      ]
+    },
+    "note": "The day model, R1 at the model level: owed today belongs to today even with no plan day (capture also plans it today; this asserts the read side alone)."
+  },
+  {
+    "id": "arb-daymodel-slipped-twice-released",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Sort the receipts",
+          "intendedDate": "-1d",
+          "skipCount": 1
+        }
+      ],
+      "rolloverSweep": true
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Sort the receipts",
+          "lists": "unscheduled",
+          "skipCount": 2,
+          "intendedDay": null,
+          "plannedStart": null,
+          "hasDeadline": false,
+          "candidates": {
+            "floater": true
+          }
+        }
+      ]
+    },
+    "note": "The day model, R3: the second slip releases the task to Unscheduled with its slip count showing, and a released undated task is the floater check-in's target. The Skipped tab is gone; nothing is ever in zero lists."
+  },
+  {
+    "id": "arb-daymodel-dateless-plan-item",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Outline the essay",
+          "sequenceIndex": 1
+        }
+      ],
+      "rolloverSweep": true
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Outline the essay",
+          "lists": "today",
+          "intendedDay": "+0d",
+          "sequenceIndex": 1
+        }
+      ]
+    },
+    "note": "The day model: a plan item with no plan day (a pre-cycle row) is given today's plan day by the rollover, so the read side no longer needs the dateless-plan-reads-as-today exception."
+  },
+  {
+    "id": "arb-daymodel-planned-ahead-not-today",
+    "kind": "arbiter",
+    "input": {
+      "tasks": [
+        {
+          "title": "Call the landlord",
+          "intendedDate": "+2d",
+          "dueDate": "+5d"
+        }
+      ]
+    },
+    "expected": {
+      "tasks": [
+        {
+          "title": "Call the landlord",
+          "lists": "",
+          "intendedDay": "+2d",
+          "intentIsFuture": true,
+          "isOverdue": false
+        }
+      ]
+    },
+    "note": "The day model, R1: a task planned for a later day and owed later still is in none of today's lists (it is in its own day's lens), so the Tasks tab chip reads the week, not just today."
+  },
+  {
+    "id": "edit-daymodel-event-never-planned",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Dentist",
+        "isEvent": true,
+        "specificTime": "+1d 15:00"
+      },
+      "edit": {
+        "scheduledDay": "+2d"
+      }
+    },
+    "expected": {
+      "isEvent": true,
+      "intendedDay": null,
+      "plannedStart": null
+    },
+    "note": "The day model, I2: an event never carries a plan; the editor's schedule clock is inert on it (events keep one clock, their time)."
+  },
+  {
+    "id": "edit-daymodel-due-today-plans-today",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Submit the timesheet"
+      },
+      "edit": {
+        "dueDay": "+0d"
+      }
+    },
+    "expected": {
+      "hasDeadline": true,
+      "intendedDay": "+0d",
+      "lists": "today",
+      "plannedStart": null
+    },
+    "note": "The day model's due-today rule at the editor: setting a due date of today on an unplanned task plans it today (the rent case, any door)."
+  },
+  {
+    "id": "cap-daymodel-owed-today",
+    "kind": "capture",
+    "input": {
+      "text": "I need to pay rent today"
+    },
+    "expected": {
+      "rowCount": 1,
+      "rows": [
+        {
+          "titleContains": "rent",
+          "isEvent": false,
+          "hasDeadline": true,
+          "countdown": true,
+          "intendedDay": "+0d",
+          "lists": "today"
+        }
+      ]
+    },
+    "note": "Roman, Sep 29 2026: 'I need to pay rent today' landed in Unscheduled. A deadline falling today is planned today (the day model's due-today rule), so it is in Today with its countdown."
   }
 ]
