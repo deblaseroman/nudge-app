@@ -387,7 +387,7 @@ enum EvalHarness {
     /// save (`TaskEditorSheet.apply`, the same function both the Tasks tab
     /// and the calendar use), then row assertions. `input.task` has the
     /// arbiter task shape; `input.edit` names what the user did in the
-    /// sheet: `scheduledDay`, `scheduledTime`, `clearScheduled`, `dueDay`,
+    /// sheet: `scheduledDay`, `scheduledTime`, `clearScheduledTime`, `clearScheduled`, `dueDay`,
     /// `dueTime`, `clearDue`, `durationMinutes`, `title`.
     private static func runEditorCase(_ c: [String: Any]) -> String? {
         let input = (c["input"] as? [String: Any]) ?? [:]
@@ -420,6 +420,7 @@ enum EvalHarness {
             if let v = edit["scheduledDay"], let d = try resolve(v, defaultHour: 0, defaultMinute: 0, field: "edit.scheduledDay") { draft.setScheduledDay(d) }
             if let v = edit["scheduledTime"], let d = try resolve(v, defaultHour: nil, defaultMinute: nil, field: "edit.scheduledTime") { draft.setScheduledTime(d) }
             if (edit["clearScheduled"] as? Bool) == true { draft.clearScheduled() }
+            if (edit["clearScheduledTime"] as? Bool) == true { draft.clearScheduledTime() }
             if let v = edit["dueDay"], let d = try resolve(v, defaultHour: 0, defaultMinute: 0, field: "edit.dueDay") { draft.setDueDay(d) }
             if let v = edit["dueTime"], let d = try resolve(v, defaultHour: nil, defaultMinute: nil, field: "edit.dueTime") { draft.setDueTime(d) }
             if (edit["clearDue"] as? Bool) == true { draft.clearDueDate() }

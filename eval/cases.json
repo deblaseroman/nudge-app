@@ -1905,5 +1905,28 @@
       ]
     },
     "note": "Roman, Sep 29 2026: 'I need to pay rent today' landed in Unscheduled. A deadline falling today is planned today (the day model's due-today rule), so it is in Today with its countdown."
+  },
+  {
+    "id": "edit-daymodel-off-timeline-stays-on-list",
+    "kind": "editor",
+    "input": {
+      "task": {
+        "title": "Draft the cover letter",
+        "intendedDate": "+0d",
+        "plannedStartDate": "+0d 14:00",
+        "plannedIsAuto": true,
+        "estimatedMinutes": 45
+      },
+      "edit": {
+        "clearScheduledTime": true
+      }
+    },
+    "expected": {
+      "plannedStart": null,
+      "intendedDay": "+0d",
+      "lists": "today",
+      "plannedIsAuto": false
+    },
+    "note": "Roman, Oct 1 2026: remove from the timeline removes only the slot — the task keeps its day and stays on today's list. Same model path (clearPlanTime) as the timeline's Remove button."
   }
 ]

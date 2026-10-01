@@ -878,7 +878,7 @@ struct TasksTabView: View {
                         // Only offered when the task is actually placed on the
                         // timeline. Clears the placement without deleting it.
                         onRemoveFromTimeline: (!task.isInformationalEvent && task.plannedStartDate != nil)
-                            ? { unscheduleTask(task) }
+                            ? { removeFromTimeline(task) }
                             : nil
                     )
                     .presentationDetents([.medium, .large])
@@ -2066,11 +2066,15 @@ struct TasksTabView: View {
         refreshNotifications()
     }
 
-    /// Clears a task's plan, day and time (back to Unscheduled).
-    private func unscheduleTask(_ task: NudgeTask) {
+    /// Takes a task off the timeline and nothing else (Roman, Oct 1 2026):
+    /// the slot goes, the day stays, so the row is still on today's list
+    /// as an unplaced item. Any placement qualifies — the planner's, a
+    /// drag, a started session's, an imported slot. Moving a task off the
+    /// day entirely is the editor's "No date".
+    private func removeFromTimeline(_ task: NudgeTask) {
         NudgeHaptics.light()
         withAnimation(NudgeAnimation.standard) {
-            task.clearPlan()
+            task.clearPlanTime()
         }
         try? modelContext.save()
         WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
@@ -2170,7 +2174,7 @@ struct TasksTabView: View {
                 // open the placement picker at the same time.
                 Button {
                     let time = task.plannedStartDate
-                    unscheduleTask(task)
+                    removeFromTimeline(task)
                     activeSheet = nil
                     if let time {
                         DispatchQueue.main.async { placement = PlacementContext(time: time) }
@@ -2185,6 +2189,29 @@ struct TasksTabView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 46)
                     .background(NudgeTheme.primary.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
+                }
+                .buttonStyle(.plain)
+
+                // Off the timeline, still on the list (Roman, Oct 1 2026).
+                Button {
+                    removeFromTimeline(task)
+                    activeSheet = nil
+                } label: {
+                    VStack(spacing: 2) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "minus.circle")
+                            Text("Remove from timeline")
+                        }
+                        .font(.custom(NudgeTheme.fontSemiBold, size: 15))
+                        .foregroundColor(NudgeTheme.textPrimary)
+                        Text("It stays on today's list.")
+                            .font(.custom(NudgeTheme.fontBody, size: 12))
+                            .foregroundColor(NudgeTheme.textMuted)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 54)
+                    .background(NudgeTheme.surfaceAlt)
                     .clipShape(RoundedRectangle(cornerRadius: NudgeTheme.radiusButton))
                 }
                 .buttonStyle(.plain)
@@ -2212,20 +2239,9 @@ struct TasksTabView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { activeSheet = nil }
                 }
-                // Small remove button, top-right.
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        unscheduleTask(task)
-                        activeSheet = nil
-                    } label: {
-                        Image(systemName: "trash")
-                            .foregroundColor(NudgeTheme.overdue)
-                    }
-                    .accessibilityLabel("Remove from timeline")
-                }
             }
         }
-        .presentationDetents([.height(220)])
+        .presentationDetents([.height(300)])
     }
 
     @ViewBuilder
