@@ -147,6 +147,10 @@ struct ContentView: View {
             // Sweep the retired fixed daily notifications (pre-Jul-2026
             // repeating requests that outlive the code that scheduled them).
             NotificationScheduler.shared.cancelRetiredDailyNotifications()
+            // A session the previous process started: restore it if it is
+            // still running, end its Live Activity if it is over. Before
+            // the arbiter, which reads the session state live.
+            SessionCoordinator.shared.syncIfActivityDismissed()
             // EVERY notification decision goes through the arbiter — the
             // morning prompt included.
             NudgeArbiter.shared.reevaluate(

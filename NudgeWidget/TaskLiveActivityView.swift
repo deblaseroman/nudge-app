@@ -7,6 +7,7 @@
 //
 
 import ActivityKit
+import AppIntents
 import WidgetKit
 import SwiftUI
 
@@ -28,6 +29,7 @@ private enum TaskLAColors {
         case .finalWarning: return orange
         case .complete: return successGreen
         case .stayFocusedAlert: return alertRed
+        case .timeUp: return amber
         }
     }
 
@@ -39,6 +41,7 @@ private enum TaskLAColors {
         case .finalWarning: return Color(red: 0.15, green: 0.10, blue: 0.05)
         case .complete: return Color(red: 0.06, green: 0.12, blue: 0.08)
         case .stayFocusedAlert: return Color(red: 0.18, green: 0.06, blue: 0.06)
+        case .timeUp: return Color(red: 0.13, green: 0.12, blue: 0.07)
         }
     }
 
@@ -50,6 +53,7 @@ private enum TaskLAColors {
         case .finalWarning: return "exclamationmark.triangle.fill"
         case .complete: return "checkmark.circle.fill"
         case .stayFocusedAlert: return "eye.fill"
+        case .timeUp: return "alarm.fill"
         }
     }
 
@@ -61,6 +65,7 @@ private enum TaskLAColors {
         case .finalWarning: return "STARTING SOON"
         case .complete: return "ALL DONE"
         case .stayFocusedAlert: return "STAY FOCUSED"
+        case .timeUp: return "TIME'S UP"
         }
     }
 }
@@ -71,19 +76,20 @@ struct TaskLiveActivityView: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TaskActivityAttributes.self) { context in
             lockScreenView(context: context)
-                .activityBackgroundTint(TaskLAColors.background(for: context.state.sessionState))
+                .activityBackgroundTint(TaskLAColors.background(for: displayState(context)))
                 .activitySystemActionForegroundColor(.white)
                 .widgetURL(URL(string: "nudge://focus-session"))
 
         } dynamicIsland: { context in
-            let tint = TaskLAColors.tint(for: context.state.sessionState)
+            let shown = displayState(context)
+            let tint = TaskLAColors.tint(for: shown)
 
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
-                        Image(systemName: TaskLAColors.icon(for: context.state.sessionState))
+                        Image(systemName: TaskLAColors.icon(for: shown))
                             .font(.system(size: 12, weight: .bold))
-                        Text(TaskLAColors.statusLabel(for: context.state.sessionState))
+                        Text(TaskLAColors.statusLabel(for: shown))
                             .font(.system(size: 11, weight: .bold))
                             .tracking(0.6)
                     }
@@ -92,7 +98,7 @@ struct TaskLiveActivityView: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    if context.state.sessionState != .complete {
+                    if showsTimer(shown) {
                         Text(timerInterval: Date()...context.state.timerEnd, countsDown: true)
                             .font(.system(size: 22, weight: .bold, design: .rounded))
                             .monospacedDigit()
@@ -112,7 +118,7 @@ struct TaskLiveActivityView: Widget {
                 }
             } compactLeading: {
                 HStack(spacing: 5) {
-                    Image(systemName: TaskLAColors.icon(for: context.state.sessionState))
+                    Image(systemName: TaskLAColors.icon(for: shown))
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(tint)
 
@@ -122,26 +128,26 @@ struct TaskLiveActivityView: Widget {
                         .lineLimit(1)
                 }
             } compactTrailing: {
-                if context.state.sessionState != .complete {
+                if showsTimer(shown) {
                     Text(timerInterval: Date()...context.state.timerEnd, countsDown: true)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(tint)
                 } else {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: TaskLAColors.icon(for: shown))
                         .font(.system(size: 13))
-                        .foregroundStyle(TaskLAColors.successGreen)
+                        .foregroundStyle(tint)
                 }
             } minimal: {
-                if context.state.sessionState != .complete {
+                if showsTimer(shown) {
                     Text(timerInterval: Date()...context.state.timerEnd, countsDown: true)
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(tint)
                 } else {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: TaskLAColors.icon(for: shown))
                         .font(.system(size: 12))
-                        .foregroundStyle(TaskLAColors.successGreen)
+                        .foregroundStyle(tint)
                 }
             }
             .widgetURL(URL(string: "nudge://focus-session"))
@@ -154,14 +160,15 @@ struct TaskLiveActivityView: Widget {
     @ViewBuilder
     private func lockScreenView(context: ActivityViewContext<TaskActivityAttributes>) -> some View {
         let state = context.state
-        let tint = TaskLAColors.tint(for: state.sessionState)
+        let shown = displayState(context)
+        let tint = TaskLAColors.tint(for: shown)
 
         VStack(spacing: 0) {
             HStack {
                 HStack(spacing: 6) {
-                    Image(systemName: TaskLAColors.icon(for: state.sessionState))
+                    Image(systemName: TaskLAColors.icon(for: shown))
                         .font(.system(size: 13, weight: .bold))
-                    Text(TaskLAColors.statusLabel(for: state.sessionState))
+                    Text(TaskLAColors.statusLabel(for: shown))
                         .font(.system(size: 12, weight: .bold))
                         .tracking(0.8)
                 }
@@ -169,7 +176,7 @@ struct TaskLiveActivityView: Widget {
 
                 Spacer()
 
-                if state.sessionState != .complete {
+                if showsTimer(shown) {
                     Text(timerInterval: Date()...state.timerEnd, countsDown: true)
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -186,7 +193,7 @@ struct TaskLiveActivityView: Widget {
                 .padding(.horizontal, 16)
 
             VStack(alignment: .leading, spacing: 6) {
-                switch state.sessionState {
+                switch shown {
                 case .active:
                     Text(state.taskName)
                         .font(.system(size: 18, weight: .semibold))
@@ -228,6 +235,23 @@ struct TaskLiveActivityView: Widget {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.55))
 
+                case .timeUp:
+                    Text("Time's up on \(state.taskName)")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                    Text("Open Nudge to finish it or start another.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Button(intent: EndFocusSessionIntent()) {
+                        Text("Dismiss")
+                            .font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(TaskLAColors.amber)
+                    .padding(.top, 6)
+
                 case .stayFocusedAlert:
                     Text("Stay focused")
                         .font(.system(size: 18, weight: .semibold))
@@ -252,9 +276,10 @@ struct TaskLiveActivityView: Widget {
         tint: Color
     ) -> some View {
         let state = context.state
+        let shown = displayState(context)
 
         VStack(alignment: .leading, spacing: 4) {
-            switch state.sessionState {
+            switch shown {
             case .active:
                 Text(state.taskName)
                     .font(.system(size: 15, weight: .semibold))
@@ -287,6 +312,21 @@ struct TaskLiveActivityView: Widget {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
 
+            case .timeUp:
+                HStack {
+                    Text("Time's up on \(state.taskName)")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer()
+                    Button(intent: EndFocusSessionIntent()) {
+                        Text("Dismiss")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(TaskLAColors.amber)
+                }
+
             case .stayFocusedAlert:
                 Text("Stay focused")
                     .font(.system(size: 15, weight: .bold))
@@ -299,6 +339,24 @@ struct TaskLiveActivityView: Widget {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+// MARK: - Display state
+
+/// What the activity shows. The app writes `.active` / `.stayFocusedAlert`
+/// / `.complete`; the system flips the activity stale at the session's end
+/// instant (the `staleDate` the app sets), and a stale running session is
+/// shown as `.timeUp` — the countdown is over and the app was not running
+/// to end the activity. The Dismiss button in that state ends it from the
+/// widget process; the app ends it on its next launch either way.
+private func displayState(_ context: ActivityViewContext<TaskActivityAttributes>) -> SessionState {
+    let state = context.state.sessionState
+    if context.isStale, state == .active || state == .stayFocusedAlert { return .timeUp }
+    return state
+}
+
+private func showsTimer(_ state: SessionState) -> Bool {
+    state != .complete && state != .timeUp
 }
 
 // MARK: - Previews

@@ -38,9 +38,14 @@ final class LiveActivityManager {
             nextTaskName: nil
         )
 
+        // The stale date IS the end instant: when it passes, the system
+        // re-renders the activity with `isStale` and the widget shows
+        // "time's up" with its own Dismiss button. Nothing in the app can
+        // run at that moment if iOS has killed the suspended process, so
+        // the activity has to be able to end itself.
         let content = ActivityContent(
             state: state,
-            staleDate: taskEnds.addingTimeInterval(60)
+            staleDate: taskEnds
         )
 
         _ = try Activity.request(
@@ -60,7 +65,7 @@ final class LiveActivityManager {
             nextTaskName: nil
         )
         await currentActivity?.update(
-            ActivityContent(state: state, staleDate: taskEnds.addingTimeInterval(60))
+            ActivityContent(state: state, staleDate: taskEnds)
         )
     }
 
@@ -73,7 +78,7 @@ final class LiveActivityManager {
             nextTaskName: nil
         )
         await currentActivity?.update(
-            ActivityContent(state: state, staleDate: taskEnds.addingTimeInterval(60))
+            ActivityContent(state: state, staleDate: taskEnds)
         )
     }
 

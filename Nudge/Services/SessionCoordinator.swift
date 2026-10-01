@@ -234,14 +234,38 @@ final class SessionCoordinator {
         let defaults = SharedModelContainer.appGroupDefaults
         let published = defaults.dictionary(forKey: "activeSessionState")
         guard isSessionActive else {
-            // No session in this process, but the App Group still says one
-            // is running: the end timer was an in-process work item and the
-            // process died before it fired (Roman, Sep 23 2026: the widget
-            // sat at 0:00 after the app had "stopped"). Clear it so the
-            // widget and the app agree again.
-            if published != nil {
+            // No session in this process. The end timer is an in-process
+            // work item, so when iOS reclaims the suspended app (or the
+            // user force-quits, or the phone restarts) nothing runs at the
+            // end instant: the widget sat at 0:00 (Roman, Sep 23 2026) and
+            // the Live Activity sat at 0:00 until another session ended it
+            // (Roman, Oct 1 2026). Two cases, keyed on the published end:
+            //   • still running → restore the session in this process so
+            //     the timer, the alert and the end all happen as if the
+            //     process had lived;
+            //   • over, or unrecoverable → end everything that is left,
+            //     quietly (no alarm — the moment passed).
+            let publishedEnd = (published?["timerEndDate"] as? TimeInterval)
+                .map { Date(timeIntervalSince1970: $0) }
+            if let publishedEnd, publishedEnd > Date(),
+               let idString = published?["currentTaskID"] as? String,
+               let id = UUID(uuidString: idString),
+               let task = fetchTask(id), !task.isComplete {
+                let startedAt = (published?["startedAt"] as? TimeInterval)
+                    .map { Date(timeIntervalSince1970: $0) }
+                restoreSession(task: task, ends: publishedEnd, startedAt: startedAt)
+                return
+            }
+            let leftoverActivity = !Activity<TaskActivityAttributes>.activities.isEmpty
+            if published != nil || leftoverActivity {
                 defaults.removeObject(forKey: "activeSessionState")
+                Task { @MainActor in
+                    await activityManager.endActivity()
+                }
                 WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")
+                #if DEBUG
+                print("[SessionCoordinator] ended a session that finished while the process was not running (published=\(published != nil), activity=\(leftoverActivity))")
+                #endif
             }
             return
         }
@@ -263,6 +287,40 @@ final class SessionCoordinator {
         sessionStartedAt = nil
         publishSessionState(isActive: false, currentTaskID: nil, timerEndDate: nil)
         reevaluateAfterSessionEnd()
+    }
+
+    /// The task a published session names, from the shared store.
+    private func fetchTask(_ id: UUID) -> NudgeTask? {
+        var descriptor = FetchDescriptor<NudgeTask>(predicate: #Predicate<NudgeTask> { $0.id == id })
+        descriptor.fetchLimit = 1
+        return (try? SharedModelContainer.container.mainContext.fetch(descriptor))?.first
+    }
+
+    /// Rebuilds a session the previous process started and did not get to
+    /// finish: state, the end timer, and the stay-focused alert if its
+    /// moment is still ahead. The Live Activity (if the user has not
+    /// swiped it away) and the App Group key are already right.
+    private func restoreSession(task: NudgeTask, ends: Date, startedAt: Date?) {
+        currentTask = task
+        sessionState = .active
+        isSessionActive = true
+        sessionEnd = ends
+        sessionStartedAt = startedAt
+        sessionCountByTaskID[task.id] = max(sessionCountByTaskID[task.id] ?? 0, 1)
+        sessionEndTimer = scheduleWork(after: max(1, ends.timeIntervalSinceNow)) { [weak self] in
+            self?.handleTimerExpired()
+        }
+        if let startedAt {
+            let alertAt = startedAt.addingTimeInterval(focusAlertOffset)
+            if alertAt > Date(), ends.timeIntervalSince(alertAt) > focusAlertDuration {
+                focusAlertTimer = scheduleWork(after: alertAt.timeIntervalSinceNow) { [weak self] in
+                    self?.triggerFocusAlert()
+                }
+            }
+        }
+        #if DEBUG
+        print("[SessionCoordinator] restored the session on \"\(task.title)\" (ends \(ends)) after a process restart")
+        #endif
     }
 
     // MARK: - Cancel
@@ -399,6 +457,7 @@ final class SessionCoordinator {
     //   pausedTimeRemaining: Int?        — nil for now
     //   timerEndDate: TimeInterval       — Unix epoch seconds
     //   currentTaskID: String            — UUID string
+    //   startedAt: TimeInterval          — Unix epoch seconds (app-only; restore)
 
     private func publishSessionState(
         isActive: Bool,
@@ -416,6 +475,12 @@ final class SessionCoordinator {
             }
             if let currentTaskID {
                 dict["currentTaskID"] = currentTaskID.uuidString
+            }
+            // So a restored session (process died mid-session) keeps its
+            // real start for the stay-focused alert and the actual-minutes
+            // record. The widget ignores keys it does not know.
+            if let sessionStartedAt {
+                dict["startedAt"] = sessionStartedAt.timeIntervalSince1970
             }
             defaults.set(dict, forKey: "activeSessionState")
         } else {

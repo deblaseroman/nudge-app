@@ -31,4 +31,8 @@ enum SessionState: String, Codable, Hashable {
     case finalWarning
     case complete
     case stayFocusedAlert
+    /// Never written by the app: the widget shows it when the activity's
+    /// stale date (the session's end instant) passes while the app is not
+    /// running to end it — the timer would otherwise sit frozen at 0:00.
+    case timeUp
 }
