@@ -277,9 +277,22 @@ final class NudgeAppDelegate: NSObject, UIApplicationDelegate {
             if t.isOverdue, t.stakes != .low { old.append("overdue") }
             if oldSkipped { old.append("skipped") }
             let new = t.lists(on: today, now: now).sorted().map(\.rawValue)
+            let aheadDay = [t.planDay, t.anchorDay].compactMap { $0 }.filter { $0 > today }.min()
             if old.isEmpty { hiddenOld += 1 }
-            if new.isEmpty { hiddenNew += 1 }
-            let flag = old.isEmpty && !new.isEmpty ? "  ← was hidden" : (new.isEmpty ? "  ← STILL HIDDEN" : "")
+            if new.isEmpty, aheadDay == nil { hiddenNew += 1 }
+            // A row in none of TODAY's lists is in another day's lens when
+            // its plan or anchor day is ahead (R1); only a row with neither
+            // is truly hidden.
+            let flag: String
+            if old.isEmpty && !new.isEmpty {
+                flag = "  ← was hidden"
+            } else if new.isEmpty, let aheadDay {
+                flag = "  ← in the \(aheadDay.formatted(date: .abbreviated, time: .omitted)) lens"
+            } else if new.isEmpty {
+                flag = "  ← STILL HIDDEN"
+            } else {
+                flag = ""
+            }
             let due = t.dueDate.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "—"
             let plan = t.intendedDate.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "—"
             let placed = t.plannedStartDate.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "—"
