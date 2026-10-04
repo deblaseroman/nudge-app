@@ -1060,10 +1060,14 @@ class ClaudeService {
         if cleaned.hasSuffix("```")     { cleaned = String(cleaned.dropLast(3)) }
         cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Row by row, not as one typed array: one malformed row (Oct 4
+        // 2026, a `{"index5":5,"body":"placeholder"}` from Sonnet 5 at low
+        // effort) must cost that row, not the nine good lines beside it.
+        // The template covers every index that does not decode.
         guard let start = cleaned.firstIndex(of: "["),
               let end = cleaned.lastIndex(of: "]"),
               let arrayData = String(cleaned[start...end]).data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([GeneratedCopyJSON].self, from: arrayData)
+              let rows = (try? JSONSerialization.jsonObject(with: arrayData)) as? [[String: Any]]
         else {
             #if DEBUG
             print("[ClaudeService] generateNudgeCopy — unparseable response:\n\(raw)")
@@ -1071,23 +1075,28 @@ class ClaudeService {
             throw ClaudeError.parseError
         }
 
-        let returnedIndices = Set(decoded.map(\.index))
-        guard decoded.count == expectedCount,
-              returnedIndices == Set(0..<expectedCount) else {
+        var result: [Int: String] = [:]
+        for row in rows {
+            guard let index = row["index"] as? Int, (0..<expectedCount).contains(index),
+                  let text = row["body"] as? String else { continue }
+            let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // A stub or an empty body contributes no entry — the template
+            // covers that slot.
+            guard body.count >= 12, body.lowercased() != "placeholder" else { continue }
+            result[index] = body
+        }
+        guard !result.isEmpty else {
             #if DEBUG
-            print("[ClaudeService] generateNudgeCopy — response does not cover the request: sent \(expectedCount), got \(decoded.count) over \(returnedIndices.count) distinct index/indices. Abandoning pass.")
+            print("[ClaudeService] generateNudgeCopy — no usable rows in the response. Abandoning pass.")
             #endif
             throw ClaudeError.parseError
         }
-
-        var result: [Int: String] = [:]
-        for row in decoded {
-            let body = row.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            // An empty body holds its index (coverage) but contributes no
-            // entry — the template covers that slot.
-            guard !body.isEmpty else { continue }
-            result[row.index] = body
+        #if DEBUG
+        let missing = Set(0..<expectedCount).subtracting(result.keys).sorted()
+        if !missing.isEmpty {
+            print("[ClaudeService] generateNudgeCopy — \(missing.count) of \(expectedCount) row(s) unusable (indices \(missing)); templates cover them.")
         }
+        #endif
         return result
     }
 

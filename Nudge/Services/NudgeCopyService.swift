@@ -548,6 +548,9 @@ enum NudgeCopyFill {
         }
         if out.contains("{due}") {
             guard let task, let anchor = anchor(for: candidate.kind, task: task) else { return nil }
+            // The writer sometimes leads into the phrase anyway ("is {due}",
+            // "due {due}"); the phrase carries its own verb and tense.
+            out = out.replacingOccurrences(of: "(?:\\b(?:is|was|due)\\s+)+\\{due\\}", with: "{due}", options: [.regularExpression, .caseInsensitive])
             out = out.replacingOccurrences(of: "{due}", with: duePhrase(anchor, task: task, fireDate: candidate.fireDate))
         }
         if out.contains("{time}") || out.contains("{day}") {
