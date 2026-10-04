@@ -24,9 +24,32 @@ final class NudgeActivityMonitorExtension: DeviceActivityMonitor {
     private let lastRungAtKey = "nudge.distractions.lastRungAt"
     private let lastRungDayKey = "nudge.distractions.lastRungDay"
     private let mirrorLastFiredAtKey = "nudge.distractions.mirrorLastFiredAt"
+    /// Every wake of this extension, newest last, capped (Oct 4 2026): the
+    /// only evidence the app can read of whether iOS ever calls it. The
+    /// app prints it at launch in DEBUG (`DistractionMonitor.debugDump`).
+    private let breadcrumbsKey = "nudge.distractions.breadcrumbs"
+
+    private func crumb(_ what: String) {
+        guard let defaults = UserDefaults(suiteName: appGroupID) else { return }
+        var list = defaults.array(forKey: breadcrumbsKey) as? [String] ?? []
+        list.append("\(ISO8601DateFormatter().string(from: Date())) \(what)")
+        if list.count > 40 { list.removeFirst(list.count - 40) }
+        defaults.set(list, forKey: breadcrumbsKey)
+    }
+
+    override func intervalDidStart(for activity: DeviceActivityName) {
+        super.intervalDidStart(for: activity)
+        crumb("intervalDidStart \(activity.rawValue)")
+    }
+
+    override func intervalDidEnd(for activity: DeviceActivityName) {
+        super.intervalDidEnd(for: activity)
+        crumb("intervalDidEnd \(activity.rawValue)")
+    }
 
     override func eventDidReachThreshold(_ event: DeviceActivityEvent.Name, activity: DeviceActivityName) {
         super.eventDidReachThreshold(event, activity: activity)
+        crumb("eventDidReachThreshold \(event.rawValue) in \(activity.rawValue)")
         guard let defaults = UserDefaults(suiteName: appGroupID) else { return }
         let settings = DistractionSettings.load(from: defaults)
         let now = Date()
@@ -63,6 +86,7 @@ final class NudgeActivityMonitorExtension: DeviceActivityMonitor {
         defaults.set(now, forKey: lastRungAtKey)
         defaults.set(dayStamp(now), forKey: lastRungDayKey)
 
+        crumb("decision rung \(rung): \(decision.placeholderTitle.isEmpty ? "silent (\(decision.placeholderBody))" : decision.placeholderTitle)")
         if case .silent = decision { return }
         post(id: "nudge.ext.limit.\(dayStamp(now)).\(rung)",
              title: decision.placeholderTitle,
@@ -79,8 +103,13 @@ final class NudgeActivityMonitorExtension: DeviceActivityMonitor {
         content.userInfo = userInfo
         content.interruptionLevel = .timeSensitive
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error { NSLog("[NudgeActivityMonitor] post failed: \(error)") }
+        UNUserNotificationCenter.current().add(request) { [self] error in
+            if let error {
+                NSLog("[NudgeActivityMonitor] post failed: \(error)")
+                crumb("post FAILED \(id): \(error.localizedDescription)")
+            } else {
+                crumb("posted \(id)")
+            }
         }
     }
 

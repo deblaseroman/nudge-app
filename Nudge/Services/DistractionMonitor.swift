@@ -150,6 +150,43 @@ final class DistractionMonitor {
         #endif
     }
 
+    #if DEBUG
+    /// Everything the app can know about the Screen Time side, printed at
+    /// launch: authorization, the picked set, what DeviceActivity has
+    /// registered (schedules and thresholds), the extension's bookkeeping,
+    /// and the breadcrumb trail the extension writes on every wake.
+    func debugDump() {
+        let defaults = SharedModelContainer.appGroupDefaults
+        let settings = DistractionSettings.load(from: defaults)
+        print("\n── DISTRACTIONS · authorized=\(isAuthorized) (\(AuthorizationCenter.shared.authorizationStatus)) selection=\(settings.hasSelection) limit=\(settings.dailyLimitMinutes)m ladder=\(settings.limitLadderEnabled) mirror=\(settings.mirrorEnabled)")
+        if let data = settings.selectionData,
+           let sel = try? JSONDecoder().decode(FamilyActivitySelection.self, from: data) {
+            print("   picked: \(sel.applicationTokens.count) app(s), \(sel.categoryTokens.count) categor(ies), \(sel.webDomainTokens.count) domain(s)")
+        }
+        let names = center.activities
+        print("   registered activities: \(names.map(\.rawValue))")
+        for name in names {
+            if let s = center.schedule(for: name) {
+                let start = "\(s.intervalStart.hour ?? -1):\(s.intervalStart.minute ?? -1)" + (s.intervalStart.weekday.map { " wd\($0)" } ?? "")
+                let end = "\(s.intervalEnd.hour ?? -1):\(s.intervalEnd.minute ?? -1)" + (s.intervalEnd.weekday.map { " wd\($0)" } ?? "")
+                print("   \(name.rawValue): \(start) → \(end) repeats=\(s.repeats)")
+            }
+            for (key, event) in center.events(for: name).sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+                print("      event \(key.rawValue): threshold \(event.threshold.minute ?? 0)m, \(event.applications.count) app(s) \(event.categories.count) categor(ies)")
+            }
+        }
+        print("   signature: \(defaults.string(forKey: Self.registeredSignatureKey) ?? "none")")
+        let lastRung = (defaults.object(forKey: "nudge.distractions.lastRungAt") as? Date).map { "\($0)" } ?? "never"
+        let mirror = (defaults.object(forKey: "nudge.distractions.mirrorLastFiredAt") as? Date).map { "\($0)" } ?? "never"
+        print("   lastRungAt: \(lastRung) (day \(defaults.string(forKey: "nudge.distractions.lastRungDay") ?? "—"))  mirrorLastFiredAt: \(mirror)")
+        let crumbs = defaults.array(forKey: "nudge.distractions.breadcrumbs") as? [String] ?? []
+        print("   extension breadcrumbs (\(crumbs.count), newest last):")
+        if crumbs.isEmpty { print("      (none — iOS has never called the extension since this trail was added)") }
+        for c in crumbs { print("      \(c)") }
+        print("── DISTRACTIONS end ──\n")
+    }
+    #endif
+
     /// Today, for the extension: the day window, open items on today's
     /// lens, today's events, and the last moment work happened. Called by
     /// the arbiter after every pass, so it is as fresh as the schedule.

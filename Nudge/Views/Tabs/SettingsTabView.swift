@@ -469,7 +469,16 @@ struct SettingsTabView: View {
                 }
                 .buttonStyle(.plain)
                 .familyActivityPicker(isPresented: $showAppPicker, selection: $distractionSelection)
-                .onChange(of: distractionSelection) { _, _ in saveDistractions() }
+                // Only a REAL change saves: `loadDistractions` assigns the
+                // saved selection on appear, which fires this too, and the
+                // save re-registers monitoring with force — restarting the
+                // DeviceActivity schedule (and its accumulated minutes) on
+                // every visit to Settings (Oct 4 2026).
+                .onChange(of: distractionSelection) { _, new in
+                    if (try? JSONEncoder().encode(new)) != distractionSettings.selectionData {
+                        saveDistractions()
+                    }
+                }
 
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {

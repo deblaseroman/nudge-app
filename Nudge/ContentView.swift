@@ -162,6 +162,9 @@ struct ContentView: View {
             // launch re-registers them only when that window, the limit,
             // or the picked apps changed since the last registration.
             DistractionMonitor.shared.apply(profile: profile)
+            #if DEBUG
+            DistractionMonitor.shared.debugDump()
+            #endif
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Always pause the 60s countdown ticker when leaving the
