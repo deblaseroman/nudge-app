@@ -76,7 +76,12 @@ final class DistractionMonitor {
             #endif
             Task { @MainActor in
                 try? await self.requestAuthorization()
-                self.apply(profile: profile, force: true)
+                // Not forced: iOS reports Not Determined at every launch
+                // on this phone and re-approves silently, and a forced
+                // apply would stop and restart the schedule each time —
+                // which resets the minutes it has counted. The signature
+                // decides, exactly as for any other launch.
+                self.apply(profile: profile, force: false)
             }
             return
         }

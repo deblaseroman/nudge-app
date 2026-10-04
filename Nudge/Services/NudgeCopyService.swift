@@ -173,11 +173,11 @@ enum NudgeCopyStore {
         let currentDue = task.specificTime
             ?? (task.dueDate != nil ? task.sortDeadline : nil)
         if let writtenDue = entry.dueAtGeneration {
-            // Same deadline (to the minute), and it hasn't passed by the
-            // time this notification fires.
+            // Same deadline (to the minute). Whether it is ahead or behind
+            // at delivery is the fill's business ({due} carries the tense),
+            // so a line about an overdue task still swaps.
             guard let currentDue,
-                  abs(currentDue.timeIntervalSince(writtenDue)) < 60,
-                  currentDue > fireDate
+                  abs(currentDue.timeIntervalSince(writtenDue)) < 60
             else { return nil }
         } else {
             // Copy written for an undated task ("no deadline" phrasing);
@@ -402,8 +402,12 @@ final class NudgeCopyGenerator {
             ))
         }
         func dated(_ t: NudgeTask) -> Bool { t.dueDate != nil || t.specificTime != nil }
+        // Deadline kinds get {due}: a whole phrase the fill renders with the
+        // right tense at delivery ("due tomorrow at 3:00 PM", "was due
+        // yesterday") — the writer cannot know whether the deadline will be
+        // ahead or behind when the line arrives.
         func datedPlaceholders(_ t: NudgeTask) -> String {
-            dated(t) ? "{task} {day} {time}" : "{task}"
+            dated(t) ? "{task} {due}" : "{task}"
         }
 
         // Morning prompt: stakes-first, the arbiter's own ranking order
@@ -433,10 +437,10 @@ final class NudgeCopyGenerator {
             .filter { dated($0) && $0.sortDeadline > now && $0.sortDeadline < horizon }
             .sorted { $0.sortDeadline < $1.sortDeadline }
         for task in datedAhead.prefix(cap) {
-            add(kind: .prep, task: task, placeholders: "{task} {day} {time}")
+            add(kind: .prep, task: task, placeholders: "{task} {due}")
         }
         for task in datedAhead.prefix(cap) {
-            add(kind: .dueSoon, task: task, placeholders: "{task} {day} {time}")
+            add(kind: .dueSoon, task: task, placeholders: "{task} {due}")
         }
 
         // Events inside the window: the hour-before heads-up.
@@ -542,6 +546,10 @@ enum NudgeCopyFill {
             guard !name.isEmpty else { return nil }
             out = out.replacingOccurrences(of: "{name}", with: name)
         }
+        if out.contains("{due}") {
+            guard let task, let anchor = anchor(for: candidate.kind, task: task) else { return nil }
+            out = out.replacingOccurrences(of: "{due}", with: duePhrase(anchor, task: task, fireDate: candidate.fireDate))
+        }
         if out.contains("{time}") || out.contains("{day}") {
             guard let task, let anchor = anchor(for: candidate.kind, task: task) else { return nil }
             out = out.replacingOccurrences(of: "{day}", with: relativeDay(anchor, fireDate: candidate.fireDate))
@@ -580,6 +588,20 @@ enum NudgeCopyFill {
             let f = DateFormatter(); f.dateFormat = "MMM d"; f.locale = Locale(identifier: "en_US_POSIX")
             return f.string(from: anchor)
         }
+    }
+
+    /// The whole deadline phrase, tense decided at delivery: "due today at
+    /// 3:00 PM", "due tomorrow", "due Friday at noon", "was due yesterday",
+    /// "was due Oct 1". A bare due date names no clock.
+    static func duePhrase(_ anchor: Date, task: NudgeTask, fireDate: Date) -> String {
+        let day = relativeDay(anchor, fireDate: fireDate)
+        let past = anchor <= fireDate
+        var phrase = past ? "was due \(day)" : "due \(day)"
+        if !past, let time = task.specificTime {
+            let f = DateFormatter(); f.dateFormat = "h:mm a"; f.locale = Locale(identifier: "en_US_POSIX")
+            phrase += " at \(f.string(from: time))"
+        }
+        return phrase
     }
 
     /// A bare due date has no clock of its own (the store's 23:59 is a

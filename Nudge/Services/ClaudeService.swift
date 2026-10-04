@@ -954,11 +954,11 @@ class ClaudeService {
 
         let kindBriefs = """
         THE MOMENTS (one line per kind; the app decides WHEN, you decide the words):
-        - morningPrompt: 30 minutes after the user wakes, the first line of the day. It names the day's biggest item ({task}) and, when it has one, its deadline ({day}, {time}). A statement that frames the day, never a question.
+        - morningPrompt: 30 minutes after the user wakes, the first line of the day. It names the day's biggest item ({task}) and, when it has one, its deadline ({due}). A statement that frames the day, never a question.
         - idle: three hours after wake and nothing has started. One light, concrete question that names NO task. (The line that landed best so far: "What's one thing you'd like to get started on?" Do not reuse it; match its spirit.)
         - floater: six hours after wake, about an open task with no deadline ({task}). Point it out as something with room today. No urgency.
-        - prep: a dated task ({task}, due {day} at {time}) with room before its deadline. Invite one small first step.
-        - dueSoon: two hours before a deadline ({task}, {day} at {time}). Say the fact plainly, with one useful beat.
+        - prep: a dated task ({task}, {due}) with room before its deadline. Invite one small first step.
+        - dueSoon: two hours before a deadline ({task}, {due}). Say the fact plainly, with one useful beat.
         - eventBlock: one hour before something on the calendar ({task} at {time}). A heads-up: the fact, and what it makes possible now.
         - placementLead: shortly before a block the user put on their own timeline ({task} at {time}). A heads-up that it is coming up.
         - placementMissed: a placed block's start ({time}) has passed and {task} is still open. Offer a small way in. Never a reproach, never "still".
@@ -993,14 +993,14 @@ class ClaudeService {
         \(kindBriefs)
 
         PLACEHOLDERS: the app fills these at delivery, so they are always correct. Write them exactly:
-          {task} the task or event name   {time} its clock time   {day} "today", "tomorrow" or a weekday, relative to delivery   {name} the reader's first name   {goal} the goal's name
-        Each item lists which placeholders are available to it; use only those. NEVER write a clock time, a date, or a day word yourself. Never rename or summarize the subject; let {task} carry it.
+          {task} the task or event name   {due} the whole deadline phrase with the right tense at delivery ("due tomorrow at 3:00 PM", "was due yesterday"; write it where that phrase goes, nothing before it like "is")   {time} a clock time   {day} "today", "tomorrow" or a weekday, relative to delivery   {name} the reader's first name   {goal} the goal's name
+        Each item lists which placeholders are available to it; use only those. NEVER write a clock time, a date, a weekday name, "tomorrow", "tonight" or "yesterday" yourself; use {day} and {time}. "Today" and "right now" are fine: they always mean the day the line arrives. Never rename or summarize the subject; let {task} carry it.
         \(who)
 
         HARD LINES (not style, rules):
         - Never imply failure, lateness, laziness, or a pattern of avoidance. Never mention streaks, absence, or what was missed.
         - Never promise an outcome ("you'll be fine", "you've got this").
-        - No exclamation marks, no emoji, no em dashes.
+        - No exclamation marks, no emoji, no em dashes. A question ends with a question mark.
         - One sentence, two short ones at most. Under 140 characters with placeholders in place.
 
         RECENT LINES (do not repeat or closely echo any of these):
