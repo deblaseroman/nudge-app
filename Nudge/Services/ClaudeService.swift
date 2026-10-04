@@ -67,6 +67,11 @@ class ClaudeService {
     /// written from the user's real data. Effort low, short output, at most
     /// `NudgeConfig.tasksMemoMaxPerDay` calls a day.
     private let memoModel = "claude-opus-5"
+    /// Notification copy (Oct 4 2026, Roman: the AI writes the
+    /// notifications). One batched call a day for every kind; Sonnet 5 at
+    /// effort low — the lines have to read like a person who knows the
+    /// day, and Haiku's read like a template with the nouns swapped.
+    private let copyModel = "claude-sonnet-5"
     private let baseURL = "https://api.anthropic.com/v1/messages"
 
     // MARK: - System Prompts
@@ -928,61 +933,78 @@ class ClaudeService {
 
     // MARK: - Batch nudge-copy generation (cycle 2026-08-03-03)
 
-    /// Writes notification body copy for a batch of (kind, task) pairs in
-    /// ONE request — the cache-ahead pass `NudgeCopyGenerator` runs a few
-    /// times a day. One call per pass, never one per kind.
+    /// Writes notification body copy for every kind in ONE request — the
+    /// cache-ahead pass `NudgeCopyGenerator` runs once a day (and on real
+    /// shifts). The writer gets free rein on voice (Roman, Oct 4 2026:
+    /// people with ADHD respond to novelty; a set phrasing stops landing)
+    /// inside DESIGN.md's hard lines, and it never writes a clock or a day
+    /// word: it writes placeholders the arbiter fills at scheduling from
+    /// the candidate's facts (`NudgeCopyFill`), so a line written a day
+    /// early is still true at delivery.
     ///
-    /// Coverage contract (once shared with the retired stakes classifier): matching is by INDEX,
-    /// and the response must cover the request exactly or the whole pass
-    /// is thrown away — a partial answer applied silently would leave some
-    /// kinds "generated" and some not, with nothing to say which.
-    ///
-    /// The tone rules live HERE, in the prompt (DESIGN.md governs every
-    /// generated string): facts not verdicts, propose never promise, no
-    /// implied failure, never shame. The copy may be delivered up to three
-    /// days after it is written, so relative day words are banned outright
-    /// — "tomorrow" is a lie two days later; the absolute phrase in
-    /// `due` never goes stale before the cache does.
+    /// Coverage contract: matching is by INDEX, and the response must
+    /// cover the request exactly or the whole pass is thrown away.
     func generateNudgeCopy(
-        requests: [NudgeCopyGenerator.NudgeCopyRequest]
+        requests: [NudgeCopyGenerator.NudgeCopyRequest],
+        userName: String?,
+        recentBodies: [String]
     ) async throws -> [Int: String] {
         guard !requests.isEmpty else { return [:] }
         guard !apiKey.isEmpty else { throw ClaudeError.missingAPIKey }
 
         let kindBriefs = """
-        NUDGE KINDS (what each notification is for):
-        - morningPrompt: the first thing the user reads in the morning. States the day's biggest item and, when it has one, its deadline. A statement, never a question.
-        - prep: an invitation to start early on a task whose deadline still has room. May propose one small first step.
-        - floater: a mid-day check-in about an open task with NO deadline — it points the task out for a day with room. Mention it's there; never invent urgency for it.
-        - idle: asks whether the day has gotten started. Names NO task — keep it a single gentle, concrete question.
-        - comeBack: delivered only after several quiet days with no engagement. Factual and forward-looking about the named upcoming thing — a reason to come back. NEVER mention absence, time away, quiet days, streaks, or anything missed; the reader may have had a bad week, and noticing their absence is one more thing telling them they failed.
+        THE MOMENTS (one line per kind; the app decides WHEN, you decide the words):
+        - morningPrompt: 30 minutes after the user wakes, the first line of the day. It names the day's biggest item ({task}) and, when it has one, its deadline ({day}, {time}). A statement that frames the day, never a question.
+        - idle: three hours after wake and nothing has started. One light, concrete question that names NO task. (The line that landed best so far: "What's one thing you'd like to get started on?" Do not reuse it; match its spirit.)
+        - floater: six hours after wake, about an open task with no deadline ({task}). Point it out as something with room today. No urgency.
+        - prep: a dated task ({task}, due {day} at {time}) with room before its deadline. Invite one small first step.
+        - dueSoon: two hours before a deadline ({task}, {day} at {time}). Say the fact plainly, with one useful beat.
+        - eventBlock: one hour before something on the calendar ({task} at {time}). A heads-up: the fact, and what it makes possible now.
+        - placementLead: shortly before a block the user put on their own timeline ({task} at {time}). A heads-up that it is coming up.
+        - placementMissed: a placed block's start ({time}) has passed and {task} is still open. Offer a small way in. Never a reproach, never "still".
+        - comeBack: after three quiet days. A forward-looking reason to open the app. NEVER mention absence, time away, quiet days, streaks, or anything missed.
+        - goalLapse: a personal goal ({goal}) with no activity for about a month. A light, curious invitation. Never a verdict.
         """
 
         let items = requests.map { request -> String in
             var line = "\(request.index). kind=\(request.kind.rawValue)"
             if let title = request.taskTitle {
-                line += " | task: \"\(title)\""
+                line += " | subject: \"\(title)\""
             }
             if let due = request.dueDescription {
-                line += " | \(due)"
+                line += " | context: \(due)"
             }
+            line += " | placeholders available: \(request.placeholders)"
             return line
         }.joined(separator: "\n")
 
+        let recent = recentBodies.isEmpty
+            ? "(none yet)"
+            : recentBodies.suffix(NudgeConfig.copyHistoryLimit).map { "- \($0)" }.joined(separator: "\n")
+
+        let who = userName.map { "The reader's first name is \($0); {name} fills it. Use it rarely, where it makes a line land." }
+            ?? "No name is known; do not use {name}."
+
         let prompt = """
-        Write iOS notification BODY copy for a task app's nudges. One body per item below.
+        You write the notifications for Nudge, a task app for people with ADHD. One body line per item below.
+
+        WHO IT IS FOR: someone who responds to novelty and surprise far better than to a schedule. The lines that work are the ones that read as freshly written by a person who knows their day, not by a system. Every line in this batch must differ in shape and opening from the others and from the RECENT lines; vary between a question, an observation, an offer, a plain fact. Specific beats general. Plain beats clever. Warm beats peppy.
 
         \(kindBriefs)
 
-        TONE RULES — every one is a hard rule, not a style preference:
-        - State facts, never verdicts. The deadline, the task, what's possible now.
-        - Propose, never promise. No "you'll be fine", "you've got this", "and you're all set" — no outcome the app can't deliver.
-        - Never use an em dash ("\u{2014}"). Use commas or periods.
-        - Never imply failure, lateness, or a pattern of avoidance. No guilt framed as motivation.
-        - Warm and plain, not peppy. No exclamation marks, no emoji (the app adds its own urgency markers).
-        - NEVER use "today", "tomorrow", "tonight", or any relative day word — this copy may be delivered up to three days after you write it. Use the absolute day given in the item ("Friday", "Aug 7") or no day at all.
-        - Name the task naturally (quotes optional); don't rename or summarize it.
-        - One sentence, two short ones at most. Under 140 characters.
+        PLACEHOLDERS: the app fills these at delivery, so they are always correct. Write them exactly:
+          {task} the task or event name   {time} its clock time   {day} "today", "tomorrow" or a weekday, relative to delivery   {name} the reader's first name   {goal} the goal's name
+        Each item lists which placeholders are available to it; use only those. NEVER write a clock time, a date, or a day word yourself. Never rename or summarize the subject; let {task} carry it.
+        \(who)
+
+        HARD LINES (not style, rules):
+        - Never imply failure, lateness, laziness, or a pattern of avoidance. Never mention streaks, absence, or what was missed.
+        - Never promise an outcome ("you'll be fine", "you've got this").
+        - No exclamation marks, no emoji, no em dashes.
+        - One sentence, two short ones at most. Under 140 characters with placeholders in place.
+
+        RECENT LINES (do not repeat or closely echo any of these):
+        \(recent)
 
         Return ONLY a JSON array. No prose, no markdown fences. Schema:
         [
@@ -995,9 +1017,10 @@ class ClaudeService {
         """
 
         let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 2000,
-            "system": "You write concise, honest notification copy. Return only valid JSON matching the requested schema. No prose, no commentary.",
+            "model": copyModel,
+            "max_tokens": 3000,
+            "output_config": ["effort": "low"],
+            "system": "You write short, specific, human notification copy. Return only valid JSON matching the requested schema. No prose, no commentary.",
             "messages": [["role": "user", "content": prompt]]
         ]
 
@@ -1011,7 +1034,14 @@ class ClaudeService {
         let (data, response) = try await URLSession.shared.data(for: req)
         try validateResponse(data: data, response: response)
         let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-        guard let text = anthropicResponse.content.first?.text else {
+        #if DEBUG
+        if let usage = anthropicResponse.usage {
+            print("[ClaudeService] USAGE: in=\(usage.inputTokens ?? 0) out=\(usage.outputTokens ?? 0) (out includes thinking) model=\(copyModel) site=nudgeCopy items=\(requests.count)")
+        }
+        #endif
+        // First TEXT block: a thinking model leads with a thinking block.
+        guard let text = anthropicResponse.content.first(where: { $0.type == nil || $0.type == "text" })?.text,
+              !text.isEmpty else {
             throw ClaudeError.emptyResponse
         }
         return try Self.decodeGeneratedCopy(from: text, expectedCount: requests.count)

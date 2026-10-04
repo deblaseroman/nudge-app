@@ -56,9 +56,30 @@ final class DistractionMonitor {
     /// a Settings save; it does nothing when what it would register is
     /// what is already registered (the day window, the limit, the
     /// selection, the toggles), so a launch never restarts monitoring.
+    /// One re-ask per launch at most.
+    private var reauthorizationRequested = false
+
     func apply(profile: UserProfile, force: Bool = false) {
         let defaults = SharedModelContainer.appGroupDefaults
         let settings = DistractionSettings.load(from: defaults)
+
+        // Self-heal (Oct 4 2026): Roman's phone showed apps picked, a limit
+        // set, and authorization "Not Determined" — the grant does not
+        // survive every reinstall, and with it gone `apply` registers
+        // nothing and the extension is never called. A picked set is the
+        // user's opt-in, so ask again once, then register.
+        if !reauthorizationRequested, settings.hasSelection,
+           AuthorizationCenter.shared.authorizationStatus == .notDetermined {
+            reauthorizationRequested = true
+            #if DEBUG
+            print("[DistractionMonitor] authorization is Not Determined with a picked set — asking again")
+            #endif
+            Task { @MainActor in
+                try? await self.requestAuthorization()
+                self.apply(profile: profile, force: true)
+            }
+            return
+        }
 
         let wakeForSig = profile.wakeTime ?? profile.morningCheckInTime
         let sigComps = Calendar.current.dateComponents([.hour, .minute], from: wakeForSig)

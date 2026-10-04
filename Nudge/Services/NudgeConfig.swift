@@ -639,6 +639,11 @@ enum NudgeConfig {
     /// window; every-task-every-kind is waste.
     static let copyGenTasksPerKind: Int = 4
 
+    /// Generated lines remembered across passes and shown to the writer as
+    /// "do not echo these" — novelty is the point (Roman, Oct 4 2026: the
+    /// one check-in that landed was the one that read differently).
+    static let copyHistoryLimit: Int = 40
+
     /// Minimum minutes between generation attempts (success or failure).
     /// Collapses duplicate triggers in one launch sequence and stops a
     /// flaky network from turning every foreground into an API call.

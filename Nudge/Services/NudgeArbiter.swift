@@ -2209,9 +2209,9 @@ final class NudgeArbiter: NudgeArbitering {
         )]
     }
 
-    /// The come-back's body, Roman's words (Sep 2026): short, warm, and it
-    /// NEVER names a task. Two states only. Never AI-swapped (the copy
-    /// cache skips this kind). Edit these strings with Roman, not for him.
+    /// The come-back's TEMPLATE body (Roman's words, Sep 2026): short,
+    /// warm, names no task. Since Oct 4 2026 the AI writes this kind too
+    /// (`resolvedBody` swaps every kind); these strings are the fallback.
     static func comeBackBody(openCount: Int) -> String {
         if openCount > 0 {
             return "Come back, you have some tasks to complete!"
@@ -4215,10 +4215,11 @@ final class NudgeArbiter: NudgeArbitering {
         for candidate: NudgeCandidate,
         modelContext: ModelContext
     ) -> String {
-        // Come-back copy is Roman's verbatim wording (Sep 2026) and never
-        // names a task — the cache may still hold pre-ruling entries that
-        // do, so this kind never swaps.
-        guard candidate.kind != .comeBack else { return candidate.body }
+        // Every kind swaps now (Roman, Oct 4 2026: the AI writes the
+        // notifications; the arbiter keeps deciding when). The written
+        // line carries placeholders; `NudgeCopyFill` resolves them from
+        // this candidate's facts at this fire date, and a line that cannot
+        // be filled falls back to the template like a stale one would.
         guard let generated = NudgeCopyStore.validBody(
             kind: candidate.kind,
             taskID: candidate.namedTaskID ?? candidate.taskID,
@@ -4227,14 +4228,21 @@ final class NudgeArbiter: NudgeArbitering {
         ) else {
             return candidate.body
         }
+        guard let filled = NudgeCopyFill.fill(generated, candidate: candidate, modelContext: modelContext) else {
+            #if DEBUG
+            print("[NudgeArbiter] copy swap SKIPPED for \(candidate.kind.rawValue) @ \(candidate.fireDate): placeholder unresolved in \"\(generated)\" → template")
+            #endif
+            return candidate.body
+        }
         #if DEBUG
         // Before/after per work-order item 5: the template beside the
         // generated copy that replaces it.
         print("[NudgeArbiter] copy swap for \(candidate.kind.rawValue) @ \(candidate.fireDate):")
         print("  TEMPLATE : \"\(candidate.body)\"")
-        print("  GENERATED: \"\(generated)\"")
+        print("  WRITTEN  : \"\(generated)\"")
+        print("  DELIVERED: \"\(filled)\"")
         #endif
-        return generated
+        return filled
     }
 
     private func stamp(_ date: Date) -> String {
