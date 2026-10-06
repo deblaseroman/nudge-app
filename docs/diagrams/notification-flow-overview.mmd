@@ -44,7 +44,7 @@ flowchart TB
   classDef add stroke-width:3px
   class ARB,NSVC,EXT add
 
-  click TRIG href "#sec-launch" "Everything that calls reevaluate: ContentView .task(id: notificationToken) at launch and on toggle changes, scene-active (sceneActive, or taskCompleted when the widget flag is set), the reevaluates after auto-plan and new copy, NudgeApp handleDailyRecalc at 6 AM, SessionCoordinator start / complete / end, TasksTabView, HomeTabView, CalendarTabView, DayPlanRefiner, NudgeCopyGenerator.noteShift." _self
+  click TRIG href "#sec-launch" "Everything that calls reevaluate: ContentView .task(id: notificationToken) at launch and on toggle changes, scene-active (sceneActive, or taskCompleted when the widget flag is set), the reevaluates after auto-plan and new copy, NudgeApp handleDailyRecalc at 6 AM, SessionCoordinator start / complete / end, TasksTabView, HomeTabView, CalendarTabView, DayPlanRefiner, NudgeCopyGenerator.noteShift. DEBUG only: EvalHarness, CaptureHistoryExporter and the -nudge-import-ical launch argument in ContentView." _self
   click LAUNCH href "#sec-launch" "Sets UNUserNotificationCenter.delegate, registers the 13 notification categories, registers and submits the com.deblaser.nudge.dailyRecalc background task." _self
   click IOS_BG href "#sec-launch" "Wakes handleDailyRecalc at or after 6 AM; permitted by Nudge/Info.plist." _self
   click ARB href "#sec-arbiter" "Single decision engine: debounce, cancelAll, master toggle, 10 builders, gates, pickWinners, schedule. Reads tasks, profile, outcomes and App Group histories; writes NudgeOutcome(.pending), scheduledIDs and the history maps; adds and removes requests; writes the Screen Time snapshot afterwards." _self

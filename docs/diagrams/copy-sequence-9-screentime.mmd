@@ -4,7 +4,7 @@ sequenceDiagram
   autonumber
   box rgba(14,111,111,0.10) App code
     participant EXT as DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold
-    participant KEYS as Screen Time keys<br/>DistractionSettings.swift
+    participant KEYS as Screen Time keys<br/>DistractionSettings.swift + extension file
     participant DECIDE as DistractionSettings.swift<br/>LimitDecider.decide
     participant TEXT as DistractionSettings.swift<br/>LimitDecision.placeholderTitle
   end

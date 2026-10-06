@@ -1,5 +1,5 @@
 %% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
-%% Nudge task lifecycle at commit ede6774 (2026-10-05). The complete reference; the page renders an overview plus close-ups cut from this.
+%% Nudge task lifecycle at commit ede6774 (2026-10-04). The complete reference. The page does not embed this file: it renders eight close-ups (task-lifecycle-*.mmd), drawn from this one and carrying detail it leaves out, so a fix to one must be made in the other.
 %% The persisted model is NudgeTask (Nudge/Models/NudgeTask.swift). Lifecycle fields: isInformationalEvent, dueDate / dueTime / specificTime (the owed clock), intendedDate (the plan day), plannedStartDate / plannedDurationMinutes / plannedIsAuto (the plan time), planDayIsAuto, sequenceIndex, skipCount, isComplete / completedAt. CompletedTaskRecord is the completion log.
 %% Stadium boxes are states (field values, file). Square boxes are file + function. Every arrow is a call, read or write found in code; labels name the function or the condition.
 %% Dashed (class dead) = exists but has no effect on the store: DEBUG-only harnesses, a one-shot backfill, an unread column.
@@ -32,7 +32,7 @@ subgraph APP ["Target: Nudge (app)"]
     F_BACKFILL["CalendarService.swift<br/>backfillImportedScheduleOnce"]:::dead
     F_SHOTIMP["ScreenshotCalendarImporter.swift<br/>importFromImage"]
   end
-  subgraph PLANHELPERS ["Plan helpers · the only writers of the plan"]
+  subgraph PLANHELPERS ["Plan helpers · write the plan, except three direct writes: PlacementRollover.swift:123 (intendedDate on a done row), TimelineReflow.swift:106, 109 and TasksTabView.swift:3729 (plannedDurationMinutes)"]
     H_DAY["NudgeTask.swift<br/>setPlanDay"]
     H_START["NudgeTask.swift<br/>setPlanStart"]
     H_CLEARTIME["NudgeTask.swift<br/>clearPlanTime"]
@@ -42,6 +42,7 @@ subgraph APP ["Target: Nudge (app)"]
   subgraph PLANNER ["Planners"]
     P_BTN["TasksTabView.swift<br/>planMyDay"]
     P_CAL["CalendarTabView.swift<br/>planSelectedDay"]
+    P_TMRW["TasksTabView.swift<br/>planFutureDay"]
     P_AUTO["DayPlanEngine.swift<br/>autoPlanIfNewDay"]
     P_PLAN["DayPlanEngine.swift<br/>plan"]
     P_REFINE["DayPlanRefiner.swift<br/>refine"]
@@ -118,7 +119,7 @@ subgraph APP ["Target: Nudge (app)"]
   end
 end
 
-subgraph WIDGET ["Target: NudgeWidgetExtension · compiles Nudge/Models only"]
+subgraph WIDGET ["Target: NudgeWidgetExtension · compiles 26 of the 27 Nudge/Models files (not DistractionSettings.swift), NudgeTheme.swift and SharedModelContainer.swift"]
   W_INTENT["CompleteTaskIntent.swift<br/>perform"]
   W_TIMELINE["NudgeWidget.swift<br/>getTimeline"]
 end
@@ -165,6 +166,7 @@ H_RELEASE -- "planDayIsAuto true" --> S_UNPLANNED
 %% Planners
 P_BTN -- "clearAutoFirst" --> P_PLAN
 P_CAL --> P_PLAN
+P_TMRW --> P_PLAN
 T_SCENE -- "after calendar refresh" --> P_AUTO
 P_AUTO -- "once per day" --> P_PLAN
 C_HOME -- "handlePlanIntent" --> P_REFINE
@@ -282,7 +284,9 @@ S_AUTO --> L_TIMELINE
 S_MANUAL --> L_TIMELINE
 L_LISTS --> L_FILLER
 S_AUTO --> L_FILLER
-L_LISTS --> L_CAL
+S_DAY -- "planDay, tested inline (its own copy of the rule, not lists(on:))" --> L_CAL
+S_UNPLANNED -- "anchorDay, tested inline" --> L_CAL
+S_EVENT -- "specificTime ?? dueDate" --> L_CAL
 L_LISTS --> L_MSGBOX
 L_LENS --> L_MSGBOX
 L_LENS --> L_NOTIF

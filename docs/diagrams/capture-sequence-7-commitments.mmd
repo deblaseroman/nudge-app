@@ -14,9 +14,10 @@ sequenceDiagram
   PHASE->>TASKS: read commitment parents
   PHASE->>COMMIT: insert commitment
   PHASE->>TASKS: delete parent row
+  PHASE->>COMMIT: dailyMinutes (split work)
   PHASE->>TASKS: insert daily rows
   PHASE->>ANN: write announcement keys
-  PHASE->>COMMIT: dailyMinutes, carryUnits
+  PHASE->>COMMIT: carryUnits (quantity)
   PHASE->>TASKS: quantity carry
   PHASE-->>RUN: returns created count
   RUN->>SHIFT: noteShift(.generatedWork)

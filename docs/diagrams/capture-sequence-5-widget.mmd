@@ -5,9 +5,12 @@ sequenceDiagram
   box rgba(14,111,111,0.10) App code
     participant PROV as NudgeWidget.swift<br/>getTimeline
     participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant GOALS as NudgeGoal rows<br/>NudgeGoal.swift
   end
   box rgba(93,100,113,0.16) OS framework
     participant WK as WidgetKit<br/>WidgetCenter
   end
   WK->>PROV: getTimeline
-  PROV->>TASKS: fetch rows
+  PROV->>TASKS: fetch open, recently completed and today's event rows
+  PROV->>GOALS: fetch active goals
+  PROV->>TASKS: fetch placed or planned rows for slot colors

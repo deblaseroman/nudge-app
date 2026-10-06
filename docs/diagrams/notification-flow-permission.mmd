@@ -4,17 +4,20 @@ flowchart TB
   UI_ONBOARD["OnboardingCompleteView.swift<br/>askPermission"]
   UI_SETTINGS["SettingsTabView.swift<br/>notificationPermissionCard"]
   N_AUTH["NudgeNotificationService.swift<br/>requestAuthorizationIfNeeded"]
+  N_STATE["NudgeNotificationService.swift<br/>authorizationState"]
   UNC["UserNotifications<br/>UNUserNotificationCenter"]
   UI_HOME["HomeTabView.swift<br/>notificationsDisabledBanner"]
 
   UI_ONBOARD --> N_AUTH
   UI_SETTINGS --> N_AUTH
   N_AUTH -- "requestAuthorization" --> UNC
-  UNC -- "status" --> N_AUTH
-  N_AUTH --> UI_HOME
+  N_AUTH -- "before and after asking" --> N_STATE
+  UNC -- "status" --> N_STATE
+  N_STATE --> UI_HOME
 
   click UI_ONBOARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Onboarding/OnboardingCompleteView.swift#L161" "Onboarding's permission step. Anything other than authorized shows the denied screen." _blank
   click UI_SETTINGS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L339" "Allow notifications button when notDetermined; Open system settings when denied; the status text otherwise." _blank
   click N_AUTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L95" "requestAuthorizationIfNeeded() asks only when authorizationState() is notDetermined, with options alert, badge, sound, providesAppNotificationSettings; authorized, provisional and ephemeral map to authorized; a thrown error maps to denied. No userNotificationCenter(_:openSettingsFor:) delegate method backs the providesAppNotificationSettings option." _blank
+  click N_STATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L80" "authorizationState() reads notificationSettings().authorizationStatus and never asks. Home calls only this (HomeTabView.swift:165); Settings and onboarding also call it to show the current status." _blank
   click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "notificationSettings().authorizationStatus and requestAuthorization(options:). iOS gates delivery on this status for every add site." _blank
   click UI_HOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L33" "Mirrors authorizationStatus; shows a banner when iOS reports denied while the profile's master toggle is on." _blank

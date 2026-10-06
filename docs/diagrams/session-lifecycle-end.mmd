@@ -1,11 +1,12 @@
 %% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
-%% commit ede6774 · close-up: every path that ends the Live Activity. Thick border = Activity.end is called here. The app-side paths run in the Nudge process; displayState and EndFocusSessionIntent.perform run in NudgeWidgetExtension. Arrows are unlabeled where several enter one box; the cases are a table on the page.
+%% commit ede6774 · close-up: every path that ends the Live Activity. Thick border = Activity.end is called here. The app-side paths run in the Nudge process; displayState and the widget target's EndFocusSessionIntent.perform run in NudgeWidgetExtension; the app target's intent of the same name runs in the Nudge process. Arrows are unlabeled where several enter one box; the cases are a table on the page.
 flowchart TB
   E_CARD["TasksTabView.swift<br/>startSessionButton"]
   E_TOGGLE["TasksTabView.swift<br/>toggleCompletion"]
   E_TIMER["SessionCoordinator.swift<br/>handleTimerExpired"]
   E_SYNC["SessionCoordinator.swift<br/>syncIfActivityDismissed"]
   E_START["SessionCoordinator.swift<br/>startSession"]
+  E_INTENT["Nudge/Services/FocusSessionIntents.swift<br/>EndFocusSessionIntent.perform"]
   E_COMPLETE["SessionCoordinator.swift<br/>completeCurrentTask"]
   E_FINISH["SessionCoordinator.swift<br/>finishSession"]
   E_CANCEL["SessionCoordinator.swift<br/>cancelSession"]
@@ -22,6 +23,7 @@ flowchart TB
   E_SYNC --> E_FINISH
   E_SYNC --> E_STOP
   E_START --> E_CANCEL
+  E_INTENT -- "no view references it" --> E_CANCEL
   E_FINISH --> E_STOP
   E_CANCEL --> E_STOP
   E_STOP --> AK_STOP
@@ -36,6 +38,7 @@ flowchart TB
   click E_TIMER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L371" "handleTimerExpired(). Run by sessionEndTimer at sessionEnd, scheduled by startSession or restoreSession. Plays the alarm, then finishSession. Only fires while the app process is alive and not suspended." _blank
   click E_SYNC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L233" "syncIfActivityDismissed(). Called at launch and on every scene-active. With a session in memory, the end passed and the key still present it calls finishSession. With no session in memory and a key or an activity left over that cannot be restored, it removes the key and calls endActivity directly, with no alarm." _blank
   click E_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L72" "startSession begins with cancelSession(), which ends the running session's activity before a new one is requested. cancelSession returns at once when no session is active in memory." _blank
+  click E_INTENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/FocusSessionIntents.swift#L34" "EndFocusSessionIntent.perform(), app target. Calls SessionCoordinator.cancelSession() on the main actor, then reloads NudgeTaskWidget. No view in either target references this type; whether Shortcuts can run it was not tested." _blank
   click E_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L170" "completeCurrentTask(). Returns when no session is active. Calls finishSession, then records the elapsed minutes in DurationModel, stamps actualMinutes and sessionCount on the task's newest NudgeOutcome, and reevaluates with .taskCompleted." _blank
   click E_FINISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L376" "finishSession(). cancelAllTimers, sessionState = .complete, alarm sound 1005, endActivity, sessionStartedAt = nil, publishSessionState(isActive: false). Three seconds later: isSessionActive = false, currentTask = nil, sessionState = .active, reevaluateAfterSessionEnd." _blank
   click E_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L328" "cancelSession(). Returns when no session is active. cancelAllTimers, endActivity, reset of every field, publishSessionState(isActive: false), reevaluateAfterSessionEnd. No alarm." _blank

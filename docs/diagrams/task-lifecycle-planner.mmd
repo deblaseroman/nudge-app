@@ -3,6 +3,7 @@
 flowchart TB
   P_BTN["TasksTabView.swift<br/>planMyDay"]
   P_CAL["CalendarTabView.swift<br/>planSelectedDay"]
+  P_TMRW["TasksTabView.swift<br/>planFutureDay"]
   P_AUTO["DayPlanEngine.swift<br/>autoPlanIfNewDay"]
   P_REFINE["DayPlanRefiner.swift<br/>refine"]
   P_CLEAR["TasksTabView.swift<br/>clearPlan"]
@@ -17,6 +18,7 @@ flowchart TB
 
   P_BTN --> P_PLAN
   P_CAL --> P_PLAN
+  P_TMRW --> P_PLAN
   P_AUTO --> P_PLAN
   P_REFINE --> P_APPLY
   P_CLEAR --> H_RELEASE
@@ -32,6 +34,7 @@ flowchart TB
   H_RELEASE -- "planDayIsAuto true" --> S_UNPLANNED
 
   click P_BTN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2093" "planMyDay: DayPlanEngine.planToday(clearAutoFirst: true), a replan. Writes PlanOutcomeContext for the message box on refusals, then reevaluates the arbiter on every outcome." _blank
+  click P_TMRW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1550" "planFutureDay: the Plan tomorrow button on the Tasks tab's Tomorrow lens (line 1520). DayPlanEngine.plan(day:) without clearing; placements are written with auto: false so that morning's run respects them." _blank
   click P_CAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L408" "planSelectedDay: DayPlanEngine.plan(day: selectedDay) without clearing. Placements on a future day are written with auto: false so that day's morning run respects them." _blank
   click P_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L549" "autoPlanIfNewDay, from the scene-active Task in ContentView after the calendar refresh, on the first foreground of a day. Once per day (nudge.autoPlan.lastRunDay); skipped when any auto placement already sits on today. planToday(clearAutoFirst: false); a placement writes PlanOutcomeContext .planned isAuto and triggers a reevaluate." _blank
   click P_REFINE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanRefiner.swift#L49" "refine(profile:modelContext:force:), from HomeTabView.handlePlanIntent when the chat recognises a plan-my-day request. Reads today's busy intervals and the top 8 open unplaced tasks (plan tasks first, no future-intent tasks), asks Claude for placements, then applyPlacements." _blank

@@ -40,7 +40,7 @@ subgraph APP ["Target: Nudge (app) · Nudge.entitlements: app group + family-con
     T_SESS["SessionCoordinator.swift<br/>startSession → .sessionStarted · completion → .taskCompleted · reevaluateAfterSessionEnd → .sessionEnded"]
     T_UI["TasksTabView.swift refreshNotifications() · HomeTabView.swift · CalendarTabView.swift · DayPlanRefiner.swift<br/>→ .taskCreatedOrEdited"]
     T_COPY["NudgeCopyService.swift<br/>NudgeCopyGenerator.noteShift → .taskCreatedOrEdited"]
-    T_DBG["EvalHarness.swift · CaptureHistoryExporter.swift<br/>DEBUG launch-argument runs only"]:::dead
+    T_DBG["EvalHarness.swift · CaptureHistoryExporter.swift · ContentView.swift -nudge-import-ical<br/>DEBUG launch-argument runs only"]:::dead
   end
 
   subgraph ARB ["NudgeArbiter.swift"]
@@ -311,7 +311,7 @@ C_FILL -- "first name" --> S_PROFILE
 R_BODY -- "nil → candidate.body (template)" --> R_SCHED
 R_SCHED -- "UNNotificationRequest(id, content, calendar trigger) · add" --> IOS_UNC
 R_SCHED -- "insert id" --> K_IDS
-R_SCHED -- "write fire time per kind" --> K_HIST
+R_SCHED -- "write per-kind history: fire time (eventBlock, dueSoon, placementMissed, goalLapse); named task by fire day (morningPrompt)" --> K_HIST
 R_SCHED -- "insert NudgeOutcome(.pending)" --> S_OUTCOME
 R_REEVAL -- "after scheduling" --> D_SNAP_W
 

@@ -91,7 +91,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 <div class="wrap">
 <header>
   <h1>Nudge Diagram Index</h1>
-  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-06 · source: <code>docs/diagrams/index.mmd</code> · page: <code>docs/diagrams/index.html</code></div>
+  <div class="stamp">commit <code>ede6774</code> (2026-10-04) · main · drawn 2026-10-06 · source: <code>docs/diagrams/index.mmd</code> · page: <code>docs/diagrams/index.html</code></div>
 </header>
 <p class="lede">One map of the whole app. Each region is one of the six diagram sets in <code>docs/diagrams</code>, drawn with a few of that set's own boxes. Click a region's title or any box in it to open that set's page. Hover a box for what it does and which close-up covers it.</p>
 
@@ -117,7 +117,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
     <script type="text/plain" class="mmd-src">
 %% artifact: https://claude.ai/artifact/KDDqj1uEg7eTPpJpsKNsiM
-%% commit ede6774 (2026-10-06) · index: one map of the whole app. Each region is one diagram set in docs/diagrams, drawn with a few of that set's own boxes (file + function or type). Every box opens its set's artifact page, the link on the first line of that set's .mmd file.
+%% commit ede6774 (2026-10-04) · index: one map of the whole app. Each region is one diagram set in docs/diagrams, drawn with a few of that set's own boxes (file + function or type). Every box opens its set's artifact page, the link on the first line of that set's .mmd file.
 %% Arrows inside a region are unlabeled and explained on that set's page. Labeled arrows between regions say how the sets connect. Cylinder = stored state, stadium = state, thick border = a UNNotificationRequest is added here, thick arrow = done by iOS, line without an arrowhead = runs in.
 %% Sets: capture-sequence.mmd, task-lifecycle.mmd, copy-sequence.mmd, session-lifecycle.mmd, notification-flow.mmd, system-context.mmd. Page: docs/diagrams/index.html.
 flowchart TB
@@ -226,9 +226,9 @@ flowchart TB
   click TL_PREP href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Generated rows: ExamPrepSweep.run inserts daily commitment rows and deletes spent ones, PlanProposalSweep adds accepted prep plans. Close-up: task-lifecycle-generated." _blank
   click TL_PLACE href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. User placement: placeTask sets a manual start through setPlanStart. removeFromTimeline and the editor sheet change or clear it. Close-up: task-lifecycle-placement." _blank
   click TL_DONE href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Completion: toggleCompletion sets isComplete and inserts or deletes the CompletedTaskRecord. The widget's CompleteTaskIntent completes rows from outside the app. Close-up: task-lifecycle-completion." _blank
-  click TL_ROWS href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. The persisted model. Row states: unplanned, plan day set, auto-placed, manually placed, overdue, plan sequence, event, complete, deleted. The plan helpers setPlanDay, setPlanStart, clearPlanTime, clearPlan and releaseAutoPlan are the only writers of the plan." _blank
+  click TL_ROWS href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. The persisted model. Row states: unplanned, plan day set, auto-placed, manually placed, overdue, plan sequence, event, complete, deleted. The plan helpers setPlanDay, setPlanStart, clearPlanTime, clearPlan and releaseAutoPlan write the plan, except three direct writes: the rollover clears intendedDate on a completed row, and TimelineReflow and the task editor write plannedDurationMinutes." _blank
   click TL_PLAN href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Planners: DayPlanEngine.plan takes unplanned and day-planned rows as candidates and places today's automatically. autoPlanIfNewDay runs it once per day. Close-up: task-lifecycle-planner." _blank
-  click TL_SWEEP href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Rollover at launch, foreground and 6 AM: sweep clears plan times from before today and slips or clears the plan day, sweepMissedSessions logs missed sessions. Close-up: task-lifecycle-rollover." _blank
+  click TL_SWEEP href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Rollover at launch and on foreground (the 6 AM background task does not run it): sweep clears plan times from before today and slips or clears the plan day, sweepMissedSessions logs missed sessions. Close-up: task-lifecycle-rollover." _blank
   click TL_LISTS href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Readers: lists(on:), belongs(to:), isUnscheduled and isOverdue decide which list, screen, widget or process sees a row." _blank
 
   click CP_GEN href "https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X" "Copy sequence. NudgeCopyGenerator asks Claude for the lines, saves them and calls reevaluate. Stages 1 to 6 draw this path function by function. Stages 7 to 9 are the other places text is set." _blank

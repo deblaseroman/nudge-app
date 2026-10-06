@@ -107,7 +107,7 @@ a { color: var(--accent); }
 <div class="wrap">
 <header>
   <h1>Nudge Copy Sequence</h1>
-  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-06 · reference: <code>docs/diagrams/copy-sequence.mmd</code> · page: <code>docs/diagrams/copy-sequence.html</code></div>
+  <div class="stamp">commit <code>ede6774</code> (2026-10-04) · main · drawn 2026-10-06 · reference: <code>docs/diagrams/copy-sequence.mmd</code> · page: <code>docs/diagrams/copy-sequence.html</code></div>
 </header>
 <p class="lede">Every place the words of a notification are decided: where they come from, when and how often they are produced, where they are kept, how they are attached when a request is scheduled, and every case where other words are used instead. Each picture has at most five boxes. Every box names a file and a function, clicks through to that file at this commit, and is described in the table under its picture. Arrows are numbered; the steps table under each picture says what each one passes, reads or writes.</p>
 
@@ -264,7 +264,7 @@ sequenceDiagram
   <div class="tablewrap"><table>
     <tr><th class="k">Caller</th><th>Trigger</th><th>When</th></tr>
     <tr><td class="k"><a data-f="Nudge/ContentView.swift#L277">ContentView.onChange(scenePhase)</a></td><td><code>.newDay</code>, or <code>.calendarImport</code> when the calendar refresh in the same Task imported at least one event</td><td>Every time the scene becomes active, after the calendar refresh and the auto-plan.</td></tr>
-    <tr><td class="k"><a data-f="Nudge/Services/ExamPrepSweep.swift#L373">ExamPrepSweep.run</a> → noteShift</td><td><code>.generatedWork</code></td><td>When the sweep created at least one study or commitment task.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/ExamPrepSweep.swift#L373">ExamPrepSweep.run</a> → noteShift</td><td><code>.generatedWork</code></td><td>When the commitment phase created at least one daily row. Exams no longer expand here; a study plan is written by PlanProposalSweep.accept (next row).</td></tr>
     <tr><td class="k"><a data-f="Nudge/Services/PlanProposalSweep.swift#L569">PlanProposalSweep.accept</a> → noteShift</td><td><code>.generatedWork</code></td><td>When accepting a plan proposal wrote at least one session row.</td></tr>
   </table></div>
 
@@ -713,7 +713,7 @@ sequenceDiagram
   autonumber
   box rgba(14,111,111,0.10) App code
     participant EXT as DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold
-    participant KEYS as Screen Time keys<br/>DistractionSettings.swift
+    participant KEYS as Screen Time keys<br/>DistractionSettings.swift + extension file
     participant DECIDE as DistractionSettings.swift<br/>LimitDecider.decide
     participant TEXT as DistractionSettings.swift<br/>LimitDecision.placeholderTitle
   end
