@@ -10,14 +10,13 @@ sequenceDiagram
   end
   box rgba(93,100,113,0.16) OS framework
     participant URLS as Foundation<br/>URLSession
-    participant NC as Foundation<br/>NotificationCenter
   end
   box rgba(179,64,31,0.14) External service
     participant API as api.anthropic.com<br/>POST /v1/messages
   end
-  RUNP->>TASKS: applyUserPlanOverrides: delete app-made prep rows a user task now covers
+  RUNP->>TASKS: delete covered prep rows
   RUNP->>DEC: mark those anchors userOwned
-  Note over RUNP: steps 1 and 2 run even with the message box off, the rest stops there
+  Note over RUNP: box off: stops here
   RUNP->>DEC: read decisions, call count
   RUNP->>DEC: noteCall
   RUNP->>PROPOSE: proposePlans(candidates)
@@ -27,4 +26,3 @@ sequenceDiagram
   URLS-->>PROPOSE: returns data, response
   PROPOSE-->>RUNP: returns results or nil
   RUNP->>DEC: write decisions
-  RUNP->>NC: post nudgePlanProposalsChanged

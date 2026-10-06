@@ -739,14 +739,13 @@ sequenceDiagram
   end
   box rgba(93,100,113,0.16) OS framework
     participant URLS as Foundation<br/>URLSession
-    participant NC as Foundation<br/>NotificationCenter
   end
   box rgba(179,64,31,0.14) External service
     participant API as api.anthropic.com<br/>POST /v1/messages
   end
-  RUNP->>TASKS: applyUserPlanOverrides: delete app-made prep rows a user task now covers
+  RUNP->>TASKS: delete covered prep rows
   RUNP->>DEC: mark those anchors userOwned
-  Note over RUNP: steps 1 and 2 run even with the message box off, the rest stops there
+  Note over RUNP: box off: stops here
   RUNP->>DEC: read decisions, call count
   RUNP->>DEC: noteCall
   RUNP->>PROPOSE: proposePlans(candidates)
@@ -756,7 +755,6 @@ sequenceDiagram
   URLS-->>PROPOSE: returns data, response
   PROPOSE-->>RUNP: returns results or nil
   RUNP->>DEC: write decisions
-  RUNP->>NC: post nudgePlanProposalsChanged
     </script>
     <script type="application/json" class="mmd-links">{
 "RUNP": ["Nudge/Services/PlanProposalSweep.swift#L308", "runIfNeeded(modelContext:now:). Returns at once; the call runs in a Task. First runs applyUserPlanOverrides (line 216), which deletes app-made prep rows when one of the user's own tasks reads as their plan."],
@@ -764,7 +762,6 @@ sequenceDiagram
 "TASKS": ["Nudge/Services/PlanProposalSweep.swift#L216", "applyUserPlanOverrides: among up to 300 open rows, deletes source == \"prep\" sessions of an anchored parent when a user task's title reads as the plan for it (line 235), then saves."],
 "DEC": ["Nudge/Services/PlanProposalSweep.swift#L68", "PlanProposalStore: App Group keys nudge.planProposals (JSON of decisions per parent id), nudge.planProposals.callsDay, nudge.planProposals.callsCount."],
 "URLS": ["https://developer.apple.com/documentation/foundation/urlsession", "URLSession.shared.data(for: req) at ClaudeService.swift:1455."],
-"NC": ["https://developer.apple.com/documentation/foundation/notificationcenter", "NotificationCenter.default.post(name: .nudgePlanProposalsChanged). Observed by TasksTabView.swift:777, which re-reads currentProposal."],
 "API": ["Nudge/Services/ClaudeService.swift#L75", "https://api.anthropic.com/v1/messages"]
 }</script>
     <figcaption>Steps 1 and 2 run on every call. No request is made when the message box is off, a call is in flight, two calls were already made today, or no candidate is left.</figcaption>
@@ -775,7 +772,7 @@ sequenceDiagram
   <h3>Steps</h3>
   <div class="tablewrap"><table>
     <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
-    <tr><td class="n">1</td><td class="k">runIfNeeded → NudgeTask rows</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L310">:310</a>, <a data-f="Nudge/Services/PlanProposalSweep.swift#L216">applyUserPlanOverrides</a></td><td>For each anchored parent with app-made sessions (<code>source == "prep"</code>), if one of the user's own open tasks reads as their plan for it, deletes those sessions (<a data-f="Nudge/Services/PlanProposalSweep.swift#L235">:235</a>) and saves. Runs before the message-box check at <a data-f="Nudge/Services/PlanProposalSweep.swift#L315">:315</a>.</td></tr>
+    <tr><td class="n">1</td><td class="k">runIfNeeded → NudgeTask rows</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L310">:310</a>, <a data-f="Nudge/Services/PlanProposalSweep.swift#L216">applyUserPlanOverrides</a></td><td>For each anchored parent with app-made sessions (<code>source == "prep"</code>), if one of the user's own open tasks reads as their plan for it, deletes those sessions (<a data-f="Nudge/Services/PlanProposalSweep.swift#L235">:235</a>) and saves. Runs before the message-box check at <a data-f="Nudge/Services/PlanProposalSweep.swift#L315">:315</a>, so steps 1 and 2 run even with the message box off; with the box off, nothing after step 2 runs.</td></tr>
     <tr><td class="n">2</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L238">:238–245</a></td><td>Marks each such parent <code>userOwned</code> so it is never proposed again, writes the store and posts <code>.nudgePlanProposalsChanged</code> when anything was removed.</td></tr>
     <tr><td class="n">3</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L317">:317</a>, <a data-f="Nudge/Services/PlanProposalSweep.swift#L263">candidates</a></td><td>Reads today's call count and the stored decisions (an item already decided for the same anchor day is not a candidate).</td></tr>
     <tr><td class="n">4</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L357">PlanProposalStore.noteCall</a></td><td>Writes the day stamp and the incremented count, before the call.</td></tr>
@@ -783,8 +780,7 @@ sequenceDiagram
     <tr><td class="n">6, 7</td><td class="k">proposePlans → URLSession → api.anthropic.com</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1438">ClaudeService.swift:1438–1455</a></td><td>POST. Body: <code>model</code> claude-opus-5, <code>max_tokens</code> 4000, <code>fallbacks</code> "default", <code>output_config</code> {effort: "low"}, <code>system</code>, <code>messages</code> [{user, prompt}]. Adds the <code>anthropic-beta</code> fallback header.</td></tr>
     <tr><td class="n">8, 9</td><td class="k">api.anthropic.com → URLSession → proposePlans</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1456">ClaudeService.swift:1456–1488</a></td><td>validateResponse, envelope, first text block, strip fences, take <code>[ … ]</code>, decode <code>[PlanProposalResult]</code>.</td></tr>
     <tr><td class="n">10</td><td class="k">proposePlans → runIfNeeded</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L360">try?</a></td><td>Returns the results, or nil on any throw (then nothing is stored).</td></tr>
-    <tr><td class="n">11</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L372">:372–384</a></td><td>One decision per result: status proposed or notWorth, anchor stamp, parent title, reason, the sessions after <a data-f="Nudge/Services/PlanProposalSweep.swift#L461">validSessions</a> clamps them.</td></tr>
-    <tr><td class="n">12</td><td class="k">runIfNeeded → NotificationCenter</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L385">PlanProposalSweep.swift:385</a></td><td>Posts <code>.nudgePlanProposalsChanged</code>. A Yes in the message box later calls <a data-f="Nudge/Services/PlanProposalSweep.swift#L527">accept</a>, which writes the rows shown in picture 10.</td></tr>
+    <tr><td class="n">11</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L372">:372–384</a></td><td>One decision per result: status proposed or notWorth, anchor stamp, parent title, reason, the sessions after <a data-f="Nudge/Services/PlanProposalSweep.swift#L461">validSessions</a> clamps them. Then posts <code>.nudgePlanProposalsChanged</code> on NotificationCenter (<a data-f="Nudge/Services/PlanProposalSweep.swift#L385">:385</a>), observed by TasksTabView.swift:777, which re-reads currentProposal. A Yes in the message box later calls <a data-f="Nudge/Services/PlanProposalSweep.swift#L527">accept</a>, which writes the rows shown in picture 10.</td></tr>
   </table></div>
 </section>
 
