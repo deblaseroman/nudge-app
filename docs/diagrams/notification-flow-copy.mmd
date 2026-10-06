@@ -1,0 +1,54 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: AI copy — generated ahead by Claude, cached in App Group defaults, validated and filled by the arbiter at scheduling time.
+flowchart TB
+  T_CV_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  T_COPY["NudgeCopyService.swift<br/>NudgeCopyGenerator.noteShift"]
+  C_GEN["NudgeCopyService.swift<br/>NudgeCopyGenerator.generateIfNeeded"]
+  C_REQ["NudgeCopyService.swift<br/>NudgeCopyGenerator.buildRequests"]
+  S_TASK["NudgeTask.swift<br/>NudgeTask"]
+  C_CLAUDE["ClaudeService.swift<br/>generateNudgeCopy"]
+  C_SECRETS["Secrets.plist<br/>ANTHROPIC_API_KEY"]
+  K_COPY["App Group<br/>nudge.copy.cache"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+  R_SCHED["NudgeArbiter.swift<br/>schedule"]
+  R_BODY["NudgeArbiter.swift<br/>resolvedBody"]
+  C_STORE["NudgeCopyService.swift<br/>NudgeCopyStore.validBody"]
+  C_FILL["NudgeCopyService.swift<br/>NudgeCopyFill.fill"]
+
+  T_CV_SCENE -- "newDay, calendarImport" --> C_GEN
+  T_COPY -- "generatedWork" --> C_GEN
+  C_GEN -- "throttles" --> K_COPY
+  C_GEN --> C_REQ
+  C_REQ --> S_TASK
+  C_GEN --> C_CLAUDE
+  C_SECRETS --> C_CLAUDE
+  C_CLAUDE -- "bodies" --> C_GEN
+  C_GEN -- "save" --> K_COPY
+  C_GEN -- "new copy" --> R_REEVAL
+  R_REEVAL --> R_SCHED
+  R_SCHED --> R_BODY
+  R_BODY --> C_STORE
+  C_STORE --> K_COPY
+  C_STORE -- "still valid?" --> S_TASK
+  C_STORE -- "line or nil" --> R_BODY
+  R_BODY --> C_FILL
+  C_FILL --> S_TASK
+  C_FILL -- "filled or nil" --> R_BODY
+  R_BODY -- "body" --> R_SCHED
+
+  classDef add stroke-width:3px
+  class R_SCHED add
+
+  click T_CV_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L275" "In the scene-active Task, after purge, rollover, calendar refresh and auto-plan. Trigger is .calendarImport when the refresh imported events, else .newDay. A true result triggers a reevaluate with .taskCreatedOrEdited." _blank
+  click T_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L338" "noteShift(_:modelContext:) is fire-and-forget: generateIfNeeded(.generatedWork), then reevaluate(.taskCreatedOrEdited) if new copy landed. Called from ExamPrepSweep.run and PlanProposalSweep." _blank
+  click C_GEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L246" "generateIfNeeded(trigger:modelContext:now:). Throttles read from App Group defaults: skips .newDay when nudge.copyGen.lastRunDay is today; skips any trigger within copyGenMinMinutesBetween 15 of nudge.copyGen.lastAttempt; stops at copyGenMaxPerDay 6 generations for the day. An empty request list stamps the day and returns false. Passes the profile's first name. On success: NudgeCopyStore.save, recordGeneration, appendHistory, stamp the day, return true. A failed call leaves the old cache. DEBUG flag -nudge-regenerate-copy forces one pass per launch." _blank
+  click C_REQ href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L373" "buildRequests fetches up to 80 open rows. Per-task lines, copyGenTasksPerKind 4 each: morningPrompt (stakes-first, nearer deadline), prep and dueSoon (dated, deadline ahead and inside copyCacheDays + 2), eventBlock (upcoming events), placementLead and placementMissed (placed tasks), floater (undated, TaskSortComparator order). Kind-generic lines: idle, comeBack, goalLapse. Each request names its fillable placeholders: task, due, time, day, name, goal, and carries dueAtGeneration." _blank
+  click S_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift" "Generation reads the open list (isComplete, isInformationalEvent, dueDate, specificTime, sortDeadline, plannedStartDate, stakes). Validation re-reads the named task. Fill reads the task's title, deadline and planned slot, the NudgeGoal title for goalLapse, and UserProfile.name." _blank
+  click C_CLAUDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L947" "generateNudgeCopy(requests:userName:recentBodies:) — one batched request; the last copyHistoryLimit 40 lines are passed as do-not-echo examples; returns bodies by request index." _blank
+  click C_SECRETS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L20" "Primary key source read by ClaudeService. With no key, generation fails and every nudge uses its template." _blank
+  click K_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L69" "nudge.copy.cache (JSON array of kindRaw, taskID, taskTitle, dueAtGeneration, body), nudge.copy.generatedAt, nudge.copy.history, nudge.copy.countDay, nudge.copy.count, nudge.copyGen.lastRunDay, nudge.copyGen.lastAttempt." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L283" "New copy triggers another reevaluate with .taskCreatedOrEdited so scheduled requests carry it." _blank
+  click R_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4094" "content.body = resolvedBody(for: candidate)." _blank
+  click R_BODY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4214" "resolvedBody(for:modelContext:). A synchronous cache read with no API call in the arbiter's path. Looks up by namedTaskID ?? taskID. Every kind swaps since Oct 4 2026. Any nil returns candidate.body, the template." _blank
+  click C_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L140" "validBody(kind:taskID:fireDate:modelContext:). nil when generatedAt is missing, older than copyCacheDays 3, or in the future. Prefers the (kind, task) entry, else the kind-generic one. A task-keyed entry is served only while the task is still open and its effective deadline (specificTime, else end-of-day sortDeadline) equals dueAtGeneration to the minute, or is still absent when written as undated." _blank
+  click C_FILL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L527" "fill(_:candidate:modelContext:). Replaces task, goal, name, due, time, day. Anchor: eventBlock → specificTime; dueSoon, prep, morningPrompt → specificTime or the end-of-day deadline; placementLead, placementMissed → plannedStartDate. day is relative to the candidate's fireDate (today, tomorrow, yesterday, weekday, month day). due carries its own tense (was due yesterday / due tomorrow at 3:00 PM) and a leading is / was / due is stripped. time for a bare due date reads the end of the day. Any unresolved placeholder → nil → template." _blank

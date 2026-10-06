@@ -1,0 +1,51 @@
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: rows the app generates (commitment dailies, proposed study sessions), how they are consumed, and the tombstone that stops a deleted day coming back. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  G_RUN["ExamPrepSweep.swift<br/>run"]
+  G_PROPOSE["PlanProposalSweep.swift<br/>runIfNeeded"]
+  G_ACCEPT["PlanProposalSweep.swift<br/>accept"]
+  U_DELETE["TasksTabView.swift<br/>deleteTask"]
+  G_PHASE["ExamPrepSweep.swift<br/>commitmentPhase"]
+  G_CARRY["ExamPrepSweep.swift<br/>applyQuantityCarry"]
+  G_OVERRIDE["PlanProposalSweep.swift<br/>applyUserPlanOverrides"]
+  G_COMMITROW["shape · endDate · carryUnits<br/>NudgeCommitment.swift"]
+  D_MISSED["PlacementRollover.swift<br/>sweepMissedSessions"]
+  G_TOMB["ExamPrepSweep.swift<br/>recordDeletionIfGenerated"]
+  K_TOMB["examEventId · dayStamp<br/>PrepTombstone.swift"]
+  S_UNPLANNED(["intendedDate nil · dueDate 23:59<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · source prep<br/>NudgeTask.swift"])
+  S_GONE(["row deleted<br/>NudgeTask.swift"])
+
+  G_RUN --> G_PHASE
+  G_PHASE --> G_CARRY
+  G_PHASE -- "insert" --> G_COMMITROW
+  G_PHASE --> S_GONE
+  G_PHASE -- "daily per day" --> S_UNPLANNED
+  K_TOMB --> G_PHASE
+  G_COMMITROW --> G_CARRY
+  G_CARRY --> S_GONE
+  G_PROPOSE --> G_OVERRIDE
+  G_OVERRIDE --> S_GONE
+  K_TOMB --> G_ACCEPT
+  G_ACCEPT -- "setPlanDay" --> S_DAY
+  S_DAY -- "day passed" --> D_MISSED
+  D_MISSED --> G_TOMB
+  D_MISSED --> S_GONE
+  U_DELETE --> G_TOMB
+  U_DELETE --> S_GONE
+  G_TOMB --> K_TOMB
+
+  click G_RUN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L350" "run(modelContext:now:), called from ContentView on launch and every foreground, HomeTabView.sendMessage after a capture, TasksTabView.createSessionItem. Exams no longer expand here; only the commitment phase writes. New rows trigger NudgeCopyGenerator.noteShift." _blank
+  click G_PROPOSE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L308" "runIfNeeded, called from ContentView, HomeTabView, TasksTabView (editor saves, Add your own), CalendarTabView. Always applyUserPlanOverrides first. Then, with the message box on and under the daily call cap, asks Claude whether open anchored items are worth a plan and stores proposals; it writes no task rows itself." _blank
+  click G_ACCEPT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L527" "accept: one source prep row per session with setPlanDay(session day), no deadline, linkedEventId = parent id; skips tombstoned days and existing (day, title) pairs. Called by answerPlanProposal (message box Yes) and requestPlan (chat Yes)." _blank
+  click U_DELETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1972" "deleteTask (swipe) and the editor's onDelete in TasksTabView and CalendarTabView: recordDeletionIfGenerated, then delete, save, widget reload, arbiter." _blank
+  click G_PHASE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L389" "commitmentPhase. Step 1: every open parent with commitmentShapeRaw whose numbers are known and whose start-day question is not outstanding today becomes a NudgeCommitment (start day from commitmentStartDate or the viability default) and the parent is deleted. Step 2: per commitment, the missing day stamps inside the horizon (7 days; split work once, rate and quantity topped up) get a daily: title = sessionTitle or the goal name, dueDate = 23:59 of the day, source commitment, linkedEventId = commitment id, estimatedMinutes = dailyMinutes, targetCount for quantity. Tombstoned days are skipped. Step 3: applyQuantityCarry." _blank
+  click G_CARRY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L659" "applyQuantityCarry: each quantity daily with a dueDate before today is consumed in date order (its shortfall becomes NudgeCommitment.carryUnits, capped) and deleted; today's daily gets carriedCount stamped." _blank
+  click G_OVERRIDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L216" "applyUserPlanOverrides: for a parent with app-made prep sessions, if one of the user's own open tasks reads as their plan for it (title match), the sessions are deleted and the decision marked userOwned." _blank
+  click G_COMMITROW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeCommitment.swift" "The durable parent after expansion: title, sessionTitle, shape, endDate, startDate, totalMinutes, dailyMinutes, dailyCount, carryUnits, sourceTaskId." _blank
+  click D_MISSED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L147" "sweepMissedSessions on launch and foreground: an open prep row whose day has passed is tombstoned, logged as missed, deleted." _blank
+  click G_TOMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L721" "recordDeletionIfGenerated: only for source prep or commitment rows with a linkedEventId; the day stamp is dueDate ?? intendedDate. One tombstone per (parent, day); the message-box note is shown once per parent." _blank
+  click K_TOMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/PrepTombstone.swift" "examEventId (parent id), examTitle, dayStamp, noteShownAt. Read by commitmentPhase and accept so a deleted day is never recreated." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "A commitment daily: owed at 23:59 of its day, no plan day, so belongs(to:) puts it in Today on that day by its anchor; the planner places it only on its own day; the dueSoon builder skips it." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "A study session: planned for its day, never due; the planner places it only on that day; not counted as a slip by the rollover." _blank
+  click S_GONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L477" "Deleted rows: the expanded commitment parent, consumed past quantity dailies, app sessions outranked by the user's own plan, missed prep sessions, and user deletions." _blank

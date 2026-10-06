@@ -1,0 +1,26 @@
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · state machine: the focus session behind the Live Activity (SessionCoordinator memory plus the activeSessionState App Group key), through suspension, process death and relaunch. Flowchart syntax so every state links to its file and has a tooltip. One arrow per pair of states, labeled with the main function; other triggers are in the triggers table on the page. Thick arrow = done by iOS, no app code runs. The Live Activity's own states are in session-lifecycle-activity.mmd.
+%% Close-ups: session-lifecycle-activity.mmd (Live Activity states), -start.mmd, -end.mmd, -sync.mmd, -widget.mmd. Page: docs/diagrams/session-lifecycle.html.
+flowchart TB
+  S_IDLE(["SessionCoordinator.swift<br/>isSessionActive = false"])
+  S_RUN(["SessionCoordinator.swift<br/>isSessionActive = true"])
+  S_DONE(["SessionCoordinator.swift<br/>sessionState = .complete"])
+  S_PUB[("activeSessionState<br/>SessionCoordinator.swift")]
+  S_DET(["SessionCoordinator.swift<br/>widgetEnded"])
+
+  S_IDLE -- "startSession" --> S_RUN
+  S_RUN -- "finishSession" --> S_DONE
+  S_DONE -- "finishSession, 3 s later" --> S_IDLE
+  S_RUN -- "cancelSession" --> S_IDLE
+  S_RUN == "iOS ends the process" ==> S_PUB
+  S_PUB -- "restoreSession" --> S_RUN
+  S_PUB -- "syncIfActivityDismissed" --> S_IDLE
+  S_RUN -- "CompleteTaskIntent.perform" --> S_DET
+  S_DET -- "syncIfActivityDismissed" --> S_IDLE
+  S_DET -- "handleTimerExpired" --> S_DONE
+
+  click S_IDLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L27" "No session. isSessionActive false, currentTask nil, sessionStartedAt nil, no pending work items, no activeSessionState key. The Tasks tab and the widget show Start Session." _blank
+  click S_RUN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L76" "Running in this process. isSessionActive true, sessionState .active, currentTask set, sessionEnd = start + estimatedMinutes (60 when nil), sessionStartedAt set. Up to three in-process work items wait: the end timer, the 20-minute alert, its 10-second revert. The key holds isActive, isPaused false, timerEndDate, currentTaskID, startedAt. A suspended app stays here: nothing runs and the work items wait." _blank
+  click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L378" "The 3-second completion card. sessionState .complete while isSessionActive is still true. Timers cancelled, sessionStartedAt nil, key already removed, endActivity already requested. The arbiter's active-session gate still sees a session until the deferred block runs." _blank
+  click S_PUB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L485" "Stored session with no process behind it. The app process that started it is gone, so there is no memory and no timer. What is left: the App Group key (isActive, isPaused, timerEndDate, currentTaskID, startedAt) and the Live Activity, whose stale date is the end instant." _blank
+  click S_DET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L276" "Ended from outside while this process still holds it. isSessionActive is true, but the key is gone (widgetEnded = published == nil) or the Live Activity is gone. The widget process cannot reach the coordinator, so this lasts until the next scene-active or until the pending end timer fires." _blank

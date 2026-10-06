@@ -1,0 +1,26 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 2 of the capture path: the request ClaudeService builds, the single POST, and how the reply is parsed into ClaudeResponse. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant CHAT as ClaudeService.swift<br/>sendChat
+    participant REQ as ClaudeService.swift<br/>makeRequest
+    participant PARSE as ClaudeService.swift<br/>parseResponse
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  SEND->>CHAT: sendChat
+  CHAT->>REQ: makeRequest(body)
+  REQ->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>REQ: returns data, response
+  REQ->>PARSE: parseResponse(text)
+  PARSE-->>REQ: returns ClaudeResponse
+  REQ-->>CHAT: returns ClaudeResponse
+  CHAT-->>SEND: returns ClaudeResponse

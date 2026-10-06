@@ -1,0 +1,47 @@
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: the app's network calls and its import paths (iCal link, Apple Calendar, screenshot). Arrow out of a service or framework = read; arrow into Nudge.store = write. ClaudeService's eight request functions are a table on the page.
+flowchart TB
+  K_SECRETS[("ANTHROPIC_API_KEY<br/>Secrets.plist")]
+  OS_PHOTOS["PhotosUI<br/>PhotosPicker"]
+  N_PICK["CalendarTabView.swift<br/>handleScreenshotPicked"]
+  N_SHOT["ScreenshotCalendarImporter.swift<br/>importFromImage"]
+  OS_VISION["Vision<br/>VNRecognizeTextRequest"]
+  N_CLAUDE["ClaudeService.swift<br/>ClaudeService"]
+  X_ANTH["api.anthropic.com<br/>POST /v1/messages"]
+  N_ICAL["CalendarService.swift<br/>importCanvasICal"]
+  N_FETCH["CalendarService.swift<br/>fetchICalEvents"]
+  X_ICAL["iCal feed host<br/>GET calendarImportURL"]
+  N_ACCESS["CalendarService.swift<br/>requestCalendarAccess"]
+  OS_EK["EventKit<br/>EKEventStore"]
+  N_EK["CalendarService.swift<br/>importAppleCalendar"]
+  ST_STORE[("Nudge.store<br/>SharedModelContainer.swift")]
+
+  OS_PHOTOS --> N_PICK
+  N_PICK --> N_SHOT
+  N_SHOT --> OS_VISION
+  N_SHOT --> N_CLAUDE
+  K_SECRETS --> N_CLAUDE
+  N_CLAUDE --> X_ANTH
+  X_ANTH --> N_CLAUDE
+  N_ICAL --> N_FETCH
+  X_ICAL --> N_FETCH
+  N_ACCESS --> OS_EK
+  OS_EK --> N_EK
+  N_SHOT --> ST_STORE
+  N_ICAL --> ST_STORE
+  N_EK --> ST_STORE
+
+  click K_SECRETS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L23" "Bundle.main Secrets.plist, key ANTHROPIC_API_KEY, read once into ClaudeService.apiKey. Fallbacks in the same initializer: an Info.plist key of the same name, then the process environment." _blank
+  click OS_PHOTOS href "https://developer.apple.com/documentation/photosui/photospicker" "PhotosPicker(selection:matching: .images) in the Calendar tab. The picked item is loaded as Data with loadTransferable." _blank
+  click N_PICK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L780" "handleScreenshotPicked(_ item). Loads the image data and hands a UIImage to ScreenshotCalendarImporter.shared.importFromImage." _blank
+  click N_SHOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ScreenshotCalendarImporter.swift#L39" "importFromImage(_:defaultCategory:modelContext:). Step 1: recognizeText runs Vision on the device. Step 2: ClaudeService.parseScheduleScreenshot sends the JPEG and the transcript. Step 3: inserts the events as NudgeTask rows and reloads the widget timeline." _blank
+  click OS_VISION href "https://developer.apple.com/documentation/vision/vnrecognizetextrequest" "VNRecognizeTextRequest through VNImageRequestHandler(cgImage:) in recognizeText (L154). On-device text recognition; returns text fragments with their positions." _blank
+  click N_CLAUDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L17" "ClaudeService.shared. Eight functions build a JSON body and call URLSession.shared.data(for:) on the same URL. sendChat goes through makeRequest; the other seven build their own URLRequest. Functions, models and callers are in the table under the picture." _blank
+  click X_ANTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L75" "https://api.anthropic.com/v1/messages. Headers: Content-Type, x-api-key, anthropic-version 2023-06-01, and anthropic-beta server-side-fallback-2026-07-01 on the memo and plan calls. Sent straight from the device with the bundled key." _blank
+  click N_ICAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L397" "importCanvasICal(urlString:modelContext:). Calls fetchICalEvents, then writeICalEvents, which inserts NudgeTask rows with source calendar. Called from the Calendar tab and, once a day, from refreshICalFeedIfNeeded on scene-active." _blank
+  click N_FETCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L341" "fetchICalEvents(urlString:). Rewrites webcal to https, accepts only http or https, URLSession.shared.data(from:), needs a 2xx status and a body containing BEGIN:VCALENDAR, then parses it. Also used by checkICalFeed, which imports nothing." _blank
+  click X_ICAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L353" "Whatever host the user's link names: Canvas, Google, Outlook or any other .ics address. A plain GET; no credentials or app data are sent." _blank
+  click N_ACCESS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L64" "requestCalendarAccess(). eventStore.requestFullAccessToEvents(). The usage string is NSCalendarsFullAccessUsageDescription in Nudge/Info.plist." _blank
+  click OS_EK href "https://developer.apple.com/documentation/eventkit/ekeventstore" "EKEventStore: authorizationStatus(for: .event), calendars(for: .event), predicateForEvents and events(matching:). The app only reads; no EventKit save or remove call exists." _blank
+  click N_EK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L233" "importAppleCalendar(modelContext:selectedCalendarIDs:...). Reads events in the rolling window from the chosen calendars and inserts NudgeTask rows with source calendar, skipping duplicates by title and due date." _blank
+  click ST_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L74" "All three import paths insert NudgeTask rows and save the model context." _blank

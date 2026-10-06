@@ -1,0 +1,76 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: one arbiter run, from debounce through scheduling. Gates are drawn in the order passesGates checks them. Builder and gate inputs are tables on the page.
+flowchart TB
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+  R_DEBOUNCE{"NudgeArbiter.swift<br/>lastReevaluatedAt"}
+  R_CANCEL["NudgeArbiter.swift<br/>cancelAll"]
+  R_MASTER{"UserProfile.swift<br/>notificationsEnabled"}
+  B_ALL["NudgeArbiter.swift<br/>build…Candidates"]
+  R_TIER["NudgeArbiter.swift<br/>tier"]
+  R_CAND["NudgeArbiter.swift<br/>NudgeCandidate"]
+  R_GATES["NudgeArbiter.swift<br/>passesGates"]
+  G_SESSION["NudgeArbiter.swift<br/>firesDuringActiveSession"]
+  G_COOL["NudgeArbiter.swift<br/>firesInsideActivityCooldown"]
+  G_QUIET["NudgeArbiter.swift<br/>passesQuietHours"]
+  G_BUSY["BusyWindowResolver.swift<br/>isBusy"]
+  G_SLOT["NudgeArbiter.swift<br/>GateContext.placementIntervals"]
+  G_FATIGUE["NudgeArbiter.swift<br/>taskFatigueCount"]:::dead
+  R_PICK["NudgeArbiter.swift<br/>pickWinners"]
+  R_SCHED["NudgeArbiter.swift<br/>schedule"]
+  R_BODY["NudgeArbiter.swift<br/>resolvedBody"]
+  W_GROUP["App Group<br/>nudge.arb.* keys"]
+  W_OUTCOME["NudgeOutcome.swift<br/>NudgeOutcome"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+
+  R_REEVAL --> R_DEBOUNCE
+  R_DEBOUNCE -- "debounced: return" --> R_REEVAL
+  R_DEBOUNCE --> R_CANCEL
+  R_CANCEL -- "remove pending" --> UNC
+  R_CANCEL -- "clear ids, prune" --> W_GROUP
+  R_CANCEL -- "delete rows" --> W_OUTCOME
+  R_CANCEL --> R_MASTER
+  R_MASTER -- "off: return" --> R_REEVAL
+  R_MASTER -- "on" --> B_ALL
+  B_ALL --> R_TIER
+  R_TIER --> R_CAND
+  B_ALL --> R_CAND
+  R_CAND --> R_GATES
+  R_GATES -- "budget-exempt" --> R_PICK
+  R_GATES -- "discretionary" --> G_SESSION
+  G_SESSION --> G_COOL
+  G_COOL --> G_QUIET
+  G_QUIET --> G_BUSY
+  G_BUSY --> G_SLOT
+  G_SLOT -. "switched off" .-> G_FATIGUE
+  G_SLOT -- "eligible" --> R_PICK
+  R_PICK -- "winners" --> R_SCHED
+  R_SCHED --> R_BODY
+  R_BODY -- "body" --> R_SCHED
+  R_SCHED -- "add" --> UNC
+  R_SCHED -- "id, fire time" --> W_GROUP
+  R_SCHED -- "pending row" --> W_OUTCOME
+
+  classDef dead stroke-dasharray:6 4,stroke:#8a8f98,color:#7a7f88,fill:transparent
+  classDef add stroke-width:3px
+  class R_SCHED add
+
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "reevaluate(reason:profile:modelContext:). Reasons: appLaunch, sceneActive, sessionStarted, sessionEnded, taskCompleted, taskCreatedOrEdited, backgroundTask. After scheduling it calls DistractionMonitor.writeSnapshot (see the Screen Time close-up)." _blank
+  click R_DEBOUNCE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L354" "Returns early when the reason is time-triggered (appLaunch, sceneActive, backgroundTask) and the last run was under 60 s ago. Data-driven reasons always run." _blank
+  click R_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L535" "cancelAll(modelContext:). removePendingNotificationRequests for every id in nudge.arb.scheduledIDs, then clears the set. Prunes eventReminderHistory, dueSoonHistory, placementMissedHistory (2 days), goalLapseHistory (90 days), morningPromptHistory (7 days). Deletes NudgeOutcome rows that are pending with a future scheduledFor, and every row older than 14 days." _blank
+  click R_MASTER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L372" "Master switch from Settings. When off the run returns here; cancelAll already removed everything, so nothing stays scheduled." _blank
+  click B_ALL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L381" "Ten builders in this order: buildEventBlockCandidates, buildMorningPromptCandidates, buildIdleCandidates, buildPrepCandidates, buildDueSoonCandidates, buildFloaterCheckInCandidates, buildComeBackCandidates, buildPlacementLeadCandidates, buildPlacementMissedCandidates, buildGoalLapseCandidates. Each returns zero or more candidates; inputs and rules are in the builder tables." _blank
+  click R_TIER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4065" "tier(for:fireDate:) per task and fire date. critical: overdue, due within 12 h, or an exam / midterm / final / quiz / test / deadline / presentation / interview / due keyword within 48 h. warning: within 72 h, or keyword within a week. Sets the title prefix (⚠️ or 🔴 with uppercase), interruption level (active or timeSensitive) and relevance score (0.5, 0.75, 1.0)." _blank
+  click R_CAND href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L87" "id · kind · fireDate · title · body (template) · categoryID · taskID · tier · urgency · importance · countsAgainstBudget · estimatedMinutes · namedTaskID · goalID · anchoredToUserTime. score = EisenhowerScorer.score(urgency, importance) = urgency^1.1 × importance^0.9." _blank
+  click R_GATES href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2713" "passesGates(_:context:). Budget-exempt kinds (eventBlock, morningPrompt, dueSoon) skip every gate. Discretionary kinds are checked in the order drawn; the first failing gate drops the candidate. GateContext carries the profile, the model context, now, and the other tasks' planned slots." _blank
+  click G_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2824" "Discretionary only. Blocks when SessionCoordinator.isSessionActive and fireDate is before SessionCoordinator.sessionEnd." _blank
+  click G_COOL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2863" "Discretionary only. Blocks when fireDate is inside [nudge.lastFocusSessionStartedAt, + recentActivityCooldownMinutes 90). The key is written by SessionCoordinator.startSession." _blank
+  click G_QUIET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2988" "Discretionary and not anchoredToUserTime. Window from UserProfile: quietHoursStartTime / EndTime when quietHoursFollowSleepSchedule is false and both are set, else bedtime − preBedtimeQuietMinutes 60 to wake + postWakeQuietMinutes 30, as clock minutes that may wrap midnight. A zero-length window fails open." _blank
+  click G_BUSY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/BusyWindowResolver.swift#L93" "Discretionary only. isBusy(at:modelContext:) blocks when fireDate is inside an informational event, its postEventBufferMinutes 15 tail, or a gap under interEventGapToleranceMinutes 90 between events." _blank
+  click G_SLOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L397" "Discretionary only. Blocks when fireDate is inside another task's planned slot: plannedStartDate plus plannedDurationMinutes, else estimatedMinutes, else 30. The slot's own task passes." _blank
+  click G_FATIGUE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2782" "Would block a kind with successIsObservableInApp and a taskID when the task has perTaskMaxNudges 3 or more ignored or dismissed NudgeOutcome rows in 14 days. NudgeConfig.fatigueGateEnabled is false, so it never runs." _blank
+  click R_PICK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4016" "pickWinners(from:context:budget:). Budget-exempt candidates pass straight through. Discretionary ones per fire day, highest score first: at most dailyNudgeBudget 10, and none within minNudgeSpacingMinutes 90 of any already-chosen winner, event blocks included." _blank
+  click R_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4094" "schedule(_:modelContext:). title = tier.styledTitle(candidate.title); body = resolvedBody; sound default; categoryIdentifier = candidate.categoryID; interruptionLevel and relevanceScore from tier; userInfo kind, taskID, goalID; UNCalendarNotificationTrigger at fireDate, repeats false; center.add(request). Then inserts the id into scheduledIDs, writes the fire time into the kind's history map (eventBlock, dueSoon, placementMissed, goalLapse per goal, morningPrompt per fire day with the named task), and inserts NudgeOutcome(.pending) with kind, notificationID, taskID, scheduledFor, estimatedMinutes." _blank
+  click R_BODY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4214" "resolvedBody(for:modelContext:). NudgeCopyStore.validBody(kind, namedTaskID ?? taskID, fireDate), then NudgeCopyFill.fill. Any miss returns candidate.body, the builder's template. See the AI copy close-up." _blank
+  click W_GROUP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L180" "nudge.arb.scheduledIDs, eventReminderHistory, dueSoonHistory, placementMissedHistory, goalLapseHistory, morningPromptHistory. See the keys table." _blank
+  click W_OUTCOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L247" "One pending row per scheduled request. Resolved by a tap (delegate) or by the foreground sweep (classifier)." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "UNUserNotificationCenter.current(): add and removePendingNotificationRequests." _blank

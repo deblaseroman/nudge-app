@@ -1,0 +1,26 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 4: due-dated items are judged for a preparation plan and the verdicts stored in App Group defaults. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant RUNP as PlanProposalSweep.swift<br/>runIfNeeded
+    participant PROPOSE as ClaudeService.swift<br/>proposePlans
+    participant DEC as Plan decisions<br/>PlanProposalSweep.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+    participant NC as Foundation<br/>NotificationCenter
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  RUNP->>DEC: read decisions, call count
+  RUNP->>DEC: noteCall
+  RUNP->>PROPOSE: proposePlans(candidates)
+  PROPOSE->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>PROPOSE: returns data, response
+  PROPOSE-->>RUNP: returns results or nil
+  RUNP->>DEC: write decisions
+  RUNP->>NC: post nudgePlanProposalsChanged

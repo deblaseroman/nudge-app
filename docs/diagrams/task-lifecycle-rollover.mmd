@@ -1,0 +1,56 @@
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: what the calendar day changing does to a row. iOS cannot run the app at midnight, so the sweeps run at launch and on every foreground; the 6 AM background task only purges events. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  T_LAUNCH["ContentView.swift<br/>.task(id: notificationToken)"]
+  T_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  T_BG["NudgeApp.swift<br/>handleDailyRecalc"]
+  D_PURGE["CalendarService.swift<br/>purgePastEvents"]
+  D_SWEEP["PlacementRollover.swift<br/>sweep"]
+  D_MISSED["PlacementRollover.swift<br/>sweepMissedSessions"]
+  K_MISSED["nudge.missedSessions<br/>PlacementRollover.swift"]
+  H_DAY["NudgeTask.swift<br/>setPlanDay"]
+  H_CLEARTIME["NudgeTask.swift<br/>clearPlanTime"]
+  H_CLEAR["NudgeTask.swift<br/>clearPlan"]
+  S_EVENT(["isInformationalEvent · specificTime<br/>NudgeTask.swift"])
+  S_AUTO(["plannedStartDate set · plannedIsAuto true<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_GONE(["row deleted<br/>NudgeTask.swift"])
+
+  T_LAUNCH --> D_PURGE
+  T_LAUNCH --> D_SWEEP
+  T_SCENE --> D_PURGE
+  T_SCENE --> D_SWEEP
+  T_BG --> D_PURGE
+  S_EVENT --> D_PURGE
+  D_PURGE --> S_GONE
+  D_SWEEP --> D_MISSED
+  D_MISSED --> K_MISSED
+  D_MISSED --> S_GONE
+  S_AUTO --> D_SWEEP
+  S_MANUAL --> D_SWEEP
+  S_DAY --> D_SWEEP
+  D_SWEEP --> H_CLEARTIME
+  D_SWEEP -- "first slip" --> H_DAY
+  D_SWEEP -- "second slip" --> H_CLEAR
+  H_CLEARTIME --> S_DAY
+  H_DAY --> S_DAY
+  H_CLEAR --> S_UNPLANNED
+
+  click T_LAUNCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L98" "Cold launch and every change of the notification token, after a 500 ms debounce. In order: purgePastEvents, PlacementRollover.sweep, ExamPrepSweep.run, PlanProposalSweep.runIfNeeded, LegacyPriorityNormalizer.sweep, CalendarService.backfillImportedScheduleOnce, cancelRetiredDailyNotifications, SessionCoordinator.syncIfActivityDismissed, the arbiter (.appLaunch), DistractionMonitor.apply." _blank
+  click T_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L169" "Every background-to-foreground. In order: syncIfActivityDismissed, purgePastEvents, PlacementRollover.sweep, ExamPrepSweep.run, PlanProposalSweep.runIfNeeded, outcome recording, the arbiter, then a Task: calendar refresh, DayPlanEngine.autoPlanIfNewDay, nudge-copy generation." _blank
+  click T_BG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "The 6 AM BGAppRefreshTask (earliest-begin, iOS picks the time). Re-arms itself, purgePastEvents, the arbiter (.backgroundTask), cancelRetiredDailyNotifications. It does not run the rollover, the exam sweep or the auto-plan; those wait for the next foreground." _blank
+  click D_PURGE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L76" "purgePastEvents: deletes every isInformationalEvent whose specificTime ?? dueDate is before today's start, at most 200 per call." _blank
+  click D_SWEEP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L68" "sweep(modelContext:now:). First sweepMissedSessions. Legacy: an open plan item (sequenceIndex) with no intendedDate gets setPlanDay(today). Then every row whose plannedStartDate or intendedDate is before today: a stale time is cleared (manual included); a stale plan day on a complete row is set to nil; on an open row that countsSlips (not an event, not source prep or commitment) skipCount += 1, then setPlanDay(today) while skipCount is below skipsBeforeSkippedSection (2), else clearPlan. Generated rows keep their plan day." _blank
+  click D_MISSED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L147" "sweepMissedSessions: every open source prep row whose dueDate ?? intendedDate is before today is tombstoned (ExamPrepSweep.recordDeletionIfGenerated), counted in MissedSessionLog, and deleted. Commitment dailies are not touched here; ExamPrepSweep consumes them." _blank
+  click K_MISSED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L26" "App Group JSON day stamp → titles, pruned past 60 days. Read by StatsTabView as this week's missed sessions." _blank
+  click H_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L180" "setPlanDay(startOfToday): the one retry, and the legacy fix for a plan item with no day." _blank
+  click H_CLEARTIME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L210" "clearPlanTime: a slot belongs to one day; it is not rolled forward. The day rule then decides whether the row stays on a day." _blank
+  click H_CLEAR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L217" "clearPlan: released to Unscheduled with its slip count showing." _blank
+  click S_EVENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L391" "Events whose day passed vanish the first time the app runs after it." _blank
+  click S_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L403" "Yesterday's auto placement: its time is before today." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "Yesterday's manual placement: cleared the same way." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "A plan day before today: re-planned for today once (skipCount 1), released on the second slip. The arrows in come from the cleared time and from the one retry." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "Unscheduled with Slipped 2 days." _blank
+  click S_GONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L159" "Deleted rows: past events, and prep rows whose day passed." _blank

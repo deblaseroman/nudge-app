@@ -1,0 +1,35 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: outcome recording on each foreground, and the Settings test notification.
+flowchart TB
+  T_FG["ContentView.swift<br/>recordForegroundAndClassifyOutcomes"]
+  S_APPOPEN["AppOpenLog.swift<br/>record"]
+  S_CLASSIFIER["NudgeOutcomeClassifier.swift<br/>classifyPending"]
+  S_OUTCOME["NudgeOutcome.swift<br/>NudgeOutcome"]
+  K_SESSION["App Group<br/>nudge.lastFocusSessionStartedAt"]
+  S_DONE["CompletedTaskRecord.swift<br/>CompletedTaskRecord"]
+  UI_SETTINGS["SettingsTabView.swift<br/>sendTestNotification button"]
+  N_TEST["NudgeNotificationService.swift<br/>sendTestNotification"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+
+  T_FG --> S_APPOPEN
+  T_FG --> S_CLASSIFIER
+  S_CLASSIFIER -- "pending rows" --> S_OUTCOME
+  S_CLASSIFIER --> K_SESSION
+  S_CLASSIFIER --> S_DONE
+  S_CLASSIFIER -- "didOpen" --> S_APPOPEN
+  S_CLASSIFIER -- "acted, engaged, ignored" --> S_OUTCOME
+  UI_SETTINGS --> N_TEST
+  N_TEST -- "add" --> UNC
+
+  classDef add stroke-width:3px
+  class N_TEST add
+
+  click T_FG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L337" "Runs on every scene-active, before the reevaluate: AppOpenLog.record(), then classifyPending. Record-then-classify is safe because the grace period (90) is longer than the response window (60)." _blank
+  click S_APPOPEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/AppOpenLog.swift#L40" "Appends a foreground timestamp to App Group defaults, ignoring one within 60 s of the last; keeps appOpenLogRetentionDays 14 and at most appOpenLogMaxEntries 400. timestamps() is read by buildComeBackCandidates; didOpen(in:) by the classifier." _blank
+  click S_CLASSIFIER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeOutcomeClassifier.swift#L70" "For each pending row whose scheduledFor is more than outcomeClassificationGraceMinutes 90 ago, window = [scheduledFor, + outcomeActionWindowMinutes 60]. acted when a focus session started in the window, or for morningPrompt a NudgeTask was created in it, or the row's task has a CompletedTaskRecord in it; engaged when AppOpenLog.didOpen; else ignored. Writes result and classifiedAt. Recording only: nothing live acts on the result." _blank
+  click S_OUTCOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L247" "Rows the delegate never heard about. Tapped rows are no longer pending and are not swept." _blank
+  click K_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L51" "Only the most recent session start is stored, so an older row's session can be missed; never a false positive." _blank
+  click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/CompletedTaskRecord.swift" "Canonical completion log, written by the in-app checkbox, session completion and the widget intent; survives task deletion." _blank
+  click UI_SETTINGS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L88" "Send test notification (5 sec) in the Notifications section." _blank
+  click N_TEST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L121" "sendTestNotification(). Title Test, body Notifications are enabled — new system not yet built., default sound, UNTimeIntervalNotificationTrigger 5 s, id nudge.test.UUID. Bypasses the arbiter and writes nothing." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "UNUserNotificationCenter.current().add" _blank

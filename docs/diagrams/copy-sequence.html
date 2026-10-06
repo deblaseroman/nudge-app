@@ -1,0 +1,1057 @@
+<meta charset="utf-8">
+<title>Nudge Copy Sequence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the table of places that decide text first, then an overview and nine numbered stages, each a top-to-bottom sequence figure with its boxes and steps in tables underneath, then the cases, storage and no-effect lists. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #1c2029;
+  --muted: #5d6471;
+  --line: #d3d7df;
+  --accent: #0e6f6f;
+  --accent-soft: #d9ecec;
+  --dead: #8a8f98;
+  --node: #ffffff;
+  --node-border: #3c4654;
+  --cluster: #eceef2;
+  --cluster-border: #b9bfca;
+  --edge: #4b5563;
+  --edge-label: #f4f5f7;
+  --k-app: rgba(14,111,111,0.10);
+  --k-os: rgba(93,100,113,0.16);
+  --k-ext: rgba(179,64,31,0.14);
+  --warn: #b3401f;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+    --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+    --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+    --edge: #b6bdc8; --edge-label: #14171c;
+    --k-app: rgba(94,194,194,0.14); --k-os: rgba(154,162,174,0.16); --k-ext: rgba(232,128,96,0.18);
+    --warn: #e88060;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+  --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+  --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+  --edge: #b6bdc8; --edge-label: #14171c;
+  --k-app: rgba(94,194,194,0.14); --k-os: rgba(154,162,174,0.16); --k-ext: rgba(232,128,96,0.18);
+  --warn: #e88060;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; margin: 0; }
+.wrap { padding-inline: 16px; padding-block: 20px 48px; max-width: 1480px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 12px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.stamp { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.stamp code { background: var(--accent-soft); color: var(--fg); padding: 1px 6px; border-radius: 3px; }
+p.lede { max-width: 72ch; margin: 0 0 14px; color: var(--muted); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin-bottom: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); align-items: center; margin-bottom: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 26px; height: 14px; border: 1.5px solid var(--node-border); border-radius: 2px; background: var(--node); }
+.sw.app { background: var(--k-app); }
+.sw.os { background: var(--k-os); }
+.sw.ext { background: var(--k-ext); }
+.sw.ret { border: 0; border-top: 1.5px dashed var(--edge); height: 0; background: transparent; border-radius: 0; }
+figure { margin: 0; }
+figure + figure { margin-top: 22px; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
+.stage { display: inline-block; padding: 16px; min-width: 100%; }
+.stage svg { display: block; max-width: none !important; height: auto; }
+.stage a { cursor: pointer; }
+.stage svg text:not(.sequenceNumber) { fill: var(--fg) !important; }
+.stage a:hover rect.actor { stroke: var(--accent) !important; stroke-width: 2.5px; }
+.status { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); padding: 10px 14px; }
+.status.error { color: var(--warn); }
+pre.fallback { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; padding: 14px; margin: 0; }
+figcaption { font-size: 13px; color: var(--muted); margin: 8px 2px 0; max-width: 90ch; }
+section { margin-top: 40px; scroll-margin-top: 12px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+h2 .src, h3 .src { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 10px; }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; }
+.intro { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+.reads { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; max-width: 100ch; }
+.reads b { color: var(--fg); font-weight: 500; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; border-top: 0; position: sticky; top: 0; background: var(--bg); }
+td.k, th.k { white-space: nowrap; }
+td.n, th.n { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
+td code, li code, p code { font-family: var(--font-mono); font-size: 12.5px; }
+td a[data-f], li a[data-f], p a[data-f] { font-family: var(--font-mono); font-size: 12.5px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.tablewrap table th { background: var(--surface); }
+.kind { display: inline-block; padding: 0 7px; border-radius: 3px; font-size: 12px; white-space: nowrap; }
+.kind.app { background: var(--k-app); }
+.kind.os { background: var(--k-os); }
+.kind.ext { background: var(--k-ext); }
+tr.main td { background: var(--accent-soft); }
+ol.dead { padding-left: 22px; margin: 0; max-width: 100ch; }
+ol.dead li { margin: 0 0 10px; }
+ul.note { padding-left: 20px; margin: 8px 0 0; }
+ul.note li { margin: 0 0 6px; }
+a { color: var(--accent); }
+.note { font-size: 13.5px; color: var(--muted); max-width: 100ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 480px) { h1 { font-size: 20px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Nudge Copy Sequence</h1>
+  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-06 · reference: <code>docs/diagrams/copy-sequence.mmd</code> · page: <code>docs/diagrams/copy-sequence.html</code></div>
+</header>
+<p class="lede">Every place the words of a notification are decided: where they come from, when and how often they are produced, where they are kept, how they are attached when a request is scheduled, and every case where other words are used instead. Each picture has at most five boxes. Every box names a file and a function, clicks through to that file at this commit, and is described in the table under its picture. Arrows are numbered; the steps table under each picture says what each one passes, reads or writes.</p>
+
+<nav class="toc">
+  <a href="#sec-sites">Where text is decided</a>
+  <a href="#sec-overview">Overview</a>
+  <a href="#sec-1">1 When a pass runs</a>
+  <a href="#sec-2">2 What is asked for</a>
+  <a href="#sec-3">3 Write and store</a>
+  <a href="#sec-4">4 Schedule</a>
+  <a href="#sec-5">5 Cache lookup</a>
+  <a href="#sec-6">6 Placeholder fill</a>
+  <a href="#sec-7">7 Snooze</a>
+  <a href="#sec-8">8 Fixed text</a>
+  <a href="#sec-9">9 Screen Time</a>
+  <a href="#sec-cases">Every swap case</a>
+  <a href="#sec-storage">Storage</a>
+  <a href="#sec-dead">No effect</a>
+  <a href="#sec-scope">Scope</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw app"></i> app code (a storage box names what is stored first, its file second)</span>
+  <span><i class="sw os"></i> OS framework</span>
+  <span><i class="sw ext"></i> external service</span>
+  <span><i class="sw ret"></i> dashed arrow: the value a call returns</span>
+  <span>click a box to open its file · hover for detail</span>
+</div>
+
+<section id="sec-sites">
+  <h2>Where notification text is decided</h2>
+  <p class="intro">Four call sites build a <code>UNMutableNotificationContent</code> and one registers button labels. Only the first carries scheduled nudges; it is the highlighted row and stages 1 to 6 trace it. Nothing sets a subtitle or an attachment anywhere.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th>Text</th><th>Decided in</th><th>Where the words come from</th><th>When, how often</th><th>Stage</th></tr>
+    <tr class="main"><td class="n">1</td><td>Title and body of every scheduled nudge (ten kinds)</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4094">NudgeArbiter.schedule</a></td><td>Title: a string literal in the kind's builder, styled by urgency tier. Body: a line Claude wrote ahead of time, read from the cache and filled in, or the builder's template when no line qualifies.</td><td>Every arbiter run removes all pending requests and decides the text again for each winner. The written lines themselves are produced at most 6 times a day, normally once.</td><td><a href="#sec-1">1</a>–<a href="#sec-6">6</a></td></tr>
+    <tr><td class="n">2</td><td>Title and body of a snoozed nudge</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L387">NudgeNotificationService.rescheduleSnoozed</a></td><td>Copied from the delivered notification's own content.</td><td>Once per press of Snooze 30 min.</td><td><a href="#sec-7">7</a></td></tr>
+    <tr><td class="n">3</td><td>Title and body of the test notification</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L121">NudgeNotificationService.sendTestNotification</a></td><td>Two string literals.</td><td>Once per press of the Settings button.</td><td><a href="#sec-8">8</a></td></tr>
+    <tr><td class="n">4</td><td>Button labels on a notification</td><td><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L112">NudgeNotificationCategories.registerAll</a></td><td>Five string literals, grouped into 13 categories. A request picks its set by <code>categoryIdentifier</code>.</td><td>Once per app launch.</td><td><a href="#sec-8">8</a></td></tr>
+    <tr><td class="n">5</td><td>Title and body of Screen Time notifications (limit ladder, mirror)</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98">NudgeActivityMonitorExtension.post</a></td><td>Placeholder string literals chosen by <code>LimitDecider.decide</code>; one fixed pair for the mirror.</td><td>Each time iOS reports a usage threshold to the extension process.</td><td><a href="#sec-9">9</a></td></tr>
+  </table></div>
+</section>
+
+<section id="sec-overview">
+  <h2>Overview <span class="src">copy-sequence.mmd</span></h2>
+  <p class="intro">The main path at the level of types. Lines are written ahead of time and cached; the arbiter builds a template for every candidate, then asks the cache for a line when it schedules. Stages 1 to 6 draw the same path function by function.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · overview at type level: where a scheduled nudge's text comes from, where it is kept, and how it is attached. Stages 1 to 6 draw this path function by function; stages 7 to 9 are the other places text is set. Arrows are numbered and explained in the steps table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant GEN as NudgeCopyService.swift<br/>NudgeCopyGenerator
+    participant CS as ClaudeService.swift<br/>ClaudeService
+    participant CACHE as Copy cache<br/>NudgeCopyService.swift
+    participant ARB as NudgeArbiter.swift<br/>NudgeArbiter
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  GEN->>CS: generateNudgeCopy
+  CS-->>GEN: returns lines by index
+  GEN->>CACHE: NudgeCopyStore.save
+  GEN->>ARB: reevaluate
+  ARB->>ARB: build template candidates
+  ARB->>ARB: resolvedBody
+  ARB->>CACHE: NudgeCopyStore.validBody
+  CACHE-->>ARB: line or nil
+  ARB->>UNC: add request
+    </script>
+    <script type="application/json" class="mmd-links">{
+"GEN": ["Nudge/Services/NudgeCopyService.swift#L219", "Decides when a writing pass runs and builds the one batched request. Never called from the arbiter. Entry points: generateIfNeeded (line 246) and noteShift (line 338)."],
+"CS": ["Nudge/Services/ClaudeService.swift#L947", "generateNudgeCopy posts one prompt to api.anthropic.com/v1/messages with model claude-sonnet-5 at effort low and returns the usable lines keyed by request index."],
+"CACHE": ["Nudge/Services/NudgeCopyService.swift#L69", "nudge.copy.cache and nudge.copy.generatedAt in App Group UserDefaults (group.com.deblaser.nudge). A JSON array of CachedNudgeCopy: kindRaw, taskID, taskTitle, dueAtGeneration, body. Read and written only through NudgeCopyStore."],
+"ARB": ["Nudge/Services/NudgeArbiter.swift#L169", "Single decision engine. Its builders write the template title and body, schedule styles the title and asks resolvedBody for the body."],
+"UNC": ["https://developer.apple.com/documentation/usernotifications/unusernotificationcenter", "UNUserNotificationCenter.current().add(request). iOS keeps the request, text included, until it fires or is removed."]
+}</script>
+    <figcaption>The writer and the scheduler never call each other for text. The cache sits between them, so a missing key, no network or a stale cache leaves every notification on its template.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Call, read or write</th><th>Stage</th></tr>
+    <tr><td class="n">1</td><td class="k">NudgeCopyGenerator → ClaudeService</td><td><code>generateNudgeCopy(requests:userName:recentBodies:)</code> from <a data-f="Nudge/Services/NudgeCopyService.swift#L300">generateIfNeeded</a>, when a pass is allowed to run</td><td><a href="#sec-1">1</a>, <a href="#sec-2">2</a></td></tr>
+    <tr><td class="n">2</td><td class="k">ClaudeService → NudgeCopyGenerator</td><td>returns <code>[Int: String]</code>: one body per request index that decoded to a usable row</td><td><a href="#sec-3">3</a></td></tr>
+    <tr><td class="n">3</td><td class="k">NudgeCopyGenerator → Copy cache</td><td><code>NudgeCopyStore.save(entries:now:)</code> replaces the whole cached array and stamps <code>generatedAt</code></td><td><a href="#sec-3">3</a></td></tr>
+    <tr><td class="n">4</td><td class="k">NudgeCopyGenerator → NudgeArbiter</td><td><code>reevaluate(reason: .taskCreatedOrEdited, …)</code> from <a data-f="Nudge/Services/NudgeCopyService.swift#L344">noteShift</a>. On the foreground path ContentView makes the same call after <code>generateIfNeeded</code> returns true.</td><td><a href="#sec-1">1</a></td></tr>
+    <tr><td class="n">5</td><td class="k">NudgeArbiter → NudgeArbiter</td><td>ten <code>build…Candidates</code> functions each put a literal title and a template body on their candidates</td><td><a href="#sec-4">4</a></td></tr>
+    <tr><td class="n">6</td><td class="k">NudgeArbiter → NudgeArbiter</td><td><code>schedule</code> calls <code>resolvedBody(for:modelContext:)</code> for each winner</td><td><a href="#sec-4">4</a></td></tr>
+    <tr><td class="n">7</td><td class="k">NudgeArbiter → Copy cache</td><td><code>NudgeCopyStore.validBody(kind:taskID:fireDate:modelContext:)</code> reads the cache and validates the entry</td><td><a href="#sec-5">5</a></td></tr>
+    <tr><td class="n">8</td><td class="k">Copy cache → NudgeArbiter</td><td>returns the written line, or nil. A line then goes through <code>NudgeCopyFill.fill</code>; nil at either point means the template body is used.</td><td><a href="#sec-5">5</a>, <a href="#sec-6">6</a></td></tr>
+    <tr><td class="n">9</td><td class="k">NudgeArbiter → UNUserNotificationCenter</td><td><code>center.add(request)</code> with the styled title and the chosen body</td><td><a href="#sec-4">4</a></td></tr>
+  </table></div>
+</section>
+
+<section id="sec-1">
+  <h2>1 · When a writing pass runs <span class="src">copy-sequence-1-triggers.mmd</span></h2>
+  <p class="intro">Two doors lead to <code>generateIfNeeded</code>: the foreground handler, and <code>noteShift</code> for code that just created work. Three throttles are checked before anything is sent.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 1: what starts a writing pass, the throttles checked first, and the arbiter run that follows new copy. The callers of noteShift are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SCENE as ContentView.swift<br/>onChange(scenePhase)
+    participant SHIFT as NudgeCopyService.swift<br/>noteShift
+    participant GEN as NudgeCopyService.swift<br/>generateIfNeeded
+    participant KEYS as Pass stamps and count<br/>NudgeCopyService.swift
+    participant ARB as NudgeArbiter.swift<br/>reevaluate
+  end
+  SCENE->>GEN: generateIfNeeded
+  SHIFT->>GEN: generateIfNeeded
+  GEN->>KEYS: read stamps, count
+  alt a throttle applies
+    GEN-->>SCENE: returns false
+  else the pass runs
+    GEN->>KEYS: write lastAttempt
+    GEN->>KEYS: write day, count
+    GEN-->>SCENE: returns true
+    SCENE->>ARB: reevaluate
+    GEN-->>SHIFT: returns true
+    SHIFT->>ARB: reevaluate
+  end
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SCENE": ["Nudge/ContentView.swift#L169", "The scene-active branch. After the sweeps and the first reevaluate it starts a main-actor Task: calendar refresh, DayPlanEngine.autoPlanIfNewDay, then generateIfNeeded with trigger .calendarImport when the refresh imported events, else .newDay (line 275)."],
+"SHIFT": ["Nudge/Services/NudgeCopyService.swift#L338", "noteShift(_:modelContext:). Fire-and-forget entry for synchronous callers. Spawns a main-actor Task, awaits generateIfNeeded, and reevaluates only when it returned true and a UserProfile exists."],
+"GEN": ["Nudge/Services/NudgeCopyService.swift#L246", "generateIfNeeded(trigger:modelContext:now:) async -> Bool. Returns true only when new copy was cached. Trigger is newDay, generatedWork or calendarImport. In DEBUG the launch argument -nudge-regenerate-copy forces one pass per launch past the first two throttles."],
+"KEYS": ["Nudge/Services/NudgeCopyService.swift#L234", "App Group UserDefaults: nudge.copyGen.lastRunDay (yyyyMMdd), nudge.copyGen.lastAttempt (Date), nudge.copy.countDay and nudge.copy.count (passes today)."],
+"ARB": ["Nudge/Services/NudgeArbiter.swift#L345", "reevaluate(reason: .taskCreatedOrEdited, …). A data-driven reason, so it is not debounced: every pending request is removed and scheduled again, now with the new lines (stage 4)."]
+}</script>
+    <figcaption>A pass that fails returns false too: the old cache stays, no arbiter run follows, and the 15-minute stamp holds back a retry.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">onChange(scenePhase) → generateIfNeeded</td><td><a data-f="Nudge/ContentView.swift#L277">ContentView.swift:277</a></td><td><code>trigger: importedEvents &gt; 0 ? .calendarImport : .newDay</code>, the model context. Runs on every foreground; the throttles decide whether anything happens.</td></tr>
+    <tr><td class="n">2</td><td class="k">noteShift → generateIfNeeded</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L340">NudgeCopyService.swift:340</a></td><td>The caller's trigger (always <code>.generatedWork</code>) and the model context.</td></tr>
+    <tr><td class="n">3</td><td class="k">generateIfNeeded → Pass stamps and count</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L263">:263–286</a></td><td>Reads <code>lastRunDay</code> and <code>lastAttempt</code> directly, and today's count through <code>NudgeCopyStore.generationCountToday</code>.</td></tr>
+    <tr><td class="n">4</td><td class="k">generateIfNeeded → caller</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L265">:265, :275, :285</a></td><td>Returns false at the first throttle that applies (table below). Nothing is sent or written.</td></tr>
+    <tr><td class="n">5</td><td class="k">generateIfNeeded → Pass stamps and count</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L296">:296</a></td><td>Writes <code>lastAttempt = now</code> before the request, so a failure is throttled as well.</td></tr>
+    <tr><td class="n">6</td><td class="k">generateIfNeeded → Pass stamps and count</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L316">:316–318</a></td><td>After a successful save: <code>NudgeCopyStore.recordGeneration</code> writes <code>countDay</code> and <code>count + 1</code>; then <code>lastRunDay = today</code>. Stages 2 and 3 happen between steps 5 and 6.</td></tr>
+    <tr><td class="n">7, 8</td><td class="k">generateIfNeeded → onChange(scenePhase) → reevaluate</td><td><a data-f="Nudge/ContentView.swift#L283">ContentView.swift:283</a></td><td>Returns true; the handler runs the arbiter again "so scheduled notifications carry it".</td></tr>
+    <tr><td class="n">9, 10</td><td class="k">generateIfNeeded → noteShift → reevaluate</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L344">NudgeCopyService.swift:344</a></td><td>Same, for a shift: reevaluate with the fetched profile.</td></tr>
+  </table></div>
+
+  <h3>Who starts a pass</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Caller</th><th>Trigger</th><th>When</th></tr>
+    <tr><td class="k"><a data-f="Nudge/ContentView.swift#L277">ContentView.onChange(scenePhase)</a></td><td><code>.newDay</code>, or <code>.calendarImport</code> when the calendar refresh in the same Task imported at least one event</td><td>Every time the scene becomes active, after the calendar refresh and the auto-plan.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/ExamPrepSweep.swift#L373">ExamPrepSweep.run</a> → noteShift</td><td><code>.generatedWork</code></td><td>When the sweep created at least one study or commitment task.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/PlanProposalSweep.swift#L569">PlanProposalSweep.accept</a> → noteShift</td><td><code>.generatedWork</code></td><td>When accepting a plan proposal wrote at least one session row.</td></tr>
+  </table></div>
+
+  <h3>Throttles, in the order checked</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Check</th><th>Applies to</th><th>Value</th><th>Result</th></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L263">Once a day</a></td><td><code>.newDay</code> only</td><td><code>lastRunDay == today</code></td><td>false. A shift trigger skips this check, which is how a second pass can happen in one day.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L267">Minimum interval</a></td><td>every trigger</td><td><a data-f="Nudge/Services/NudgeConfig.swift#L650">copyGenMinMinutesBetween</a> = 15 minutes since <code>lastAttempt</code>, success or failure</td><td>false</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L280">Daily cap</a></td><td>every trigger, forced passes too</td><td><a data-f="Nudge/Services/NudgeConfig.swift#L655">copyGenMaxPerDay</a> = 6 successful passes today</td><td>false</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L324">The request throws</a></td><td>every trigger</td><td>no API key, a network or HTTP error, an unparseable reply, no usable row</td><td>false. The cache, history and <code>lastRunDay</code> are untouched, so the next foreground after 15 minutes tries again.</td></tr>
+  </table></div>
+  <p class="reads"><b>How often, in practice:</b> one pass on the first foreground of a day; another when a calendar refresh imports events or a sweep creates work, at least 15 minutes after the last attempt; never more than 6 successful passes a day. The arbiter runs far more often than that and only ever reads the cache.</p>
+</section>
+
+<section id="sec-2">
+  <h2>2 · What a pass asks for <span class="src">copy-sequence-2-requests.mmd</span></h2>
+  <p class="intro">One request item per line wanted. The items, the user's first name and the lines written before are everything the writer is given.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 2: the inputs of one writing pass. buildRequests turns open rows into request items; the first name and the recent lines are read beside them. The per-kind selection is a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant GEN as NudgeCopyService.swift<br/>generateIfNeeded
+    participant REQ as NudgeCopyService.swift<br/>buildRequests
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant PROFILE as UserProfile rows<br/>UserProfile.swift
+    participant HIST as Recent lines list<br/>NudgeCopyService.swift
+  end
+  GEN->>REQ: buildRequests
+  REQ->>TASKS: fetch open rows
+  REQ->>REQ: dueDescription
+  REQ-->>GEN: returns request items
+  GEN->>PROFILE: fetch name
+  GEN->>HIST: NudgeCopyStore.history
+    </script>
+    <script type="application/json" class="mmd-links">{
+"GEN": ["Nudge/Services/NudgeCopyService.swift#L288", "generateIfNeeded, lines 288 to 304: builds the request items, stamps lastAttempt, reads the first name, and passes all three inputs to ClaudeService.generateNudgeCopy."],
+"REQ": ["Nudge/Services/NudgeCopyService.swift#L373", "buildRequests(modelContext:now:) -> [NudgeCopyRequest]. Each item: index, kind, taskID, taskTitle, dueDescription, dueAtGeneration, placeholders. Per-task kinds are capped at NudgeConfig.copyGenTasksPerKind = 4 each; idle, comeBack and goalLapse get one kind-generic item each. At most 31 items."],
+"TASKS": ["Nudge/Models/NudgeTask.swift#L373", "SwiftData rows in Nudge.store. One fetch: isComplete == false, fetchLimit 80. Split into open tasks and informational events. Read: title, stakes, dueDate, specificTime, sortDeadline, plannedStartDate."],
+"PROFILE": ["Nudge/Models/UserProfile.swift#L12", "The first UserProfile row. Only name is read; its first word becomes userName."],
+"HIST": ["Nudge/Services/NudgeCopyService.swift#L117", "nudge.copy.history in App Group UserDefaults: bodies from earlier passes, newest last, capped at NudgeConfig.copyHistoryLimit = 40."]
+}</script>
+    <figcaption>The writer is never given a clock time or a day word to copy. It is told which placeholders each item may use; stage 6 fills them at scheduling.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">generateIfNeeded → buildRequests</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L288">:288</a></td><td>The model context and <code>now</code>.</td></tr>
+    <tr><td class="n">2</td><td class="k">buildRequests → NudgeTask rows</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L377">:377–383</a></td><td>Fetches up to 80 incomplete rows; events and tasks are separated by <code>isInformationalEvent</code>.</td></tr>
+    <tr><td class="n">3</td><td class="k">buildRequests → buildRequests</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L492">dueDescription</a></td><td>Per item: an absolute phrase for the prompt only, such as "due Friday, Oct 9 at 5:00 PM" or "no deadline". The clock time appears only when the task has a <code>specificTime</code>.</td></tr>
+    <tr><td class="n">4</td><td class="k">buildRequests → generateIfNeeded</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L485">:485</a></td><td>The items, selected as in the table below.</td></tr>
+    <tr><td class="n">5</td><td class="k">generateIfNeeded → UserProfile rows</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L297">:297</a></td><td>Reads <code>name</code>, keeps the first word.</td></tr>
+    <tr><td class="n">6</td><td class="k">generateIfNeeded → Recent lines list</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L303">:303</a></td><td><code>NudgeCopyStore.history()</code> returns up to 40 earlier bodies, passed as <code>recentBodies</code>.</td></tr>
+  </table></div>
+
+  <h3>Which rows get a line</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Kind</th><th>Rows</th><th>Order, top 4 kept</th><th>Placeholders offered</th><th>Entry keyed by</th></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L429">morningPrompt</a></td><td>open tasks</td><td>stakes high, medium, unclassified, low; ties to the nearer <code>sortDeadline</code></td><td><code>{task} {due}</code> when dated, else <code>{task}</code></td><td>task id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L439">prep</a></td><td>open tasks with a due date or time whose deadline is ahead and inside 5 days (<code>copyCacheDays + 2</code>)</td><td>soonest deadline first</td><td><code>{task} {due}</code></td><td>task id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L442">dueSoon</a></td><td>the same four tasks as prep</td><td>soonest deadline first</td><td><code>{task} {due}</code></td><td>task id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L450">eventBlock</a></td><td>events starting after now and inside 5 days</td><td>soonest start first</td><td><code>{task} {day} {time}</code></td><td>event id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L460">placementLead</a></td><td>open tasks with a <code>plannedStartDate</code></td><td>earliest slot first</td><td><code>{task} {time}</code></td><td>task id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L463">placementMissed</a></td><td>the same four tasks as placementLead</td><td>earliest slot first</td><td><code>{task} {time}</code></td><td>task id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L475">floater</a></td><td>open tasks with no due date and no time</td><td><code>TaskSortComparator</code> order</td><td><code>{task}</code></td><td>task id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L481">idle</a></td><td>none: one kind-generic line</td><td></td><td><code>{name}</code></td><td>kind only</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L482">comeBack</a></td><td>none: one kind-generic line</td><td></td><td><code>{name}</code></td><td>kind only</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L483">goalLapse</a></td><td>none: one kind-generic line, filled per goal</td><td></td><td><code>{goal} {name}</code></td><td>kind only</td></tr>
+  </table></div>
+  <p class="reads"><b>reads:</b> NudgeConfig <a data-f="Nudge/Services/NudgeConfig.swift#L640">copyGenTasksPerKind</a> 4, <a data-f="Nudge/Services/NudgeConfig.swift#L633">copyCacheDays</a> 3, <a data-f="Nudge/Services/NudgeConfig.swift#L645">copyHistoryLimit</a> 40. Each item also records <code>dueAtGeneration</code>: the event's start time, else the dated task's <code>sortDeadline</code>, else nil. Stage 5 compares it with the task again at scheduling.</p>
+</section>
+
+<section id="sec-3">
+  <h2>3 · Write and store <span class="src">copy-sequence-3-write.mmd</span></h2>
+  <p class="intro">One HTTPS request per pass. The reply is decoded row by row, and whatever survives replaces the cache.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 3: the one request that writes the lines, the row-by-row decode, and the two writes that store the result. The request body and the storage keys are tables on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant GEN as NudgeCopyService.swift<br/>generateIfNeeded
+    participant CLAUDE as ClaudeService.swift<br/>generateNudgeCopy
+    participant DECODE as ClaudeService.swift<br/>decodeGeneratedCopy
+    participant CACHE as Copy cache and history<br/>NudgeCopyService.swift
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  GEN->>CLAUDE: generateNudgeCopy
+  CLAUDE->>API: POST prompt
+  API-->>CLAUDE: returns JSON text
+  CLAUDE->>DECODE: decodeGeneratedCopy
+  DECODE-->>CLAUDE: returns usable rows
+  CLAUDE-->>GEN: returns lines by index
+  GEN->>CACHE: NudgeCopyStore.save
+  GEN->>CACHE: NudgeCopyStore.appendHistory
+    </script>
+    <script type="application/json" class="mmd-links">{
+"GEN": ["Nudge/Services/NudgeCopyService.swift#L299", "generateIfNeeded, lines 299 to 332: awaits the call inside do/catch. On success it pairs each returned body with its request to make CachedNudgeCopy entries. On a throw it returns false and writes nothing."],
+"CLAUDE": ["Nudge/Services/ClaudeService.swift#L947", "generateNudgeCopy(requests:userName:recentBodies:) async throws -> [Int: String]. Throws missingAPIKey when the key from Secrets.plist is empty. Builds one prompt: the ten kind briefs, the placeholder rules, the hard lines, the recent lines, and one item line per request."],
+"DECODE": ["Nudge/Services/ClaudeService.swift#L1053", "decodeGeneratedCopy(from:expectedCount:). Strips code fences, takes the text between the first [ and the last ], and reads rows with JSONSerialization. A row counts when index is an Int in range and body is a String of at least 12 characters that is not the word placeholder."],
+"CACHE": ["Nudge/Services/NudgeCopyService.swift#L76", "App Group UserDefaults. nudge.copy.cache: the JSON array of entries. nudge.copy.generatedAt: the pass time. nudge.copy.history: up to 40 bodies, newest last."],
+"API": ["Nudge/Services/ClaudeService.swift#L75", "baseURL = https://api.anthropic.com/v1/messages, reached with URLSession.shared.data(for:) at line 1034. Headers: Content-Type, x-api-key, anthropic-version 2023-06-01."]
+}</script>
+    <figcaption>A bad row costs only its own slot. A reply with no usable row, or one that is not an array, throws and the pass is abandoned.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">generateIfNeeded → generateNudgeCopy</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L300">NudgeCopyService.swift:300</a></td><td><code>requests</code> (stage 2), <code>userName</code>, <code>recentBodies</code>.</td></tr>
+    <tr><td class="n">2</td><td class="k">generateNudgeCopy → api.anthropic.com</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1019">ClaudeService.swift:1019–1034</a></td><td>The body in the table below, sent with <code>URLSession.shared.data(for:)</code>.</td></tr>
+    <tr><td class="n">3</td><td class="k">api.anthropic.com → generateNudgeCopy</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1035">:1035–1046</a></td><td>The response is validated and decoded; the first text block is taken. An empty one throws <code>emptyResponse</code>.</td></tr>
+    <tr><td class="n">4</td><td class="k">generateNudgeCopy → decodeGeneratedCopy</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1047">:1047</a></td><td>The text and <code>expectedCount: requests.count</code>.</td></tr>
+    <tr><td class="n">5</td><td class="k">decodeGeneratedCopy → generateNudgeCopy</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1078">:1078–1100</a></td><td><code>[Int: String]</code> of the rows that passed. Throws <code>parseError</code> when the text is not an array or no row passed.</td></tr>
+    <tr><td class="n">6</td><td class="k">generateNudgeCopy → generateIfNeeded</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L305">NudgeCopyService.swift:305–314</a></td><td>The same dictionary. Each request whose index has a body becomes a <code>CachedNudgeCopy</code>; the others get no entry.</td></tr>
+    <tr><td class="n">7</td><td class="k">generateIfNeeded → Copy cache and history</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L315">:315</a> → <a data-f="Nudge/Services/NudgeCopyService.swift#L76">save</a></td><td>Encodes the entries and sets <code>nudge.copy.cache</code> and <code>nudge.copy.generatedAt</code>. The previous array is replaced whole, so a slot that was filled yesterday and dropped today has no line.</td></tr>
+    <tr><td class="n">8</td><td class="k">generateIfNeeded → Copy cache and history</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L317">:317</a> → <a data-f="Nudge/Services/NudgeCopyService.swift#L123">appendHistory</a></td><td>Appends the new bodies to <code>nudge.copy.history</code> and trims it to the newest 40.</td></tr>
+  </table></div>
+
+  <h3>The request</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Field</th><th>Value</th></tr>
+    <tr><td class="k">model</td><td><a data-f="Nudge/Services/ClaudeService.swift#L74">copyModel</a> = <code>claude-sonnet-5</code></td></tr>
+    <tr><td class="k">max_tokens · output_config</td><td>3000 · <code>effort: low</code></td></tr>
+    <tr><td class="k">system</td><td>"You write short, specific, human notification copy. Return only valid JSON matching the requested schema. No prose, no commentary."</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/ClaudeService.swift#L955">Kind briefs</a></td><td>One line per kind saying when it fires and what the line should do: morningPrompt a statement that frames the day; idle one light question that names no task; floater something with room today; prep one small first step; dueSoon the fact with one useful beat; eventBlock a heads-up; placementLead a heads-up that a block is coming; placementMissed a small way in, never "still"; comeBack a forward-looking reason, never absence; goalLapse a light, curious invitation.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/ClaudeService.swift#L969">Items</a></td><td>Per request: <code>index. kind=… | subject: "title" | context: due phrase | placeholders available: …</code></td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/ClaudeService.swift#L995">Placeholder rules</a></td><td>Write <code>{task} {due} {time} {day} {name} {goal}</code> exactly, only the ones the item lists; never write a clock time, a date, a weekday, "tomorrow", "tonight" or "yesterday".</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/ClaudeService.swift#L1000">Hard lines</a></td><td>No implied failure or lateness, no streaks or absence, no promised outcome, no exclamation marks, emoji or em dashes, one sentence or two short ones, under 140 characters.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/ClaudeService.swift#L981">Recent lines</a></td><td>The last 40 bodies, with "do not repeat or closely echo any of these".</td></tr>
+    <tr><td class="k">Reply asked for</td><td>A JSON array of <code>{"index": n, "body": "…"}</code>, one per item.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-4">
+  <h2>4 · Schedule: template, title, body, add <span class="src">copy-sequence-4-schedule.mmd</span></h2>
+  <p class="intro">Every arbiter run starts from nothing: pending requests are removed, candidates are rebuilt with template text, and each winner gets its title and body decided again before it is added.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 4: one arbiter run as far as text is concerned. Builders set a literal title and a template body, schedule styles the title, asks resolvedBody for the body (stages 5 and 6) and adds the request. The per-kind templates are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant REEVAL as NudgeArbiter.swift<br/>reevaluate
+    participant BUILD as NudgeArbiter.swift<br/>build…Candidates
+    participant SCHED as NudgeArbiter.swift<br/>schedule
+    participant TIER as NudgeArbiter.swift<br/>NudgeUrgencyTier.styledTitle
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  REEVAL->>UNC: remove pending requests
+  REEVAL->>BUILD: run ten builders
+  BUILD-->>REEVAL: returns candidates
+  REEVAL->>SCHED: schedule each winner
+  SCHED->>TIER: styledTitle
+  TIER-->>SCHED: returns title
+  SCHED->>SCHED: resolvedBody
+  SCHED->>UNC: add request
+    </script>
+    <script type="application/json" class="mmd-links">{
+"REEVAL": ["Nudge/Services/NudgeArbiter.swift#L345", "reevaluate(reason:profile:modelContext:). After the 60 s debounce for time-triggered reasons: cancelAll, the master toggle, ten builders, passesGates, pickWinners, then schedule for each winner."],
+"BUILD": ["Nudge/Services/NudgeArbiter.swift#L381", "buildEventBlock, MorningPrompt, Idle, Prep, DueSoon, FloaterCheckIn, ComeBack, PlacementLead, PlacementMissed and GoalLapse Candidates. Each returns NudgeCandidate values whose title and body are set from string literals and the task's facts. Each also sets tier, taskID, and where used namedTaskID or goalID."],
+"SCHED": ["Nudge/Services/NudgeArbiter.swift#L4094", "schedule(_:modelContext:). content.title = candidate.tier.styledTitle(candidate.title); content.body = resolvedBody(for: candidate, …); sound default; categoryIdentifier = candidate.categoryID.rawValue (selects the button labels of stage 8); userInfo kind, taskID, goalID; a UNCalendarNotificationTrigger at the fire date to the minute."],
+"TIER": ["Nudge/Services/NudgeArbiter.swift#L78", "normal: the title unchanged. warning: prefixed with the warning-sign emoji. critical: prefixed with the red-circle emoji and uppercased. The tier is chosen by tier(for:fireDate:) at line 4065 when the candidate is built."],
+"UNC": ["https://developer.apple.com/documentation/usernotifications/unusernotificationcenter", "removePendingNotificationRequests(withIdentifiers:) and add(_:). Text is fixed inside the request when it is added; iOS delivers it unchanged."]
+}</script>
+    <figcaption>Text is decided at scheduling, not at delivery. A request added on Monday evening for Tuesday morning shows what was decided on Monday, unless a later run replaces it.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">reevaluate → UNUserNotificationCenter</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L535">cancelAll</a></td><td>Removes every pending request the arbiter owns (<code>scheduledIDs</code>). Their text goes with them. Delivered notifications stay as they are.</td></tr>
+    <tr><td class="n">2</td><td class="k">reevaluate → build…Candidates</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L381">:381–390</a></td><td>The profile and the model context, to each builder in turn.</td></tr>
+    <tr><td class="n">3</td><td class="k">build…Candidates → reevaluate</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L87">NudgeCandidate</a></td><td>Candidates carrying <code>title</code> and <code>body</code> (table below). <code>passesGates</code> and <code>pickWinners</code> then choose among them without touching the text.</td></tr>
+    <tr><td class="n">4</td><td class="k">reevaluate → schedule</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L476">:476–478</a></td><td>One call per winner.</td></tr>
+    <tr><td class="n">5, 6</td><td class="k">schedule → styledTitle → schedule</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4100">:4100</a></td><td>The candidate's literal title in; the same title, prefixed, or prefixed and uppercased out.</td></tr>
+    <tr><td class="n">7</td><td class="k">schedule → schedule</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4101">:4101</a> → <a data-f="Nudge/Services/NudgeArbiter.swift#L4214">resolvedBody</a></td><td>Returns the filled written line or <code>candidate.body</code>. Drawn in stages 5 and 6.</td></tr>
+    <tr><td class="n">8</td><td class="k">schedule → UNUserNotificationCenter</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4129">:4129</a></td><td><code>center.add(request)</code> with identifier <code>candidate.id</code>. The app keeps no copy of the text: the <code>NudgeOutcome</code> row written next holds kind, id, task and fire time only.</td></tr>
+  </table></div>
+
+  <h3>Template text by kind</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Kind</th><th>Title literal</th><th>Tier for the title</th><th>Template body</th><th>Written line looked up by</th></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L788">eventBlock</a></td><td>Heads up</td><td>tier of the first event</td><td>"<i>Event</i> in 1 hour (<i>time</i>)." With two events: "You've also got <i>second</i> at <i>time</i>, so your morning's booked." With more: "You've got N more back-to-back after that, so wrap anything else first." A nameless event is called Class, Work shift, Exam, Appointment or Event by category.</td><td>the first event's id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L1211">morningPrompt</a></td><td>Good morning</td><td>normal</td><td>Biggest thing on your list: "<i>task</i>", <i>due phrase</i>. The phrase is left out for an undated task and is past tense with no clock for a passed deadline (<a data-f="Nudge/Services/NudgeArbiter.swift#L1239">morningDeadlinePhrase</a>).</td><td><code>namedTaskID</code> (its <code>taskID</code> is nil)</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L1440">idle</a></td><td>Check-in</td><td>tier of the target task</td><td>Have you worked on anything yet?</td><td>the target task's id; no such entry is written, so the kind-generic line is used</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L1614">prep</a></td><td>Time to get ahead</td><td>tier of the task</td><td>Deep work more than a day out: "Your deadline is in N days. At one session a day that's maybe N real shots at "<i>task</i>". Start session 1 now?" Otherwise: ""<i>task</i>" needs a start. Just N min. That's it." (N capped at 25)</td><td>the task's id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L1777">dueSoon</a></td><td>Due soon</td><td>normal</td><td>"<i>task</i>" is due at <i>time</i>. For a batch: "N things due by <i>latest time</i>: A and B." / "A, B, and C." / "A, B, C, and N more."</td><td>the first task of the batch</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L1964">floater</a></td><td>Check-in</td><td>tier of the task (normal: it has no deadline)</td><td>Have you worked on anything yet?</td><td>the task's id</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L2215">comeBack</a></td><td>Looking ahead</td><td>normal</td><td>With open tasks: "Come back, you have some tasks to complete!" With none: "Come back! There's got to be something you need to plan."</td><td>kind only</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L2333">goalLapse</a></td><td>Got a minute?</td><td>normal</td><td>Nothing's wrong. There's just something worth a look when you have a moment.</td><td>kind only; <code>{goal}</code> comes from the candidate's <code>goalID</code></td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L2473">placementLead</a></td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L2465">ANCHORED HIGH / MEDIUM / LOW</a> by the task's stakes</td><td>tier of the first task</td><td>"<i>task</i>" is set for <i>time</i>. With two: ", then "<i>next</i>" at <i>time</i>." With more: "… and N more after that."</td><td>the first task of the block</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeArbiter.swift#L2653">placementMissed</a></td><td>Still open</td><td>tier of the task</td><td>"<i>task</i>" was set for <i>time</i> and is still open. Just N min. Start there? (N capped at 25)</td><td>the task's id</td></tr>
+  </table></div>
+  <p class="reads"><b>Tier</b> (<a data-f="Nudge/Services/NudgeArbiter.swift#L4065">tier(for:fireDate:)</a>): critical when the task's deadline has passed, is within 12 hours, or is within 48 hours and the title contains exam, midterm, final, quiz, test, deadline, presentation, interview or due; warning within 72 hours, or within a week with one of those words; otherwise normal. A task with no deadline is always normal. The title is never written by the AI.</p>
+</section>
+
+<section id="sec-5">
+  <h2>5 · Cache lookup <span class="src">copy-sequence-5-lookup.mmd</span></h2>
+  <p class="intro">The first half of <code>resolvedBody</code>: is there a written line for this kind and task, and is it still true?</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 5: resolvedBody asks the cache for a written line. validBody checks the cache age, finds the entry, and checks the named task and its deadline. Any miss returns the template body. The checks are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SCHED as NudgeArbiter.swift<br/>schedule
+    participant BODY as NudgeArbiter.swift<br/>resolvedBody
+    participant VALID as NudgeCopyService.swift<br/>NudgeCopyStore.validBody
+    participant CACHE as Copy cache<br/>NudgeCopyService.swift
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+  end
+  SCHED->>BODY: resolvedBody
+  BODY->>VALID: validBody
+  VALID->>CACHE: read generatedAt
+  VALID->>CACHE: read entries
+  VALID->>TASKS: fetch named task
+  alt no valid line
+    VALID-->>BODY: returns nil
+    BODY-->>SCHED: returns template body
+  else line still valid
+    VALID-->>BODY: returns written line
+  end
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SCHED": ["Nudge/Services/NudgeArbiter.swift#L4101", "content.body = resolvedBody(for: candidate, modelContext: modelContext)."],
+"BODY": ["Nudge/Services/NudgeArbiter.swift#L4214", "resolvedBody(for:modelContext:) -> String. A synchronous cache read; no network. Looks up by candidate.namedTaskID ?? candidate.taskID. A nil from validBody returns candidate.body."],
+"VALID": ["Nudge/Services/NudgeCopyService.swift#L140", "validBody(kind:taskID:fireDate:modelContext:now:) -> String?. Prefers the entry with this kind and this task id, then the kind-generic entry (taskID nil). A kind-generic entry is returned without further checks."],
+"CACHE": ["Nudge/Services/NudgeCopyService.swift#L69", "nudge.copy.generatedAt and nudge.copy.cache in App Group UserDefaults, read with generatedAt() and entries()."],
+"TASKS": ["Nudge/Models/NudgeTask.swift#L373", "The row whose id the entry names. Read: isComplete, specificTime, dueDate, sortDeadline."]
+}</script>
+    <figcaption>The lookup can miss six ways. Each one is silent: the notification simply carries its template.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">schedule → resolvedBody</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4101">NudgeArbiter.swift:4101</a></td><td>The winning candidate.</td></tr>
+    <tr><td class="n">2</td><td class="k">resolvedBody → validBody</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4223">:4223</a></td><td><code>kind</code>, <code>taskID: namedTaskID ?? taskID</code>, <code>fireDate</code>, the model context.</td></tr>
+    <tr><td class="n">3</td><td class="k">validBody → Copy cache</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L147">NudgeCopyService.swift:147</a></td><td>Reads <code>generatedAt</code>. Stops here with nil when it is missing, in the future, or more than 3 days old.</td></tr>
+    <tr><td class="n">4</td><td class="k">validBody → Copy cache</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L153">:153–156</a></td><td>Decodes the array, keeps this kind, picks the task's entry or else the kind-generic one.</td></tr>
+    <tr><td class="n">5</td><td class="k">validBody → NudgeTask rows</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L163">:163–169</a></td><td>Only for a task-keyed entry: fetches the task by id.</td></tr>
+    <tr><td class="n">6, 7</td><td class="k">validBody → resolvedBody → schedule</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4229">NudgeArbiter.swift:4229</a></td><td>nil, so <code>candidate.body</code> (the template) is returned.</td></tr>
+    <tr><td class="n">8</td><td class="k">validBody → resolvedBody</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L187">NudgeCopyService.swift:187</a></td><td>The entry's <code>body</code>, placeholders still in it. Continues in stage 6.</td></tr>
+  </table></div>
+
+  <h3>Checks in validBody</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Check</th><th>Passes when</th><th>Otherwise</th></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L147">A pass has been saved</a></td><td><code>generatedAt</code> exists</td><td>nil</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L148">Cache age</a></td><td>now − generatedAt ≤ <a data-f="Nudge/Services/NudgeConfig.swift#L633">copyCacheDays</a> = 3 days, and generatedAt is not in the future</td><td>nil</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L153">An entry exists</a></td><td>an entry of this kind has this task id, or has no task id</td><td>nil</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L167">Task still open</a></td><td>the task row exists and <code>isComplete</code> is false</td><td>nil</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L175">Deadline unchanged</a></td><td>the task's current deadline (start time, else dated <code>sortDeadline</code>) is within 60 seconds of <code>dueAtGeneration</code></td><td>nil</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L182">Still undated</a></td><td>the line was written for an undated task and the task still has no deadline</td><td>nil</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-6">
+  <h2>6 · Placeholder fill <span class="src">copy-sequence-6-fill.mmd</span></h2>
+  <p class="intro">The second half of <code>resolvedBody</code>: a written line holds placeholders, and each is filled from the candidate's own facts relative to its fire date.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 6: NudgeCopyFill.fill turns the written line into the delivered one. A placeholder that cannot be filled, or one the writer invented, returns nil and the template body is used. The placeholders are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SCHED as NudgeArbiter.swift<br/>schedule
+    participant BODY as NudgeArbiter.swift<br/>resolvedBody
+    participant FILL as NudgeCopyService.swift<br/>NudgeCopyFill.fill
+    participant ROWS as Task, goal, profile rows<br/>SharedModelContainer.swift
+  end
+  BODY->>FILL: fill
+  FILL->>ROWS: fetch task, goal, name
+  FILL->>FILL: duePhrase, relativeDay, clock
+  alt a placeholder unresolved
+    FILL-->>BODY: returns nil
+    BODY-->>SCHED: returns template body
+  else every placeholder filled
+    FILL-->>BODY: returns filled line
+    BODY-->>SCHED: returns filled line
+  end
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SCHED": ["Nudge/Services/NudgeArbiter.swift#L4101", "Receives the String that becomes content.body."],
+"BODY": ["Nudge/Services/NudgeArbiter.swift#L4231", "resolvedBody, lines 4231 to 4245. In DEBUG it prints TEMPLATE, WRITTEN and DELIVERED for each swap, and a SKIPPED line when the fill failed."],
+"FILL": ["Nudge/Services/NudgeCopyService.swift#L527", "fill(_:candidate:modelContext:) -> String?. Replaces {task}, {goal}, {name}, {due}, {day}, {time} in that order, then rejects the line if any {word} is left. Helpers: anchor (line 567), relativeDay (580), duePhrase (599), clock (612)."],
+"ROWS": ["Nudge/Services/SharedModelContainer.swift#L34", "SwiftData rows in Nudge.store: the NudgeTask with id namedTaskID ?? taskID (title, specificTime, dueDate, sortDeadline, plannedStartDate), the NudgeGoal with id goalID (title), the first UserProfile (name)."]
+}</script>
+    <figcaption>Because the day word and the tense are computed against the fire date, a line written yesterday can say "tomorrow" or "was due yesterday" correctly.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">resolvedBody → fill</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4231">NudgeArbiter.swift:4231</a></td><td>The written line, the candidate, the model context.</td></tr>
+    <tr><td class="n">2</td><td class="k">fill → Task, goal, profile rows</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L533">NudgeCopyService.swift:533–548</a></td><td>Fetches the task always; the goal and the profile only when the line contains <code>{goal}</code> or <code>{name}</code>.</td></tr>
+    <tr><td class="n">3</td><td class="k">fill → fill</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L549">:549–560</a></td><td>Computes the phrases for <code>{due}</code>, <code>{day}</code> and <code>{time}</code> from the kind's anchor and <code>candidate.fireDate</code>.</td></tr>
+    <tr><td class="n">4, 5</td><td class="k">fill → resolvedBody → schedule</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4235">NudgeArbiter.swift:4235</a></td><td>nil, so <code>candidate.body</code> is returned.</td></tr>
+    <tr><td class="n">6, 7</td><td class="k">fill → resolvedBody → schedule</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4245">:4245</a></td><td>The finished sentence, which becomes <code>content.body</code>.</td></tr>
+  </table></div>
+
+  <h3>Placeholders</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Placeholder</th><th>Filled with</th><th>Returns nil when</th></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L535">{task}</a></td><td>the title of the task with id <code>namedTaskID ?? taskID</code></td><td>the candidate has no task id (comeBack, goalLapse) or the row is gone</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L539">{goal}</a></td><td>the title of the goal with id <code>goalID</code></td><td>the candidate has no <code>goalID</code> (every kind but goalLapse) or the goal is gone</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L543">{name}</a></td><td>the first word of <code>UserProfile.name</code></td><td>the name is empty</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L599">{due}</a></td><td>"due <i>day</i>", plus " at h:mm a" when the task has a specific time; "was due <i>day</i>" with no clock when the anchor is at or before the fire date. A lead-in "is", "was" or "due" just before it is removed first.</td><td>there is no task, or the kind has no anchor</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L580">{day}</a></td><td>today, tomorrow, yesterday, a weekday name for 2 to 6 days ahead, else "MMM d", counted from the fire date</td><td>there is no task, or the kind has no anchor</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L612">{time}</a></td><td>the anchor as "h:mm a"; "the end of the day" for dueSoon, prep and morningPrompt when the task has only a due date</td><td>there is no task, or the kind has no anchor</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L562">anything else in braces</a></td><td>nothing</td><td>always: "anything the writer invented is a line we do not send"</td></tr>
+  </table></div>
+  <p class="reads"><b>Anchor by kind</b> (<a data-f="Nudge/Services/NudgeCopyService.swift#L567">anchor(for:task:)</a>): eventBlock uses the event's <code>specificTime</code>; dueSoon, prep and morningPrompt use <code>specificTime</code>, else the dated <code>sortDeadline</code>; placementLead and placementMissed use <code>plannedStartDate</code>; idle, floater, comeBack and goalLapse have none.</p>
+</section>
+
+<section id="sec-7">
+  <h2>7 · Snooze: the same words again <span class="src">copy-sequence-7-snooze.mmd</span></h2>
+  <p class="intro">Snooze 30 min does not go back to the arbiter. It copies the delivered notification's content into a new request.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 7: the Snooze 30 min action re-adds the delivered notification's own title and body under a derived id. Nothing is looked up or rebuilt.
+sequenceDiagram
+  autonumber
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  box rgba(14,111,111,0.10) App code
+    participant DID as NudgeNotificationService.swift<br/>userNotificationCenter(didReceive)
+    participant RESP as NudgeNotificationService.swift<br/>handleResponse
+    participant SNOOZE as NudgeNotificationService.swift<br/>rescheduleSnoozed
+  end
+  UNC->>DID: didReceive response
+  DID->>RESP: handleResponse
+  RESP->>SNOOZE: rescheduleSnoozed
+  SNOOZE->>UNC: add cloned request
+    </script>
+    <script type="application/json" class="mmd-links">{
+"UNC": ["https://developer.apple.com/documentation/usernotifications/unusernotificationcenter", "Delivers the user's response to the delegate set in NudgeAppDelegate, and accepts the new request."],
+"DID": ["Nudge/Services/NudgeNotificationService.swift#L156", "userNotificationCenter(_:didReceive:). Reads response.notification.request and forwards its identifier, its userInfo taskID and its content."],
+"RESP": ["Nudge/Services/NudgeNotificationService.swift#L171", "handleResponse(actionID:notificationID:taskID:requestContent:). The action.snooze30 case (line 217) marks the outcome row tappedSnooze and calls rescheduleSnoozed. The Snooze button exists on the prep, placementMissed and legacy getAhead categories."],
+"SNOOZE": ["Nudge/Services/NudgeNotificationService.swift#L387", "rescheduleSnoozed(requestContent:originalID:). Copies title, body, sound, userInfo, categoryIdentifier, interruptionLevel and relevanceScore; UNTimeIntervalNotificationTrigger of 30 minutes; identifier originalID + .snoozed."]
+}</script>
+    <figcaption>The snoozed copy is not in the arbiter's id set, so later runs neither remove it nor refresh its words.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">UNUserNotificationCenter → userNotificationCenter(didReceive)</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L156">:156</a></td><td>The <code>UNNotificationResponse</code>: the action identifier and the delivered request.</td></tr>
+    <tr><td class="n">2</td><td class="k">userNotificationCenter(didReceive) → handleResponse</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L162">:162–167</a></td><td><code>requestContent: request.content</code>, which holds the title and body exactly as delivered.</td></tr>
+    <tr><td class="n">3</td><td class="k">handleResponse → rescheduleSnoozed</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L220">:220</a></td><td>The content and the original id.</td></tr>
+    <tr><td class="n">4</td><td class="k">rescheduleSnoozed → UNUserNotificationCenter</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L403">:403</a></td><td><code>add(request)</code> with <code>copy.title = requestContent.title</code> and <code>copy.body = requestContent.body</code>, firing in 30 minutes.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-8">
+  <h2>8 · Fixed text: test notification and button labels <span class="src">copy-sequence-8-fixed.mmd</span></h2>
+  <p class="intro">Two places where the words are string literals and nothing is looked up.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 8: text that is a string literal. The Settings test button adds a notification with fixed words; app launch registers the button labels that a request selects by category. The labels are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant BTN as SettingsTabView.swift<br/>SettingsTabView.body
+    participant TEST as NudgeNotificationService.swift<br/>sendTestNotification
+    participant LAUNCH as NudgeApp.swift<br/>didFinishLaunchingWithOptions
+    participant CATS as NudgeNotificationCategories.swift<br/>registerAll
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  BTN->>TEST: sendTestNotification
+  TEST->>UNC: add test request
+  LAUNCH->>CATS: registerAll
+  CATS->>UNC: setNotificationCategories
+    </script>
+    <script type="application/json" class="mmd-links">{
+"BTN": ["Nudge/Views/Tabs/SettingsTabView.swift#L88", "The button labeled Send test notification (5 sec) in the Notifications section of the view body."],
+"TEST": ["Nudge/Services/NudgeNotificationService.swift#L121", "sendTestNotification(). title = Test; body = Notifications are enabled — new system not yet built.; default sound; UNTimeIntervalNotificationTrigger of 5 seconds; identifier nudge.test.UUID. Bypasses the arbiter."],
+"LAUNCH": ["Nudge/NudgeApp.swift#L21", "application(_:didFinishLaunchingWithOptions:). Sets the notification delegate, then calls registerAll in a main-actor Task (line 31)."],
+"CATS": ["Nudge/Services/NudgeNotificationCategories.swift#L112", "registerAll(). Builds five UNNotificationAction values with literal titles and thirteen UNNotificationCategory values that group them."],
+"UNC": ["https://developer.apple.com/documentation/usernotifications/unusernotificationcenter", "add(_:) and setNotificationCategories(_:). iOS shows a category's buttons on any notification whose categoryIdentifier matches."]
+}</script>
+    <figcaption>Button labels are attached by name, not copied into the request: the arbiter sets <code>categoryIdentifier</code> and iOS looks up the labels registered at launch.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">SettingsTabView.body → sendTestNotification</td><td><a data-f="Nudge/Views/Tabs/SettingsTabView.swift#L90">SettingsTabView.swift:90</a></td><td>No arguments.</td></tr>
+    <tr><td class="n">2</td><td class="k">sendTestNotification → UNUserNotificationCenter</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L133">NudgeNotificationService.swift:133</a></td><td><code>center.add(request)</code>: title "Test", body "Notifications are enabled — new system not yet built."</td></tr>
+    <tr><td class="n">3</td><td class="k">didFinishLaunchingWithOptions → registerAll</td><td><a data-f="Nudge/NudgeApp.swift#L31">NudgeApp.swift:31</a></td><td>No arguments.</td></tr>
+    <tr><td class="n">4</td><td class="k">registerAll → UNUserNotificationCenter</td><td><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L295">NudgeNotificationCategories.swift:295</a></td><td><code>setNotificationCategories</code> with the 13 categories below.</td></tr>
+  </table></div>
+
+  <h3>Button labels</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Label</th><th>Action id</th><th>On categories</th></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L115">Start session</a></td><td><code>action.startSession</code></td><td>prep, placementMissed, getAhead</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L120">Snooze 30 min</a></td><td><code>action.snooze30</code></td><td>prep, placementMissed, getAhead</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L125">Yes, I'm good</a></td><td><code>action.idleYesGood</code></td><td>idle, floater</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L130">Not yet</a></td><td><code>action.idleNotYet</code></td><td>idle, floater</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L143">👎 Not useful</a></td><td><code>action.markUnhelpful</code></td><td>idle, floater, prep, placementMissed, morningPrompt, getAhead</td></tr>
+    <tr><td class="k">no buttons</td><td></td><td>eventBlock, dueSoon, comeBack, placementLead, goalLapse, limit, mirror</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-9">
+  <h2>9 · Screen Time extension <span class="src">copy-sequence-9-screentime.mmd</span></h2>
+  <p class="intro">The <code>NudgeActivityMonitor</code> process posts on its own. Its words are placeholder literals; which pair is used depends on the event name, the time of day and a snapshot the app wrote.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 9: the Screen Time extension. iOS calls eventDidReachThreshold; the mirror event posts one fixed pair of strings, a limit event posts the pair LimitDecider picks. The strings are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant EXT as DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold
+    participant KEYS as Screen Time keys<br/>DistractionSettings.swift
+    participant DECIDE as DistractionSettings.swift<br/>LimitDecider.decide
+    participant TEXT as DistractionSettings.swift<br/>LimitDecision.placeholderTitle
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  EXT->>KEYS: read settings
+  alt event is nudge.mirror
+    EXT->>KEYS: write mirrorLastFiredAt
+    EXT->>UNC: post MIRROR request
+  else a limit event
+    EXT->>KEYS: read snapshot, rung stamp
+    EXT->>DECIDE: decide
+    DECIDE-->>EXT: returns LimitDecision
+    EXT->>KEYS: write rung stamp
+    EXT->>TEXT: placeholderTitle, placeholderBody
+    TEXT-->>EXT: returns title, body
+    EXT->>UNC: post limit request
+  end
+    </script>
+    <script type="application/json" class="mmd-links">{
+"EXT": ["NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L50", "eventDidReachThreshold(_:activity:) in the NudgeActivityMonitor target, called by iOS when a usage threshold registered by the app is crossed. It hands title and body to post (line 98), which sets them on a UNMutableNotificationContent with interruptionLevel timeSensitive and no trigger, so the request fires at once."],
+"KEYS": ["Nudge/Models/DistractionSettings.swift#L20", "App Group UserDefaults: nudge.distractions.settings and nudge.distractions.snapshot (named in this file), nudge.distractions.lastRungAt, lastRungDay and mirrorLastFiredAt (named in the extension file)."],
+"DECIDE": ["Nudge/Models/DistractionSettings.swift#L127", "decide(snapshot:now:rung:lastRungAt:) -> LimitDecision. Pure: no clock, no store. Compiled into both the app and the extension through a membership exception in the project file."],
+"TEXT": ["Nudge/Models/DistractionSettings.swift#L100", "placeholderTitle and placeholderBody (line 110): two computed properties that map each LimitDecision case to its strings."],
+"UNC": ["https://developer.apple.com/documentation/usernotifications/unusernotificationcenter", "UNUserNotificationCenter.current().add(request) from the extension process."]
+}</script>
+    <figcaption>A <code>.silent</code> decision (the user is inside an event) posts nothing. No AI line and no arbiter gate is involved on this path.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">eventDidReachThreshold → Screen Time keys</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L54">:54</a></td><td><code>DistractionSettings.load</code>: <code>mirrorEnabled</code> and <code>limitLadderEnabled</code> gate the two branches.</td></tr>
+    <tr><td class="n">2</td><td class="k">eventDidReachThreshold → Screen Time keys</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L62">:62</a></td><td>Mirror branch: writes <code>mirrorLastFiredAt = now</code>.</td></tr>
+    <tr><td class="n">3</td><td class="k">eventDidReachThreshold → UNUserNotificationCenter</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L63">:63–67</a> → <a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98">post</a></td><td>Title "MIRROR", body "Hey, got a sec? I want to show you something.", category <code>category.mirror</code>.</td></tr>
+    <tr><td class="n">4</td><td class="k">eventDidReachThreshold → Screen Time keys</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L79">:79–83</a></td><td><code>DistractionSnapshot.load</code>, and today's <code>lastRungAt</code>.</td></tr>
+    <tr><td class="n">5, 6</td><td class="k">eventDidReachThreshold → decide → eventDidReachThreshold</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L84">:84</a></td><td>The snapshot, now, the rung (1, 2 or 3 from the event name <code>nudge.limit.100 / 150 / 175</code>, else 0) and the last rung time in; a <code>LimitDecision</code> out.</td></tr>
+    <tr><td class="n">7</td><td class="k">eventDidReachThreshold → Screen Time keys</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L86">:86–87</a></td><td>Writes <code>lastRungAt</code> and <code>lastRungDay</code>.</td></tr>
+    <tr><td class="n">8, 9</td><td class="k">eventDidReachThreshold → placeholderTitle → eventDidReachThreshold</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L92">:92–93</a></td><td>Reads both properties of the decision. The title (or the silent reason) is also written to the breadcrumb list at line 89.</td></tr>
+    <tr><td class="n">10</td><td class="k">eventDidReachThreshold → UNUserNotificationCenter</td><td><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L91">:91–95</a> → <a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98">post</a></td><td>Skipped for <code>.silent</code>. Otherwise the pair below, category <code>category.limit</code>.</td></tr>
+  </table></div>
+
+  <h3>Strings by decision</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Decision</th><th>Chosen when</th><th>Title</th><th>Body</th></tr>
+    <tr><td class="k">mirror event</td><td>event name is <code>nudge.mirror</code> and the mirror is enabled</td><td>MIRROR</td><td>Hey, got a sec? I want to show you something.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Models/DistractionSettings.swift#L133">.silent</a></td><td>now is inside an event in the snapshot</td><td colspan="2">nothing is posted</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Models/DistractionSettings.swift#L145">.bedtimeTask</a></td><td>60 minutes or less to bedtime and an open item fits the minutes left (the shortest one)</td><td>LIMIT BEDTIME</td><td><i>item title</i> fits in the N minutes before bed.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Models/DistractionSettings.swift#L147">.windDown</a></td><td>60 minutes or less to bedtime and nothing fits</td><td>LIMIT WINDDOWN</td><td>It's almost bedtime. Wind down.</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Models/DistractionSettings.swift#L155">.rung(n, calm)</a></td><td>rung 1 to 3 during the day</td><td>LIMIT <i>n</i></td><td>"Rung <i>n</i>." or, when work was recorded since the previous rung, "Rung <i>n</i>, you worked since the last one."</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Models/DistractionSettings.swift#L128">.random(reason)</a></td><td>no snapshot, a snapshot from another day, before the day window, after bedtime, or a rung outside 1 to 3</td><td>RANDOM LIMIT</td><td>the reason, for example "no snapshot written by the app yet"</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-cases">
+  <h2>Every case where different text is used</h2>
+  <p class="intro">Grouped by what changes. For the arbiter's body, the written line is the first choice and each row here is a way the notification ends up with other words.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th>Case</th><th>Text used instead</th><th>Code</th></tr>
+    <tr><td class="n">1</td><td>No pass has ever been saved: no API key, no network, or every request failed.</td><td>The builder's template, for every kind.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L147">validBody :147</a></td></tr>
+    <tr><td class="n">2</td><td>The cache is more than 3 days old, or stamped in the future.</td><td>Template.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L148">:148–150</a></td></tr>
+    <tr><td class="n">3</td><td>No entry for this kind and task: the task was not in the kind's top 4 at the pass, it was created after the pass, or its row was dropped in decoding (missing or out-of-range index, body under 12 characters, the word "placeholder").</td><td>The kind-generic line if the kind has one (idle, comeBack, goalLapse); otherwise template.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L153">:153–156</a>, <a data-f="Nudge/Services/ClaudeService.swift#L1079">decode :1079–1086</a></td></tr>
+    <tr><td class="n">4</td><td>A newer pass returned fewer usable rows. <code>save</code> replaces the whole array, so yesterday's line for that slot is gone.</td><td>Template.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L76">save :76</a></td></tr>
+    <tr><td class="n">5</td><td>The named task was completed or deleted after the line was written.</td><td>Template.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L167">:167–169</a></td></tr>
+    <tr><td class="n">6</td><td>The task's deadline moved by a minute or more, was removed, or was added to a task the line was written for as undated.</td><td>Template.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L175">:175–186</a></td></tr>
+    <tr><td class="n">7</td><td>The line uses a placeholder that cannot be filled: <code>{name}</code> with an empty profile name; <code>{goal}</code> on a kind other than goalLapse; <code>{task}</code> on comeBack or goalLapse; <code>{due}</code>, <code>{day}</code> or <code>{time}</code> on idle, floater, comeBack or goalLapse, or on a task with no date or slot.</td><td>Template.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L535">fill :535–560</a></td></tr>
+    <tr><td class="n">8</td><td>The line contains any other word in braces.</td><td>Template.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L562">:562</a></td></tr>
+    <tr><td class="n">9</td><td>The line is used, but its words change at scheduling: placeholders are replaced; "is", "was" or "due" before <code>{due}</code> is removed; <code>{due}</code> becomes future or past tense by the fire date; <code>{time}</code> becomes "the end of the day" for a date-only deadline.</td><td>The filled line.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L549">:549–560</a></td></tr>
+    <tr><td class="n">10</td><td>A batch (several events, several deadlines, several placed blocks in one notification). The lookup and the fill use the first item only.</td><td>A written line that names only the first item, or the template that names the others too.</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L744">eventBlock :744</a>, <a data-f="Nudge/Services/NudgeArbiter.swift#L1762">dueSoon :1762</a>, <a data-f="Nudge/Services/NudgeArbiter.swift#L2446">placementLead :2446</a></td></tr>
+    <tr><td class="n">11</td><td>The template itself has variants: one, two or more items (eventBlock, dueSoon, placementLead); deep work or not (prep); open tasks or none (comeBack); dated, undated or past due (morningPrompt); a nameless event.</td><td>The variant in the stage 4 table.</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L788">NudgeArbiter.swift</a></td></tr>
+    <tr><td class="n">12</td><td>The title, by urgency tier: warning or critical.</td><td>The literal title with a ⚠️ prefix, or a 🔴 prefix and uppercase.</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L78">styledTitle :78</a></td></tr>
+    <tr><td class="n">13</td><td>The placementLead title, by the task's stakes.</td><td>ANCHORED HIGH, ANCHORED MEDIUM or ANCHORED LOW (low also for unclassified).</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L2465">:2465</a></td></tr>
+    <tr><td class="n">14</td><td>New lines were cached after requests were already pending.</td><td>Pending requests keep their old words until the next arbiter run; both callers of a successful pass trigger one at once.</td><td><a data-f="Nudge/ContentView.swift#L283">ContentView :283</a>, <a data-f="Nudge/Services/NudgeCopyService.swift#L344">noteShift :344</a></td></tr>
+    <tr><td class="n">15</td><td>Snooze 30 min.</td><td>The delivered title and body, copied. Not looked up again, not refreshed by later runs.</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L387">rescheduleSnoozed</a></td></tr>
+    <tr><td class="n">16</td><td>The Settings test button.</td><td>"Test" / "Notifications are enabled — new system not yet built."</td><td><a data-f="Nudge/Services/NudgeNotificationService.swift#L121">sendTestNotification</a></td></tr>
+    <tr><td class="n">17</td><td>A Screen Time threshold.</td><td>The placeholder pairs in the stage 9 table.</td><td><a data-f="Nudge/Models/DistractionSettings.swift#L100">LimitDecision</a></td></tr>
+    <tr><td class="n">18</td><td>DEBUG build launched with <code>-nudge-regenerate-copy</code>.</td><td>One forced writing pass per launch, so the lines change the same day.</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L257">:257</a></td></tr>
+  </table></div>
+</section>
+
+<section id="sec-storage">
+  <h2>Where text is stored</h2>
+  <p class="intro">Everything the app keeps is in App Group UserDefaults (<code>group.com.deblaser.nudge</code>, <a data-f="Nudge/Services/SharedModelContainer.swift#L27">SharedModelContainer.appGroupDefaults</a>). No SwiftData model holds notification text.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">What</th><th>Where</th><th>Written by</th><th>Read by</th><th>Lifetime</th></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L69">Written lines</a></td><td><code>nudge.copy.cache</code>: JSON array of <a data-f="Nudge/Services/NudgeCopyService.swift#L46">CachedNudgeCopy</a> (kind, task id, task title, deadline at writing, body with placeholders)</td><td>NudgeCopyStore.save, once per successful pass, replacing the array</td><td>NudgeCopyStore.validBody through entries(); the DEBUG dump</td><td>Served for 3 days from <code>nudge.copy.generatedAt</code>; never deleted</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L117">Recent lines</a></td><td><code>nudge.copy.history</code>: string array</td><td>NudgeCopyStore.appendHistory after each pass</td><td>generateIfNeeded, which sends them back to the writer</td><td>The newest 40</td></tr>
+    <tr><td class="k"><a data-f="Nudge/Services/NudgeCopyService.swift#L234">Pass stamps</a></td><td><code>nudge.copyGen.lastRunDay</code>, <code>nudge.copyGen.lastAttempt</code>, <code>nudge.copy.countDay</code>, <code>nudge.copy.count</code></td><td>generateIfNeeded, recordGeneration</td><td>generateIfNeeded's throttles</td><td>Overwritten each pass</td></tr>
+    <tr><td class="k">Filled body and styled title</td><td>Only inside the <code>UNNotificationRequest</code> held by iOS</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4129">schedule</a></td><td>iOS at delivery; <a data-f="Nudge/Services/NudgeNotificationService.swift#L389">rescheduleSnoozed</a> reads it back from a delivered notification</td><td>Until the next arbiter run removes the pending request, or the notification is cleared</td></tr>
+    <tr><td class="k">Templates, titles, button labels, Screen Time strings, the prompt</td><td>String literals in source</td><td></td><td>Built again on every use</td><td></td></tr>
+    <tr><td class="k"><a data-f="NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L89">Limit decision title</a></td><td><code>nudge.distractions.breadcrumbs</code>: one line per extension wake</td><td>the extension's <code>crumb</code></td><td>DEBUG dump in the app</td><td>The newest 40</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-dead">
+  <h2>Exists but has no effect</h2>
+  <p class="intro">On the text path. None of these is a step on the main path, so none is drawn.</p>
+  <ol class="dead">
+    <li><a data-f="Nudge/Services/NudgeCopyService.swift#L143">validBody's fireDate parameter</a> is passed by resolvedBody and never read. No check compares the deadline with the fire date; tense is handled later by <code>{due}</code>.</li>
+    <li><a data-f="Nudge/Services/NudgeArbiter.swift#L4065">tier(for:fireDate:)'s fireDate parameter</a> is never read. The tier, and so the title's prefix and casing, is measured from the moment the candidate is built, not from when it fires.</li>
+    <li><a data-f="Nudge/Services/NudgeCopyService.swift#L84">NudgeCopyStore.clear()</a> is called by nothing. The cache is only ever replaced or left to age out.</li>
+    <li><a data-f="Nudge/Services/NudgeCopyService.swift#L289">The empty-request guard</a> in generateIfNeeded, and <a data-f="Nudge/Services/ClaudeService.swift#L952">the one</a> in generateNudgeCopy, cannot be taken: buildRequests always appends the idle, comeBack and goalLapse items.</li>
+    <li><a data-f="Nudge/Services/NudgeCopyService.swift#L50">CachedNudgeCopy.taskTitle</a> is stored with every entry and read only by the DEBUG dump.</li>
+    <li><a data-f="Nudge/Services/ClaudeService.swift#L1891">GeneratedCopyJSON</a> is a private Codable struct nothing decodes into; decodeGeneratedCopy reads rows with JSONSerialization.</li>
+    <li><a data-f="Nudge/Services/NudgeNotificationCategories.swift#L201">category.getAhead</a> is registered with three button labels, and no builder puts it on a request.</li>
+    <li><a data-f="Nudge/Models/DistractionSettings.swift#L102">LimitDecision.silent</a> has an empty title and a reason for a body; neither is posted. The reason reaches only the breadcrumb list.</li>
+    <li><a data-f="Nudge/Services/NudgeCopyService.swift#L198">NudgeCopyStore.debugDump</a>, the swap printout in <a data-f="Nudge/Services/NudgeArbiter.swift#L4237">resolvedBody</a> and the <code>-nudge-regenerate-copy</code> argument exist in DEBUG builds only.</li>
+  </ol>
+</section>
+
+<section id="sec-scope">
+  <h2>Scope</h2>
+  <p class="intro">Read from source at <code>ede6774</code>: Swift, plist, entitlements and the Xcode project file. No documentation files were read.</p>
+  <ul class="note">
+    <li><strong>Targets</strong> (<code>Nudge.xcodeproj/project.pbxproj</code>): Nudge, NudgeWidgetExtension, NudgeActivityMonitor, NudgeActivityReport. Notification content is built in Nudge (three sites) and NudgeActivityMonitor (one). <code>Models/DistractionSettings.swift</code> is compiled into the extension targets through membership exceptions, which is how <code>LimitDecider</code> runs outside the app.</li>
+    <li><strong>Entitlements</strong>: all four targets carry the App Group <code>group.com.deblaser.nudge</code>, where the cache lives. No push entitlement exists, so every notification is local.</li>
+    <li><strong>Info.plist</strong>: no notification text. <code>NudgeActivityMonitor/Info.plist</code> declares the <code>com.apple.deviceactivity.monitor-extension</code> point that lets iOS run stage 9.</li>
+    <li><strong>Not notifications</strong>: the widget and the Live Activity draw their own views; the widget's <code>CompleteTaskIntent</code> only removes pending requests.</li>
+    <li><strong>Working tree</strong>: <code>Nudge/Views/Components/TodayTimelineView.swift</code> has uncommitted changes. It is not on this path and is not linked from this page.</li>
+  </ul>
+</section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var BASE = 'https://github.com/deblaseroman/nudge-app/blob/ede6774/';
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function fileUrl(p) { return /^https?:/.test(p) ? p : BASE + p; }
+
+  document.querySelectorAll('a[data-f]').forEach(function (a) {
+    a.setAttribute('href', fileUrl(a.getAttribute('data-f')));
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener');
+  });
+
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function isDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function themeVars() {
+    return {
+      fontFamily: cssVar('--font-body') || 'sans-serif',
+      fontSize: '13px',
+      primaryColor: cssVar('--node'),
+      primaryTextColor: cssVar('--fg'),
+      primaryBorderColor: cssVar('--node-border'),
+      secondaryColor: cssVar('--node'),
+      tertiaryColor: cssVar('--cluster'),
+      lineColor: cssVar('--edge'),
+      textColor: cssVar('--fg'),
+      mainBkg: cssVar('--node'),
+      actorBkg: cssVar('--node'),
+      actorBorder: cssVar('--node-border'),
+      actorTextColor: cssVar('--fg'),
+      actorLineColor: cssVar('--cluster-border'),
+      signalColor: cssVar('--edge'),
+      signalTextColor: cssVar('--fg'),
+      labelBoxBkgColor: cssVar('--cluster'),
+      labelBoxBorderColor: cssVar('--cluster-border'),
+      labelTextColor: cssVar('--fg'),
+      loopTextColor: cssVar('--fg'),
+      noteBkgColor: cssVar('--cluster'),
+      noteBorderColor: cssVar('--cluster-border'),
+      noteTextColor: cssVar('--fg'),
+      activationBkgColor: cssVar('--cluster'),
+      activationBorderColor: cssVar('--cluster-border'),
+      sequenceNumberColor: cssVar('--surface')
+    };
+  }
+
+  var KIND_CLASS = { 'App code': 'app', 'OS framework': 'os', 'External service': 'ext' };
+
+  // Boxes of a figure, in order, from its Mermaid source: id, the two label lines, and the kind of the box group it sits in.
+  function parseBoxes(src) {
+    var boxes = [], kind = '';
+    src.split('\n').forEach(function (line) {
+      var m;
+      if ((m = line.match(/^\s*box\s+(?:rgba?\([^)]*\)\s*)?(.*)$/))) { kind = m[1].trim(); return; }
+      if (/^\s*end\s*$/.test(line)) { kind = ''; return; }
+      if ((m = line.match(/^\s*participant\s+(\w+)\s+as\s+(.*)$/))) {
+        var parts = m[2].trim().split(/<br\s*\/?>/);
+        boxes.push({ id: m[1], line1: parts[0] || '', line2: parts[1] || '', kind: kind });
+      }
+    });
+    return boxes;
+  }
+
+  function linksOf(fig) {
+    var el = fig.querySelector('.mmd-links');
+    if (!el) return {};
+    try { return JSON.parse(el.textContent); } catch (e) { return {}; }
+  }
+
+  function buildBoxTable(fig, boxes, links) {
+    var holder = fig.querySelector('.boxes');
+    if (!holder) return;
+    var table = document.createElement('table');
+    var head = document.createElement('tr');
+    ['Box', 'Kind', 'What it stands for'].forEach(function (h, i) {
+      var th = document.createElement('th'); th.textContent = h; if (i < 2) th.className = 'k'; head.appendChild(th);
+    });
+    table.appendChild(head);
+    boxes.forEach(function (b) {
+      var info = links[b.id] || [];
+      var tr = document.createElement('tr');
+      var td1 = document.createElement('td'); td1.className = 'k';
+      var a = document.createElement('a');
+      a.textContent = b.line1 + ' · ' + b.line2;
+      if (info[0]) { a.href = fileUrl(info[0]); a.target = '_blank'; a.rel = 'noopener'; }
+      a.style.fontFamily = 'var(--font-mono)'; a.style.fontSize = '12.5px';
+      td1.appendChild(a);
+      var td2 = document.createElement('td'); td2.className = 'k';
+      var chip = document.createElement('span');
+      chip.className = 'kind ' + (KIND_CLASS[b.kind] || 'app');
+      chip.textContent = b.kind.toLowerCase();
+      td2.appendChild(chip);
+      var td3 = document.createElement('td'); td3.textContent = info[1] || '';
+      tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+      table.appendChild(tr);
+    });
+    holder.innerHTML = '';
+    holder.appendChild(table);
+  }
+
+  // Sequence diagrams have no click or tooltip syntax, so each participant box is wrapped in a link to its file and given a title after rendering.
+  function wireActors(stage, boxes, links) {
+    var byId = {};
+    boxes.forEach(function (b) { byId[b.id] = b; });
+    var rects = Array.prototype.slice.call(stage.querySelectorAll('rect.actor'));
+    rects.forEach(function (rect, i) {
+      var box = byId[rect.getAttribute('name')] || boxes[i % (boxes.length || 1)];
+      if (!box) return;
+      var info = links[box.id];
+      if (!info || !info[0]) return;
+      var g = rect.parentNode;
+      if (!g || !g.parentNode || (g.parentNode.tagName || '').toLowerCase() === 'a') return;
+      var a = document.createElementNS(SVGNS, 'a');
+      a.setAttribute('href', fileUrl(info[0]));
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener');
+      g.parentNode.insertBefore(a, g);
+      a.appendChild(g);
+      var title = document.createElementNS(SVGNS, 'title');
+      title.textContent = box.line1 + ' · ' + box.line2 + ' (' + box.kind.toLowerCase() + '). ' + (info[1] || '');
+      g.insertBefore(title, g.firstChild);
+    });
+  }
+
+  var figures = Array.prototype.slice.call(document.querySelectorAll('figure'));
+
+  async function renderOne(fig, index) {
+    var src = fig.querySelector('.mmd-src').textContent.trim();
+    var stage = fig.querySelector('.stage');
+    var status = fig.querySelector('.status');
+    var canvas = fig.querySelector('.canvas');
+    var boxes = parseBoxes(src);
+    var links = linksOf(fig);
+    buildBoxTable(fig, boxes, links);
+    var old = canvas.querySelector('pre.fallback');
+    if (old) old.remove();
+    try {
+      var out = await mermaid.render('nudge-copy-' + index + '-' + Date.now(), src);
+      stage.innerHTML = out.svg;
+      if (out.bindFunctions) out.bindFunctions(stage);
+      stage.hidden = false;
+      status.hidden = true;
+      wireActors(stage, boxes, links);
+    } catch (e) {
+      status.textContent = 'Mermaid could not render this figure: ' + (e && e.message ? e.message : e);
+      status.className = 'status error';
+      status.hidden = false;
+      var pre = document.createElement('pre');
+      pre.className = 'fallback';
+      pre.textContent = src;
+      canvas.appendChild(pre);
+    }
+  }
+
+  async function renderAll() {
+    if (!window.mermaid) {
+      figures.forEach(function (fig) {
+        var src = fig.querySelector('.mmd-src').textContent.trim();
+        buildBoxTable(fig, parseBoxes(src), linksOf(fig));
+        var status = fig.querySelector('.status');
+        status.textContent = 'The Mermaid library did not load. Source shown below.';
+        status.className = 'status error';
+        var pre = document.createElement('pre');
+        pre.className = 'fallback';
+        pre.textContent = src;
+        fig.querySelector('.canvas').appendChild(pre);
+      });
+      return;
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'base',
+      themeVariables: themeVars(),
+      maxTextSize: 400000,
+      sequence: {
+        useMaxWidth: false,
+        mirrorActors: true,
+        diagramMarginX: 12,
+        diagramMarginY: 10,
+        actorMargin: 22,
+        width: 168,
+        height: 50,
+        boxMargin: 8,
+        boxTextMargin: 4,
+        messageMargin: 26,
+        actorFontSize: 12,
+        messageFontSize: 12,
+        noteFontSize: 12,
+        wrap: false
+      }
+    });
+    for (var i = 0; i < figures.length; i++) {
+      await renderOne(figures[i], i);
+    }
+  }
+
+  var lastDark = isDark();
+  function onThemeChange() {
+    var now = isDark();
+    if (now !== lastDark) { lastDark = now; renderAll(); }
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', onThemeChange); else if (mq.addListener) mq.addListener(onThemeChange);
+  }
+  new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  renderAll();
+})();
+</script>

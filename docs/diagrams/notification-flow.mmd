@@ -1,0 +1,501 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% Nudge notification flow at commit ede6774 (2026-10-04).
+%% Every box = file + function/type. Every arrow = a call, read, or write found in code.
+%% Dashed (class dead) = exists but has no effect: switched-off check, unread setting, uncalled code.
+%% Star (★) marks the four places a UNNotificationRequest is handed to UNUserNotificationCenter.add.
+flowchart LR
+
+%% ───────────────── iOS ─────────────────
+subgraph IOS ["iOS frameworks"]
+  IOS_UNC["UserNotifications<br/>UNUserNotificationCenter.current()<br/>add · removePendingNotificationRequests · setNotificationCategories · requestAuthorization · delegate"]
+  IOS_BG["BackgroundTasks<br/>BGTaskScheduler · com.deblaser.nudge.dailyRecalc"]
+  IOS_DA["DeviceActivity / FamilyControls<br/>DeviceActivityCenter · AuthorizationCenter"]
+end
+
+%% ───────────────── App Group ─────────────────
+subgraph GROUP ["App Group defaults · group.com.deblaser.nudge"]
+  K_IDS["nudge.arb.scheduledIDs"]
+  K_HIST["nudge.arb.eventReminderHistory · dueSoonHistory ·<br/>placementMissedHistory · goalLapseHistory · morningPromptHistory"]
+  K_IDLE["nudge.arb.idleDismissedFor.yyyyMMdd"]
+  K_SESSION["nudge.lastFocusSessionStartedAt"]
+  K_WIDGET["nudge.arb.widgetMutated"]
+  K_COPY["nudge.copy.cache · nudge.copy.generatedAt · nudge.copy.history"]
+  K_TAP["nudge.tappedNudgeKind / TaskID / GoalID / Answer / Date"]
+  K_APPOPEN["AppOpenLog timestamps"]
+  K_DSET["nudge.distractions.settings"]
+  K_DSNAP["nudge.distractions.snapshot"]
+  K_RUNG["nudge.distractions.lastRungAt / lastRungDay / mirrorLastFiredAt"]
+  K_CRUMB["nudge.distractions.breadcrumbs"]
+end
+
+%% ───────────────── Target: Nudge (app) ─────────────────
+subgraph APP ["Target: Nudge (app) · Nudge.entitlements: app group + family-controls"]
+
+  subgraph TRIG ["Triggers of the arbiter"]
+    T_CV_TASK["ContentView.swift<br/>.task(id: notificationToken) → reason .appLaunch"]
+    T_CV_SCENE["ContentView.swift<br/>onChange(scenePhase == .active) → .sceneActive or .taskCompleted"]
+    T_CV_DAY["ContentView.swift<br/>after autoPlanIfNewDay / generateIfNeeded → .taskCreatedOrEdited"]
+    T_BG["NudgeApp.swift<br/>NudgeAppDelegate.handleDailyRecalc → .backgroundTask"]
+    T_PLIST["Nudge/Info.plist<br/>BGTaskSchedulerPermittedIdentifiers · UIBackgroundModes fetch"]
+    T_SESS["SessionCoordinator.swift<br/>startSession → .sessionStarted · completion → .taskCompleted · reevaluateAfterSessionEnd → .sessionEnded"]
+    T_UI["TasksTabView.swift refreshNotifications() · HomeTabView.swift · CalendarTabView.swift · DayPlanRefiner.swift<br/>→ .taskCreatedOrEdited"]
+    T_COPY["NudgeCopyService.swift<br/>NudgeCopyGenerator.noteShift → .taskCreatedOrEdited"]
+    T_DBG["EvalHarness.swift · CaptureHistoryExporter.swift<br/>DEBUG launch-argument runs only"]:::dead
+  end
+
+  subgraph ARB ["NudgeArbiter.swift"]
+    R_REEVAL["NudgeArbiter.reevaluate(reason:profile:modelContext:)"]
+    R_DEBOUNCE{"lastReevaluatedAt < 60s<br/>and reason is time-triggered?"}
+    R_CANCEL["cancelAll(modelContext:)"]
+    R_MASTER{"profile.notificationsEnabled?"}
+    B_EVENT["buildEventBlockCandidates"]
+    B_MORNING["buildMorningPromptCandidates · morningPromptRanking"]
+    B_IDLE["buildIdleCandidates · hadSessionStarted · hadTaskCompletion · idleDismissedToday"]
+    B_PREP["buildPrepCandidates · prepFireDate"]
+    B_DUESOON["buildDueSoonCandidates"]
+    B_FLOATER["buildFloaterCheckInCandidates · floaterTargets"]
+    B_COMEBACK["buildComeBackCandidates"]
+    B_LEAD["buildPlacementLeadCandidates"]
+    B_MISSED["buildPlacementMissedCandidates"]
+    B_GOAL["buildGoalLapseCandidates"]
+    R_CAND["NudgeCandidate<br/>id · kind · fireDate · title · body(template) · tier · taskID · countsAgainstBudget · anchoredToUserTime"]
+    R_CAND_DEAD["NudgeCandidate.receptivity · .interruption (overridden by tier) · .quadrant (DEBUG print)"]:::dead
+    R_GATECTX["GateContext.placementIntervals<br/>(other tasks' planned slots)"]
+    R_GATES["passesGates(_:context:)"]
+    G_SESSION["firesDuringActiveSession(_:)"]
+    G_COOL["firesInsideActivityCooldown(_:)"]
+    G_QUIET["passesQuietHours · quietWindow(for:) · sleepDerivedQuietHours"]
+    G_FATIGUE["taskFatigueCount(taskID:context:)<br/>NudgeConfig.fatigueGateEnabled == false"]:::dead
+    R_PICK["pickWinners(from:context:budget:)<br/>dailyNudgeBudget · minNudgeSpacingMinutes"]
+    R_TIER["tier(for:fireDate:) · NudgeUrgencyTier.styledTitle / interruption / relevanceScore"]
+    R_SCHED["schedule(_:modelContext:)<br/>UNCalendarNotificationTrigger · center.add  ★"]
+    R_BODY["resolvedBody(for:modelContext:)"]
+    R_DEBUG["debugStakesImpact · debugQuietHoursImpact · debugMorningPromptImpact · debugRecentActivityImpact · debugActiveSessionImpact · debugFloaterImpact · debugPlacementImpact · debugBudgetImpact · debugGoalLapseImpact · debugDumpPendingCensus · hadCalendarEvent · legacyInsideAwakeWindow · appGroupID · idleDismissAppGroupID"]:::dead
+  end
+
+  subgraph DATA ["Store and services the builders read"]
+    S_PROFILE["UserProfile.swift<br/>UserProfile: per-kind toggles · wakeTime/morningCheckInTime · bedtime · quietHoursFollowSleepSchedule/StartTime/EndTime · name"]
+    S_PROFILE_DEAD["UserProfile.swift<br/>eveningCheckIn · deadlinePrep · windDown · habitReminder · monthlyCheckIn · smart · streak · reEngagement · milestone toggles · quietHoursStart/End (Int)"]:::dead
+    S_CONFIG["NudgeConfig.swift<br/>NudgeConfig constants (lead minutes, anchors, budget, spacing, quiet buffers, copy cache days)"]
+    S_TASK["NudgeTask.swift<br/>NudgeTask: isComplete · isInformationalEvent · dueDate · specificTime · plannedStartDate · intendedDate · stakes · source"]
+    S_GOAL["NudgeGoal.swift<br/>NudgeGoal: isActive · lastActivityAt · createdAt"]
+    S_DONE["CompletedTaskRecord.swift<br/>CompletedTaskRecord.completedAt"]
+    S_OUTCOME["NudgeOutcome.swift<br/>NudgeOutcome: resultRaw · scheduledFor · actedAt · taskID · kindRaw"]
+    S_OUTCOME_DEAD["NudgeOutcome.swift<br/>firedAt (never written) · feedbackRaw/feedbackAt (no live reader)"]:::dead
+    S_SENTFLAG["SentNotificationFlag.swift · NotificationEvent.swift<br/>models in the schema, never inserted; SmartNotificationType · NotificationTone unused"]:::dead
+    S_PLANNER["StartByPlanner.swift<br/>StartByPlanner.plan(for:modelContext:now:) · isDeepWork"]
+    S_DUR["DurationModel.swift<br/>DurationModel.estimate(for:modelContext:)"]
+    S_EIS["EisenhowerScorer.swift<br/>urgency · importance · score"]
+    S_INTEL["NudgeIntelligence.swift<br/>cachedIntelligence(for:modelContext:) → statedUrgency"]
+    S_BUSY["BusyWindowResolver.swift<br/>isBusy(at:modelContext:) · dayLoad(on:wake:bedtime:modelContext:)"]
+    S_SORT["NudgeTask.swift / TaskSortComparator<br/>TaskSortComparator · topOpenTask"]
+    S_SESSION["SessionCoordinator.swift<br/>isSessionActive · sessionEnd · startSession writes lastFocusSessionStartedAt"]
+    S_APPOPEN["AppOpenLog.swift<br/>AppOpenLog.record() · timestamps() · didOpen(in:)"]
+    S_CLASSIFIER["NudgeOutcomeClassifier.swift<br/>classifyPending → .acted / .engaged / .ignored"]
+  end
+
+  subgraph COPY ["AI copy (written ahead, swapped at scheduling)"]
+    C_GEN["NudgeCopyService.swift<br/>NudgeCopyGenerator.generateIfNeeded(trigger:) · buildRequests"]
+    C_CLAUDE["ClaudeService.swift<br/>ClaudeService.generateNudgeCopy(requests:userName:recentBodies:)"]
+    C_SECRETS["Nudge/Secrets.plist<br/>ANTHROPIC_API_KEY"]
+    C_STORE["NudgeCopyService.swift<br/>NudgeCopyStore.validBody(kind:taskID:fireDate:) · save"]
+    C_FILL["NudgeCopyService.swift<br/>NudgeCopyFill.fill(_:candidate:) · anchor · duePhrase · relativeDay"]
+  end
+
+  subgraph NSVC ["NudgeNotificationService.swift"]
+    N_DELEGATE["userNotificationCenter(_:didReceive:) → handleResponse(actionID:…)"]
+    N_PRESENT["userNotificationCenter(_:willPresent:) → [.banner, .sound]"]
+    N_SNOOZE["rescheduleSnoozed(requestContent:originalID:)<br/>clone content · +30 min · '.snoozed' id · center.add  ★"]
+    N_TEST["sendTestNotification()<br/>'Test' · 5 s · center.add  ★"]
+    N_AUTH["requestAuthorizationIfNeeded() · authorizationState()"]
+    N_AUTH_OPT[".providesAppNotificationSettings option<br/>no openSettingsFor delegate method"]:::dead
+    N_FEEDBACK["recordFeedback(_:on:) → NudgeOutcome.feedback"]:::dead
+    N_DEAD["configure() empty body · scheduleAllNotifications() uncalled · pickTopOpenTask() uncalled ·<br/>Notification.Name.nudgeIdleNotYetTapped never posted · pendingIdleTaskID/Date keys never written"]:::dead
+  end
+
+  N_CATS["NudgeNotificationCategories.swift<br/>NudgeNotificationCategories.registerAll() · NudgeNotificationUserInfoKey"]
+  N_CAT_GETAHEAD["NudgeNotificationCategories.swift<br/>category.getAhead registered, no request carries it"]:::dead
+  N_RETIRED["NotificationScheduler.swift<br/>cancelRetiredDailyNotifications()"]
+  APP_LAUNCH["NudgeApp.swift<br/>NudgeAppDelegate.didFinishLaunchingWithOptions"]
+  UI_SETTINGS["SettingsTabView.swift<br/>toggle rows · 'Send test notification' · notificationPermissionCard · saveDistractions()"]
+  UI_ONBOARD["OnboardingCompleteView.swift<br/>askPermission()"]
+  UI_HOME["HomeTabView.swift<br/>notificationsDisabledBanner"]
+  UI_MSGBOX["TasksMessageBox.swift<br/>TappedNudgeContext.read()"]
+  UI_TAB["ContentView.swift<br/>publisher(for: .nudgeNotificationOpenTab) → deepLinkTab"]
+  D_MON["DistractionMonitor.swift<br/>DistractionMonitor.apply(profile:force:) · requestAuthorization()"]
+  D_SNAP_W["DistractionMonitor.swift<br/>writeSnapshot(profile:modelContext:now:)"]
+end
+
+%% ───────────────── Target: NudgeWidgetExtension ─────────────────
+subgraph WIDGET ["Target: NudgeWidgetExtension · NudgeWidgetExtension.entitlements: app group"]
+  W_INTENT["CompleteTaskIntent.swift<br/>CompleteTaskIntent.perform()"]
+  W_CANCEL["CompleteTaskIntent.swift<br/>cancelPendingNudges(for:defaults:)"]
+end
+
+%% ───────────────── Target: NudgeActivityMonitor ─────────────────
+subgraph EXT ["Target: NudgeActivityMonitor · NudgeActivityMonitor.entitlements: family-controls + app group · Info.plist: deviceactivity.monitor-extension"]
+  X_THRESH["DeviceActivityMonitorExtension.swift<br/>NudgeActivityMonitorExtension.eventDidReachThreshold(_:activity:)"]
+  X_GUARD{"DistractionSettings.mirrorEnabled /<br/>limitLadderEnabled?"}
+  X_DECIDE["DistractionSettings.swift<br/>LimitDecider.decide(snapshot:now:rung:lastRungAt:)"]
+  X_SILENT{"LimitDecision == .silent?"}
+  X_COPY["DistractionSettings.swift<br/>LimitDecision.placeholderTitle · placeholderBody"]
+  X_POST["DeviceActivityMonitorExtension.swift<br/>post(id:title:body:category:userInfo:) · trigger nil · .timeSensitive · center.add  ★"]
+  X_CRUMB["DeviceActivityMonitorExtension.swift<br/>crumb(_:)"]
+end
+
+%% ═════════ Launch wiring ═════════
+APP_LAUNCH -- "sets delegate" --> IOS_UNC
+APP_LAUNCH -- "registerAll()" --> N_CATS
+N_CATS -- "setNotificationCategories" --> IOS_UNC
+N_CAT_GETAHEAD -.-> N_CATS
+APP_LAUNCH -- "register + submit dailyRecalc" --> IOS_BG
+T_PLIST -- "permits identifier · fetch mode" --> IOS_BG
+IOS_BG -- "BGAppRefreshTask" --> T_BG
+APP_LAUNCH -. "configure() does nothing" .-> N_DEAD
+
+%% ═════════ Authorization ═════════
+UI_ONBOARD -- "askPermission" --> N_AUTH
+UI_SETTINGS -- "Allow notifications" --> N_AUTH
+N_AUTH -- "requestAuthorization(.alert .badge .sound …)" --> IOS_UNC
+N_AUTH_OPT -.-> N_AUTH
+N_AUTH -- "authorizationState()" --> UI_HOME
+
+%% ═════════ Triggers → reevaluate ═════════
+T_CV_TASK --> R_REEVAL
+T_CV_SCENE --> R_REEVAL
+T_CV_DAY --> R_REEVAL
+T_BG --> R_REEVAL
+T_SESS --> R_REEVAL
+T_UI --> R_REEVAL
+T_COPY --> R_REEVAL
+T_DBG -.-> R_REEVAL
+K_WIDGET -- "read + cleared" --> T_CV_SCENE
+S_PROFILE -- "toggles · wake · bed · quiet hours form the token" --> T_CV_TASK
+UI_SETTINGS -- "writes toggles" --> S_PROFILE
+S_PROFILE_DEAD -.-> S_PROFILE
+T_CV_TASK -- "cancelRetiredDailyNotifications" --> N_RETIRED
+T_BG --> N_RETIRED
+N_RETIRED -- "removePending nudge.daily.*" --> IOS_UNC
+
+%% ═════════ Inside reevaluate ═════════
+R_REEVAL --> R_DEBOUNCE
+R_DEBOUNCE -- "yes: return" --> R_REEVAL
+R_DEBOUNCE -- "no" --> R_CANCEL
+R_CANCEL -- "removePending(scheduledIDs)" --> IOS_UNC
+R_CANCEL -- "read then clear" --> K_IDS
+R_CANCEL -- "prune by age" --> K_HIST
+R_CANCEL -- "delete pending rows with future scheduledFor · delete rows older than 14 d" --> S_OUTCOME
+R_CANCEL --> R_MASTER
+R_MASTER -- "off: return (nothing scheduled)" --> R_REEVAL
+R_MASTER -- "on" --> B_EVENT
+R_MASTER --> B_MORNING
+R_MASTER --> B_IDLE
+R_MASTER --> B_PREP
+R_MASTER --> B_DUESOON
+R_MASTER --> B_FLOATER
+R_MASTER --> B_COMEBACK
+R_MASTER --> B_LEAD
+R_MASTER --> B_MISSED
+R_MASTER --> B_GOAL
+
+%% builders → candidates
+B_EVENT --> R_CAND
+B_MORNING --> R_CAND
+B_IDLE --> R_CAND
+B_PREP --> R_CAND
+B_DUESOON --> R_CAND
+B_FLOATER --> R_CAND
+B_COMEBACK --> R_CAND
+B_LEAD --> R_CAND
+B_MISSED --> R_CAND
+B_GOAL --> R_CAND
+R_CAND_DEAD -.-> R_CAND
+
+%% builder inputs
+S_PROFILE -- "eventReminderNotificationsEnabled" --> B_EVENT
+S_PROFILE -- "morningCheckInNotificationsEnabled · wake · bedtime" --> B_MORNING
+S_PROFILE -- "sessionStarterNotificationsEnabled · wake" --> B_IDLE
+S_PROFILE -- "taskDueSoonNotificationsEnabled · wake" --> B_PREP
+S_PROFILE -- "dueSoonReminderNotificationsEnabled" --> B_DUESOON
+S_PROFILE -- "floaterCheckInNotificationsEnabled · wake" --> B_FLOATER
+S_PROFILE -- "comeBackNotificationsEnabled · wake" --> B_COMEBACK
+S_PROFILE -- "placementLeadNotificationsEnabled" --> B_LEAD
+S_PROFILE -- "placementMissedNotificationsEnabled" --> B_MISSED
+S_PROFILE -- "goalLapseNotificationsEnabled · wake" --> B_GOAL
+S_TASK -- "isInformationalEvent · specificTime" --> B_EVENT
+S_TASK -- "open tasks · stakes · deadline" --> B_MORNING
+S_TASK -- "open non-event tasks" --> B_IDLE
+S_TASK -- "open tasks with dueDate" --> B_PREP
+S_TASK -- "dated open tasks, source not prep/commitment" --> B_DUESOON
+S_TASK -- "undated · no intendedDate · not placed on fire day" --> B_FLOATER
+S_TASK -- "open count" --> B_COMEBACK
+S_TASK -- "plannedStartDate · plannedIsAuto · stakes" --> B_LEAD
+S_TASK -- "plannedStartDate · plannedDurationMinutes" --> B_MISSED
+S_GOAL -- "active goals · lastActivityAt · createdAt" --> B_GOAL
+S_DONE -- "completion in pre-fire window" --> B_IDLE
+S_DONE -- "latest completion" --> B_COMEBACK
+K_SESSION -- "session start in pre-fire window" --> B_IDLE
+K_IDLE -- "idleDismissedToday" --> B_IDLE
+K_APPOPEN -- "AppOpenLog.timestamps().last" --> B_COMEBACK
+S_APPOPEN --> K_APPOPEN
+S_OUTCOME -- "tappedStart/Open/Snooze rows · actedAt" --> B_COMEBACK
+K_HIST -- "eventReminderHistory: delivered? skip" --> B_EVENT
+K_HIST -- "dueSoonHistory: delivered? skip" --> B_DUESOON
+K_HIST -- "placementMissedHistory: delivered? catch-up" --> B_MISSED
+K_HIST -- "goalLapseHistory: per-goal monthly cap" --> B_GOAL
+K_HIST -- "morningPromptHistory: no-repeat rule" --> B_MORNING
+S_BUSY -- "dayLoad ≥ busy threshold · isBusy at fire time → skip" --> B_MORNING
+S_PLANNER -- "plan(for:) picks the start day" --> B_PREP
+S_DUR -- "estimate(for:)" --> B_IDLE
+S_DUR --> B_PREP
+S_DUR --> B_FLOATER
+S_DUR --> B_LEAD
+S_DUR --> B_MISSED
+S_DUR --> B_MORNING
+S_INTEL -- "statedUrgency" --> B_IDLE
+S_INTEL --> B_PREP
+S_INTEL --> B_FLOATER
+S_INTEL --> B_LEAD
+S_INTEL --> B_MISSED
+S_EIS -- "urgency · importance" --> B_IDLE
+S_EIS --> B_PREP
+S_EIS --> B_FLOATER
+S_EIS --> B_LEAD
+S_EIS --> B_MISSED
+S_EIS --> B_MORNING
+S_SORT -- "TaskSortComparator picks the idle target" --> B_IDLE
+S_CONFIG -- "lead minutes · anchors after wake · gaps · attempts · thresholds" --> B_EVENT
+S_CONFIG --> B_MORNING
+S_CONFIG --> B_IDLE
+S_CONFIG --> B_PREP
+S_CONFIG --> B_DUESOON
+S_CONFIG --> B_FLOATER
+S_CONFIG --> B_COMEBACK
+S_CONFIG --> B_LEAD
+S_CONFIG --> B_MISSED
+S_CONFIG --> B_GOAL
+R_TIER -- "tier per task + fire date" --> R_CAND
+
+%% gates
+R_CAND --> R_GATES
+S_TASK -- "open placed tasks" --> R_GATECTX
+R_GATECTX --> R_GATES
+R_GATES -- "countsAgainstBudget only" --> G_SESSION
+S_SESSION -- "isSessionActive · sessionEnd" --> G_SESSION
+R_GATES -- "countsAgainstBudget only" --> G_COOL
+K_SESSION -- "lastStart + recentActivityCooldownMinutes" --> G_COOL
+S_SESSION -- "startSession writes" --> K_SESSION
+R_GATES -- "countsAgainstBudget and not anchoredToUserTime" --> G_QUIET
+S_PROFILE -- "quietHoursFollowSleepSchedule · custom start/end · bedtime · wake" --> G_QUIET
+S_CONFIG -- "postWakeQuietMinutes · preBedtimeQuietMinutes" --> G_QUIET
+R_GATES -- "countsAgainstBudget only: isBusy(at: fireDate)" --> S_BUSY
+S_TASK -- "events as busy windows" --> S_BUSY
+S_CONFIG -- "postEventBufferMinutes · interEventGapToleranceMinutes" --> S_BUSY
+R_GATES -. "fatigueGateEnabled is false" .-> G_FATIGUE
+S_OUTCOME -. "ignored / dismissed rows in 14 d" .-> G_FATIGUE
+R_GATES -- "eligible" --> R_PICK
+S_CONFIG -- "dailyNudgeBudget 10 · minNudgeSpacingMinutes 90" --> R_PICK
+R_PICK -- "winners (budget-exempt pass straight through)" --> R_SCHED
+R_DEBUG -.-> R_REEVAL
+
+%% scheduling
+R_SCHED -- "title = tier.styledTitle(candidate.title)" --> R_TIER
+R_SCHED -- "body" --> R_BODY
+R_BODY -- "validBody(kind, namedTaskID ?? taskID, fireDate)" --> C_STORE
+C_STORE -- "entries · generatedAt ≤ copyCacheDays" --> K_COPY
+C_STORE -- "task still open · deadline unchanged" --> S_TASK
+R_BODY -- "fill placeholders task / due / time / day / name / goal" --> C_FILL
+C_FILL -- "title · deadline · planned slot" --> S_TASK
+C_FILL -- "goal title" --> S_GOAL
+C_FILL -- "first name" --> S_PROFILE
+R_BODY -- "nil → candidate.body (template)" --> R_SCHED
+R_SCHED -- "UNNotificationRequest(id, content, calendar trigger) · add" --> IOS_UNC
+R_SCHED -- "insert id" --> K_IDS
+R_SCHED -- "write fire time per kind" --> K_HIST
+R_SCHED -- "insert NudgeOutcome(.pending)" --> S_OUTCOME
+R_REEVAL -- "after scheduling" --> D_SNAP_W
+
+%% AI copy generation
+T_CV_SCENE -- "generateIfNeeded(.newDay / .calendarImport)" --> C_GEN
+T_COPY -- "generateIfNeeded(.generatedWork)" --> C_GEN
+C_GEN -- "buildRequests: open tasks · events · placements · goals" --> S_TASK
+C_GEN -- "recentBodies" --> K_COPY
+C_GEN -- "generateNudgeCopy" --> C_CLAUDE
+C_SECRETS -- "API key" --> C_CLAUDE
+C_CLAUDE -- "bodies by index" --> C_GEN
+C_GEN -- "NudgeCopyStore.save · recordGeneration · appendHistory" --> K_COPY
+C_GEN -- "true → reevaluate" --> T_CV_DAY
+
+%% delivery → delegate
+IOS_UNC -- "willPresent (foreground)" --> N_PRESENT
+IOS_UNC -- "didReceive response" --> N_DELEGATE
+N_DELEGATE -- "newest pending row by notificationID → result · actedAt" --> S_OUTCOME
+N_DELEGATE -- "idleYesGood: set true" --> K_IDLE
+N_DELEGATE -- "body tap / idleNotYet: write" --> K_TAP
+K_TAP --> UI_MSGBOX
+N_DELEGATE -- "startSession action" --> S_SESSION
+N_DELEGATE -- "snooze30" --> N_SNOOZE
+N_SNOOZE -- "add '.snoozed' request (not in scheduledIDs, no NudgeOutcome row)" --> IOS_UNC
+N_DELEGATE -- "post .nudgeNotificationOpenTab" --> UI_TAB
+N_DELEGATE -. "markUnhelpful" .-> N_FEEDBACK
+N_FEEDBACK -.-> S_OUTCOME_DEAD
+S_OUTCOME_DEAD -.-> S_OUTCOME
+S_SENTFLAG -.-> S_OUTCOME
+
+%% outcome classification (recording only)
+T_CV_SCENE -- "recordForegroundAndClassifyOutcomes" --> S_APPOPEN
+T_CV_SCENE --> S_CLASSIFIER
+S_CLASSIFIER -- "pending rows past grace" --> S_OUTCOME
+S_CLASSIFIER -- "didOpen(in window)" --> K_APPOPEN
+S_CLASSIFIER -- "session start in window" --> K_SESSION
+S_CLASSIFIER -- "completion in window" --> S_DONE
+S_CLASSIFIER -- "writes result · classifiedAt" --> S_OUTCOME
+
+%% test notification
+UI_SETTINGS -- "button" --> N_TEST
+N_TEST -- "add 'nudge.test.*' (5 s, bypasses arbiter)" --> IOS_UNC
+
+%% widget
+W_INTENT -- "task completed" --> W_CANCEL
+W_CANCEL -- "pendingNotificationRequests · removePending(nudge.arb.* containing task id)" --> IOS_UNC
+W_CANCEL -- "trim ids" --> K_IDS
+W_CANCEL -- "set true" --> K_WIDGET
+
+%% Screen Time extension
+UI_SETTINGS -- "saveDistractions → settings.save · apply(force: true)" --> K_DSET
+UI_SETTINGS --> D_MON
+T_CV_TASK -- "apply(profile:)" --> D_MON
+D_MON -- "load settings · selection · limit · toggles" --> K_DSET
+S_PROFILE -- "wake · bedtime as the day window" --> D_MON
+D_MON -- "requestAuthorization(.individual) · startMonitoring daily (100/150/175 %) + weekly mirror" --> IOS_DA
+D_SNAP_W -- "day lens tasks · today's events · last work" --> S_TASK
+D_SNAP_W -- "latest completion" --> S_DONE
+D_SNAP_W -- "lastFocusSessionStartedAt" --> K_SESSION
+D_SNAP_W -- "DistractionSnapshot.save" --> K_DSNAP
+IOS_DA -- "threshold crossed in the extension process" --> X_THRESH
+X_THRESH -- "crumb every wake" --> X_CRUMB
+X_CRUMB --> K_CRUMB
+X_THRESH -- "DistractionSettings.load" --> K_DSET
+X_THRESH --> X_GUARD
+X_GUARD -- "off: return" --> X_THRESH
+X_GUARD -- "mirror on: stamp mirrorLastFiredAt" --> K_RUNG
+X_GUARD -- "mirror on: fixed MIRROR copy" --> X_POST
+X_GUARD -- "ladder on: rung 1/2/3" --> X_DECIDE
+K_DSNAP -- "DistractionSnapshot.load" --> X_DECIDE
+K_RUNG -- "lastRungAt (same day only)" --> X_DECIDE
+X_THRESH -- "write lastRungAt · lastRungDay (even when silent)" --> K_RUNG
+X_DECIDE --> X_SILENT
+X_SILENT -- "yes: return" --> X_THRESH
+X_SILENT -- "no" --> X_COPY
+X_COPY -- "placeholder title / body" --> X_POST
+X_POST -- "add 'nudge.ext.limit.*' / 'nudge.ext.mirror.*' (category.limit / category.mirror)" --> IOS_UNC
+X_POST -- "posted / post FAILED crumb" --> X_CRUMB
+
+%% ═════════ styles ═════════
+classDef dead stroke-dasharray:6 4,stroke:#8a8f98,color:#7a7f88,fill:transparent
+classDef add stroke-width:3px
+class R_SCHED,N_SNOOZE,N_TEST,X_POST add
+
+%% ═════════ links (GitHub blob at ede6774) ═════════
+click IOS_UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" _blank
+click IOS_BG href "https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler" _blank
+click IOS_DA href "https://developer.apple.com/documentation/deviceactivity" _blank
+click K_IDS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L180" _blank
+click K_HIST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L185" _blank
+click K_IDLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1507" _blank
+click K_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L51" _blank
+click K_WIDGET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L139" _blank
+click K_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L69" _blank
+click K_TAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L51" _blank
+click K_APPOPEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/AppOpenLog.swift" _blank
+click K_DSET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L20" _blank
+click K_DSNAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L53" _blank
+click K_RUNG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L24" _blank
+click K_CRUMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L30" _blank
+click T_CV_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L98" _blank
+click T_CV_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L169" _blank
+click T_CV_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L255" _blank
+click T_BG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" _blank
+click T_PLIST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Info.plist" _blank
+click T_SESS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" _blank
+click T_UI href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2347" _blank
+click T_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L338" _blank
+click T_DBG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/EvalHarness.swift#L212" _blank
+click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" _blank
+click R_DEBOUNCE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L354" _blank
+click R_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L535" _blank
+click R_MASTER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L372" _blank
+click B_EVENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L662" _blank
+click B_MORNING href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L871" _blank
+click B_IDLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1314" _blank
+click B_PREP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1542" _blank
+click B_DUESOON href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1668" _blank
+click B_FLOATER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1902" _blank
+click B_COMEBACK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2107" _blank
+click B_LEAD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2373" _blank
+click B_MISSED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2527" _blank
+click B_GOAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2241" _blank
+click R_CAND href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L87" _blank
+click R_CAND_DEAD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L94" _blank
+click R_GATECTX href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L397" _blank
+click R_GATES href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2713" _blank
+click G_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2824" _blank
+click G_COOL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2863" _blank
+click G_QUIET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2962" _blank
+click G_FATIGUE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2782" _blank
+click R_PICK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4016" _blank
+click R_TIER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4065" _blank
+click R_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4094" _blank
+click R_BODY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4214" _blank
+click R_DEBUG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L3048" _blank
+click S_PROFILE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/UserProfile.swift#L38" _blank
+click S_PROFILE_DEAD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/UserProfile.swift#L174" _blank
+click S_CONFIG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeConfig.swift" _blank
+click S_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift" _blank
+click S_GOAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeGoal.swift" _blank
+click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/CompletedTaskRecord.swift" _blank
+click S_OUTCOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L247" _blank
+click S_OUTCOME_DEAD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L255" _blank
+click S_SENTFLAG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/SentNotificationFlag.swift" _blank
+click S_PLANNER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/StartByPlanner.swift" _blank
+click S_DUR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DurationModel.swift#L52" _blank
+click S_EIS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/EisenhowerScorer.swift#L47" _blank
+click S_INTEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeIntelligence.swift#L62" _blank
+click S_BUSY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/BusyWindowResolver.swift#L93" _blank
+click S_SORT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L309" _blank
+click S_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L29" _blank
+click S_APPOPEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/AppOpenLog.swift#L40" _blank
+click S_CLASSIFIER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeOutcomeClassifier.swift#L70" _blank
+click C_GEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L246" _blank
+click C_CLAUDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L947" _blank
+click C_SECRETS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L20" _blank
+click C_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L140" _blank
+click C_FILL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L527" _blank
+click N_DELEGATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L156" _blank
+click N_PRESENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L149" _blank
+click N_SNOOZE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L387" _blank
+click N_TEST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L121" _blank
+click N_AUTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L95" _blank
+click N_AUTH_OPT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L104" _blank
+click N_FEEDBACK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L350" _blank
+click N_DEAD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L75" _blank
+click N_CATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationCategories.swift#L112" _blank
+click N_CAT_GETAHEAD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationCategories.swift#L26" _blank
+click N_RETIRED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L58" _blank
+click APP_LAUNCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L21" _blank
+click UI_SETTINGS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L77" _blank
+click UI_ONBOARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Onboarding/OnboardingCompleteView.swift#L161" _blank
+click UI_HOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L33" _blank
+click UI_MSGBOX href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Components/TasksMessageBox.swift#L40" _blank
+click UI_TAB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L50" _blank
+click D_MON href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L62" _blank
+click D_SNAP_W href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L219" _blank
+click W_INTENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" _blank
+click W_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L128" _blank
+click X_THRESH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L50" _blank
+click X_GUARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L58" _blank
+click X_DECIDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L127" _blank
+click X_SILENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L90" _blank
+click X_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L100" _blank
+click X_POST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98" _blank
+click X_CRUMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L32" _blank

@@ -1,0 +1,26 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: every caller of NudgeArbiter.reevaluate and the reason it passes.
+flowchart TB
+  T_CV_TASK["ContentView.swift<br/>.task(id: notificationToken)"]
+  T_CV_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  T_CV_DAY["DayPlanEngine.swift<br/>autoPlanIfNewDay"]
+  T_SESS["SessionCoordinator.swift<br/>startSession"]
+  T_UI["TasksTabView.swift<br/>refreshNotifications"]
+  T_BG["NudgeApp.swift<br/>handleDailyRecalc"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+
+  T_CV_TASK -- "appLaunch" --> R_REEVAL
+  T_CV_SCENE -- "sceneActive, taskCompleted" --> R_REEVAL
+  T_CV_SCENE --> T_CV_DAY
+  T_CV_DAY -- "taskCreatedOrEdited" --> R_REEVAL
+  T_SESS -- "session reasons" --> R_REEVAL
+  T_UI -- "taskCreatedOrEdited" --> R_REEVAL
+  T_BG -- "backgroundTask" --> R_REEVAL
+
+  click T_CV_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L98" "Runs at launch and whenever the token changes: bedtime, wake, notificationsEnabled, the nine per-kind toggles except goalLapse, quietHoursFollowSleepSchedule, quietHoursStartTime, quietHoursEndTime. Trailing-edge 500 ms debounce. Then purgePastEvents, PlacementRollover, ExamPrepSweep, PlanProposalSweep, cancelRetiredDailyNotifications, SessionCoordinator.syncIfActivityDismissed, reevaluate(.appLaunch), DistractionMonitor.apply." _blank
+  click T_CV_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L169" "On scene-active: purgePastEvents, PlacementRollover, ExamPrepSweep, PlanProposalSweep, recordForegroundAndClassifyOutcomes, then reevaluate with .taskCompleted when nudge.arb.widgetMutated was set (and cleared), else .sceneActive. Then a Task: calendar refresh, autoPlanIfNewDay, NudgeCopyGenerator.generateIfNeeded." _blank
+  click T_CV_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L255" "Inside the scene-active Task: a reevaluate after DayPlanEngine.autoPlanIfNewDay placed tasks, and another after NudgeCopyGenerator.generateIfNeeded returned true." _blank
+  click T_SESS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "startSession writes nudge.lastFocusSessionStartedAt and sessionEnd before reevaluate(.sessionStarted); completing the session's task runs reevaluate(.taskCompleted); reevaluateAfterSessionEnd runs reevaluate(.sessionEnded)." _blank
+  click T_UI href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2347" "TasksTabView.refreshNotifications from about 17 edit sites. Also with .taskCreatedOrEdited: HomeTabView after brain-dump capture and after plan proposals are written; CalendarTabView after edits, deletes, planning a day and screenshot import; DayPlanRefiner after applying placements; NudgeCopyGenerator.noteShift after new copy. DEBUG launch arguments (EvalHarness, CaptureHistoryExporter, -nudge-import-ical) also call it." _blank
+  click T_BG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "The 6 AM background task; see the launch wiring picture." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "appLaunch, sceneActive and backgroundTask are debounced for 60 s; the other reasons always run." _blank

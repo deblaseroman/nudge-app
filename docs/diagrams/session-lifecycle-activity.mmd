@@ -1,0 +1,26 @@
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · state machine: the Live Activity (Activity of TaskActivityAttributes). States are SessionState cases; .timeUp is never written, the widget derives it from isStale. One arrow per pair of states, labeled with the main function. Thick arrow = done outside the app, no app code runs.
+flowchart TB
+  A_NONE(["LiveActivityManager.swift<br/>currentActivity = nil"])
+  A_ACTIVE(["TaskActivityAttributes.swift<br/>SessionState.active"])
+  A_ALERT(["TaskActivityAttributes.swift<br/>SessionState.stayFocusedAlert"])
+  A_TIMEUP(["TaskActivityAttributes.swift<br/>SessionState.timeUp"])
+  A_COMPLETE(["TaskActivityAttributes.swift<br/>SessionState.complete"])
+
+  A_NONE -- "startActivity" --> A_ACTIVE
+  A_ACTIVE -- "showStayFocusedAlert" --> A_ALERT
+  A_ALERT -- "revertToActive" --> A_ACTIVE
+  A_ACTIVE -- "displayState" --> A_TIMEUP
+  A_ALERT -- "displayState" --> A_TIMEUP
+  A_ACTIVE -- "endActivity" --> A_COMPLETE
+  A_ALERT -- "endActivity" --> A_COMPLETE
+  A_TIMEUP -- "endActivity" --> A_COMPLETE
+  A_COMPLETE -- "endActivity, .immediate" --> A_NONE
+  A_TIMEUP -- "EndFocusSessionIntent.perform" --> A_NONE
+  A_ACTIVE == "removed outside the app" ==> A_NONE
+
+  click A_NONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L16" "No Live Activity. currentActivity is the first entry of Activity.activities for TaskActivityAttributes." _blank
+  click A_ACTIVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L28" "ContentState: taskName = the task title, sessionState .active, timerEnd = sessionEnd, nextTaskName nil. Attributes: userName, totalTasksToday 1, currentTaskIndex 1. staleDate = sessionEnd. pushType nil, so only this app and its widget extension can change it. Shown as FOCUSING with a countdown." _blank
+  click A_ALERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L33" "Same content with sessionState .stayFocusedAlert: the red STAY FOCUSED banner, 20 minutes in, for 10 seconds. Only the activity changes; the coordinator's own sessionState stays .active." _blank
+  click A_TIMEUP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L37" "Never written. displayState in TaskLiveActivityView returns .timeUp when context.isStale is true and the stored state is .active or .stayFocusedAlert. Shows TIME'S UP, hides the countdown, and offers Dismiss on the lock screen and in the expanded island." _blank
+  click A_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L32" "The final content handed to Activity.end: taskName All done plus the user name, sessionState .complete, timerEnd now, staleDate now, dismissalPolicy .immediate. The activity is removed in the same call." _blank

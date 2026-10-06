@@ -1,0 +1,22 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 3: a captured commitment whose numbers are known becomes a NudgeCommitment row and daily tasks. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant RUN as ExamPrepSweep.swift<br/>run
+    participant PHASE as ExamPrepSweep.swift<br/>commitmentPhase
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant COMMIT as NudgeCommitment rows<br/>NudgeCommitment.swift
+    participant ANN as Commitment announcement<br/>ExamPrepSweep.swift
+    participant SHIFT as NudgeCopyService.swift<br/>noteShift
+  end
+  RUN->>PHASE: commitmentPhase
+  PHASE->>TASKS: read commitment parents
+  PHASE->>COMMIT: insert commitment
+  PHASE->>TASKS: delete parent row
+  PHASE->>TASKS: insert daily rows
+  PHASE->>ANN: write announcement keys
+  PHASE->>COMMIT: dailyMinutes, carryUnits
+  PHASE->>TASKS: quantity carry
+  PHASE-->>RUN: returns created count
+  RUN->>SHIFT: noteShift(.generatedWork)

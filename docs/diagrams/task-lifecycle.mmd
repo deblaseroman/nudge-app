@@ -1,0 +1,315 @@
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% Nudge task lifecycle at commit ede6774 (2026-10-05). The complete reference; the page renders an overview plus close-ups cut from this.
+%% The persisted model is NudgeTask (Nudge/Models/NudgeTask.swift). Lifecycle fields: isInformationalEvent, dueDate / dueTime / specificTime (the owed clock), intendedDate (the plan day), plannedStartDate / plannedDurationMinutes / plannedIsAuto (the plan time), planDayIsAuto, sequenceIndex, skipCount, isComplete / completedAt. CompletedTaskRecord is the completion log.
+%% Stadium boxes are states (field values, file). Square boxes are file + function. Every arrow is a call, read or write found in code; labels name the function or the condition.
+%% Dashed (class dead) = exists but has no effect on the store: DEBUG-only harnesses, a one-shot backfill, an unread column.
+flowchart LR
+
+subgraph STATES ["NudgeTask row states · Nudge/Models/NudgeTask.swift"]
+  S_NEW(["no row yet"])
+  S_UNPLANNED(["open · intendedDate nil · plannedStartDate nil<br/>lists: Unscheduled; Today when owed today; Overdue once sortDeadline passes"])
+  S_DAY(["open · intendedDate set · plannedStartDate nil<br/>lists: that day's lens"])
+  S_AUTO(["open · plannedStartDate set · plannedIsAuto true<br/>today's timeline, movable"])
+  S_MANUAL(["open · plannedStartDate set · plannedIsAuto false<br/>that day's timeline, anchored"])
+  S_OVERDUE(["open · sortDeadline before now (overlay on any plan state)<br/>list: Overdue"])
+  S_SEQ(["open · sequenceIndex set (orthogonal flag)<br/>Today's plan section, in order"])
+  S_EVENT(["isInformationalEvent true · specificTime<br/>Events tab, timeline, calendar, widget"])
+  S_DONE(["isComplete true · completedAt"])
+  S_GONE(["row deleted"])
+end
+
+subgraph APP ["Target: Nudge (app)"]
+  subgraph CREATE ["Creation"]
+    C_HOME["HomeTabView.swift<br/>sendMessage"]
+    C_SESSION["TasksTabView.swift<br/>createSessionItem"]
+    C_EDITOR["TasksTabView.swift<br/>TaskEditorSheet onSave (create)"]
+    C_GOAL["TasksTabView.swift<br/>acceptGoalOffer"]
+    C_SHOT["CalendarTabView.swift<br/>handleScreenshotPicked"]
+    F_CAPTURE["CaptureWriter.swift<br/>apply"]
+    F_IMPORT_A["CalendarService.swift<br/>importAppleCalendar"]
+    F_IMPORT_I["CalendarService.swift<br/>writeICalEvents"]
+    F_IMPORT["CalendarService.swift<br/>applyImportedSchedule"]
+    F_BACKFILL["CalendarService.swift<br/>backfillImportedScheduleOnce"]:::dead
+    F_SHOTIMP["ScreenshotCalendarImporter.swift<br/>importFromImage"]
+  end
+  subgraph PLANHELPERS ["Plan helpers · the only writers of the plan"]
+    H_DAY["NudgeTask.swift<br/>setPlanDay"]
+    H_START["NudgeTask.swift<br/>setPlanStart"]
+    H_CLEARTIME["NudgeTask.swift<br/>clearPlanTime"]
+    H_CLEAR["NudgeTask.swift<br/>clearPlan"]
+    H_RELEASE["NudgeTask.swift<br/>releaseAutoPlan"]
+  end
+  subgraph PLANNER ["Planners"]
+    P_BTN["TasksTabView.swift<br/>planMyDay"]
+    P_CAL["CalendarTabView.swift<br/>planSelectedDay"]
+    P_AUTO["DayPlanEngine.swift<br/>autoPlanIfNewDay"]
+    P_PLAN["DayPlanEngine.swift<br/>plan"]
+    P_REFINE["DayPlanRefiner.swift<br/>refine"]
+    P_APPLY["DayPlanRefiner.swift<br/>applyPlacements"]
+    P_CLEAR["TasksTabView.swift<br/>clearPlan"]
+  end
+  subgraph USER ["User placement and edits"]
+    U_PLACE["TasksTabView.swift<br/>placeTask"]
+    U_REMOVE["TasksTabView.swift<br/>removeFromTimeline"]
+    U_EDIT["TasksTabView.swift<br/>TaskEditorSheet.apply"]
+    U_EVENTTIME["TasksTabView.swift<br/>setEventTime"]
+    U_EVENTFLAG["TasksTabView.swift<br/>setEventFlag"]
+    U_REORDER["TasksTabView.swift<br/>movePlanTasks"]
+    U_SESSION["SessionCoordinator.swift<br/>startSession"]
+    R_STARTED["TimelineReflow.swift<br/>sessionStarted"]
+    R_DURATION["TimelineReflow.swift<br/>durationChanged"]
+    R_REFLOW["TimelineReflow.swift<br/>reflow"]
+  end
+  subgraph DAYCHANGE ["Launch, foreground, 6 AM"]
+    T_LAUNCH["ContentView.swift<br/>.task(id: notificationToken)"]
+    T_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+    T_BG["NudgeApp.swift<br/>handleDailyRecalc"]
+    D_PURGE["CalendarService.swift<br/>purgePastEvents"]
+    D_SWEEP["PlacementRollover.swift<br/>sweep"]
+    D_MISSED["PlacementRollover.swift<br/>sweepMissedSessions"]
+    K_MISSED["nudge.missedSessions<br/>PlacementRollover.swift"]
+  end
+  subgraph GENERATED ["Generated rows"]
+    G_RUN["ExamPrepSweep.swift<br/>run"]
+    G_PHASE["ExamPrepSweep.swift<br/>commitmentPhase"]
+    G_CARRY["ExamPrepSweep.swift<br/>applyQuantityCarry"]
+    G_COMMITROW["shape · endDate · carryUnits<br/>NudgeCommitment.swift"]
+    G_PROPOSE["PlanProposalSweep.swift<br/>runIfNeeded"]
+    G_OVERRIDE["PlanProposalSweep.swift<br/>applyUserPlanOverrides"]
+    G_REQUEST["PlanProposalSweep.swift<br/>requestPlan"]
+    G_ANSWER["TasksTabView.swift<br/>answerPlanProposal"]
+    G_ACCEPT["PlanProposalSweep.swift<br/>accept"]
+    G_TOMB["ExamPrepSweep.swift<br/>recordDeletionIfGenerated"]
+    K_TOMB["examEventId · dayStamp<br/>PrepTombstone.swift"]
+  end
+  subgraph DONE ["Completion and deletion"]
+    X_TOGGLE["TasksTabView.swift<br/>toggleCompletion"]
+    X_SESSION["SessionCoordinator.swift<br/>completeCurrentTask"]
+    X_PURGEREC["TasksTabView.swift<br/>purgeOldCompletedRecords"]
+    K_RECORD["completedAt · sourceTaskID<br/>CompletedTaskRecord.swift"]
+    U_DELETE["TasksTabView.swift<br/>deleteTask"]
+    U_DELETE_E["TasksTabView.swift<br/>TaskEditorSheet onDelete"]
+    U_DELETE_C["CalendarTabView.swift<br/>TaskEditorSheet onDelete"]
+  end
+  subgraph READERS ["Readers that decide a screen, list or process"]
+    L_LISTS["NudgeTask.swift<br/>lists(on:) · belongs(to:) · isUnscheduled · isOverdue"]
+    L_LENS["NudgeTask.swift<br/>dayLens · planTasks · dayTasks · topOpenTask"]
+    L_TODAY["TasksTabView.swift<br/>todayLensBody · dayLensBody · thisWeekLensBody"]
+    L_UNSCHED["TasksTabView.swift<br/>unscheduledTasks"]
+    L_OVERDUE["TasksTabView.swift<br/>overdueTasks · rowTreatment"]
+    L_EVENTS["TasksTabView.swift<br/>eventItems · dayEvents"]
+    L_FILLER["TasksTabView.swift<br/>fillerCandidates · suggestedSessionTask"]
+    L_TIMELINE["TodayTimelineView.swift<br/>events · placed tasks"]
+    L_CAL["CalendarTabView.swift<br/>dayItems"]
+    L_MSGBOX["TasksMessageBox.swift<br/>overdue · topOpenTask"]
+    L_NOTIF["NudgeNotificationService.swift<br/>handleResponse (Not yet)"]
+    L_ARB["NudgeArbiter.swift<br/>build…Candidates · placementIntervals"]
+    L_BUSY["BusyWindowResolver.swift<br/>busyWindows"]
+    L_COPY["NudgeCopyService.swift<br/>buildRequests · validBody"]
+    L_CLASSIFY["NudgeOutcomeClassifier.swift<br/>classifyPending"]
+    L_SNAP["DistractionMonitor.swift<br/>writeSnapshot"]
+    L_STATS["StatsTabView.swift<br/>completed records · missed sessions"]
+  end
+  subgraph DEBUGONLY ["DEBUG only"]
+    Z_EVAL["EvalHarness.swift<br/>runFromLaunchArguments"]:::dead
+    Z_HARNESS["NudgeOutcomeClassifierHarness.swift<br/>run"]:::dead
+    Z_WIPE["TasksTabView.swift<br/>deleteAllTasksAndEvents"]:::dead
+    Z_AUDIT["NudgeApp.swift<br/>tempDumpVisibilityAudit"]:::dead
+  end
+end
+
+subgraph WIDGET ["Target: NudgeWidgetExtension · compiles Nudge/Models only"]
+  W_INTENT["CompleteTaskIntent.swift<br/>perform"]
+  W_TIMELINE["NudgeWidget.swift<br/>getTimeline"]
+end
+
+%% Creation
+C_HOME -- "capture" --> F_CAPTURE
+C_SESSION --> F_CAPTURE
+C_HOME -- "requestPlan on Yes" --> G_REQUEST
+C_HOME --> G_RUN
+C_SESSION --> G_RUN
+C_SHOT --> F_SHOTIMP
+T_SCENE -- "refreshRollingWindow" --> F_IMPORT_A
+T_SCENE -- "refreshICalFeedIfNeeded" --> F_IMPORT_I
+F_IMPORT_A --> F_IMPORT
+F_IMPORT_I --> F_IMPORT
+F_IMPORT_A -- "event" --> S_EVENT
+F_IMPORT_I -- "event" --> S_EVENT
+F_IMPORT -- "task, no span" --> H_DAY
+F_IMPORT -- "task with span" --> H_START
+T_LAUNCH --> F_BACKFILL
+F_BACKFILL -.-> H_DAY
+F_BACKFILL -.-> H_START
+F_SHOTIMP --> S_EVENT
+F_CAPTURE -- "undated, owed later" --> S_UNPLANNED
+F_CAPTURE -- "stated day, owed today, plan item" --> H_DAY
+F_CAPTURE -- "stated start" --> H_START
+F_CAPTURE -- "isEvent" --> S_EVENT
+F_CAPTURE -- "sequenceIndex set, old plan cleared" --> S_SEQ
+F_CAPTURE -- "replaces an overdue or slipped duplicate" --> S_GONE
+C_EDITOR --> H_DAY
+C_EDITOR --> H_START
+C_EDITOR -- "no day" --> S_UNPLANNED
+C_GOAL --> S_UNPLANNED
+
+%% Plan helpers to states
+H_DAY --> S_DAY
+H_START -- "auto false" --> S_MANUAL
+H_START -- "auto true" --> S_AUTO
+H_CLEARTIME --> S_DAY
+H_CLEAR --> S_UNPLANNED
+H_RELEASE -- "planDayIsAuto false" --> S_DAY
+H_RELEASE -- "planDayIsAuto true" --> S_UNPLANNED
+
+%% Planners
+P_BTN -- "clearAutoFirst" --> P_PLAN
+P_CAL --> P_PLAN
+T_SCENE -- "after calendar refresh" --> P_AUTO
+P_AUTO -- "once per day" --> P_PLAN
+C_HOME -- "handlePlanIntent" --> P_REFINE
+P_REFINE --> P_APPLY
+P_PLAN -- "replan, displacement" --> H_RELEASE
+P_PLAN -- "auto: isToday" --> H_START
+P_APPLY -- "auto: true" --> H_START
+P_CLEAR --> H_RELEASE
+S_UNPLANNED -- "candidate" --> P_PLAN
+S_DAY -- "candidate" --> P_PLAN
+S_SEQ -- "first, in order" --> P_PLAN
+S_AUTO -- "today's auto rows" --> H_RELEASE
+
+%% User placement
+U_PLACE -- "auto false, skipCount 0" --> H_START
+U_REMOVE --> H_CLEARTIME
+U_EDIT -- "clock time" --> H_START
+U_EDIT -- "day only" --> H_DAY
+U_EDIT -- "No date" --> H_CLEAR
+U_EDIT -- "due touched: dueDate, dueTime, specificTime" --> S_OVERDUE
+U_EDIT -- "duration chip" --> R_DURATION
+C_HOME -- "task_updates: dueKind start" --> H_DAY
+C_HOME -- "task_updates: start time" --> H_START
+C_HOME -- "task_updates: due fields" --> S_OVERDUE
+U_EVENTTIME -- "specificTime, dueDate, dueTime" --> S_EVENT
+U_EVENTFLAG -- "isInformationalEvent" --> S_EVENT
+U_REORDER -- "renumber" --> S_SEQ
+U_SESSION --> R_STARTED
+R_STARTED --> H_START
+R_STARTED --> R_REFLOW
+R_DURATION --> R_REFLOW
+R_REFLOW -- "push later, same auto flag" --> S_AUTO
+R_REFLOW -- "no room today" --> H_CLEARTIME
+R_REFLOW -- "start earlier" --> H_START
+
+%% Day change
+T_LAUNCH --> D_PURGE
+T_LAUNCH --> D_SWEEP
+T_LAUNCH --> G_RUN
+T_LAUNCH --> G_PROPOSE
+T_SCENE --> D_PURGE
+T_SCENE --> D_SWEEP
+T_SCENE --> G_RUN
+T_SCENE --> G_PROPOSE
+T_BG --> D_PURGE
+S_EVENT -- "day passed" --> D_PURGE
+D_PURGE --> S_GONE
+D_SWEEP --> D_MISSED
+D_MISSED --> K_MISSED
+D_MISSED --> G_TOMB
+D_MISSED -- "prep row, day passed" --> S_GONE
+S_AUTO -- "time before today" --> D_SWEEP
+S_MANUAL -- "time before today" --> D_SWEEP
+S_DAY -- "day before today" --> D_SWEEP
+S_SEQ -- "no plan day (legacy)" --> D_SWEEP
+D_SWEEP --> H_CLEARTIME
+D_SWEEP -- "first slip, legacy plan item" --> H_DAY
+D_SWEEP -- "second slip" --> H_CLEAR
+D_SWEEP -- "complete row: intendedDate nil" --> S_DONE
+S_UNPLANNED -- "isOverdue read" --> S_OVERDUE
+S_DAY -- "isOverdue read" --> S_OVERDUE
+
+%% Generated rows
+G_RUN --> G_PHASE
+G_PHASE --> G_CARRY
+G_PHASE -- "insert" --> G_COMMITROW
+G_PHASE -- "parent with commitmentShapeRaw: delete" --> S_GONE
+G_PHASE -- "daily: dueDate 23:59" --> S_UNPLANNED
+K_TOMB --> G_PHASE
+G_COMMITROW --> G_CARRY
+G_CARRY -- "past quantity dailies" --> S_GONE
+G_PROPOSE --> G_OVERRIDE
+G_OVERRIDE -- "user's own plan wins" --> S_GONE
+G_REQUEST --> G_ACCEPT
+G_ANSWER --> G_ACCEPT
+K_TOMB --> G_ACCEPT
+G_ACCEPT -- "setPlanDay, source prep" --> H_DAY
+U_DELETE --> G_TOMB
+U_DELETE_E --> G_TOMB
+U_DELETE_C --> G_TOMB
+G_TOMB --> K_TOMB
+U_DELETE --> S_GONE
+U_DELETE_E --> S_GONE
+U_DELETE_C --> S_GONE
+
+%% Completion
+X_TOGGLE -- "check" --> S_DONE
+X_TOGGLE -- "uncheck" --> S_UNPLANNED
+X_TOGGLE -- "insert, delete" --> K_RECORD
+X_TOGGLE -- "current session task" --> X_SESSION
+C_HOME -- "task_updates: isComplete, no record" --> S_DONE
+W_INTENT --> S_DONE
+W_INTENT --> K_RECORD
+X_PURGEREC -- "before this week" --> K_RECORD
+K_RECORD --> L_CLASSIFY
+K_RECORD --> L_STATS
+K_MISSED --> L_STATS
+S_DONE --> U_DELETE
+
+%% Readers
+S_UNPLANNED --> L_LISTS
+S_DAY --> L_LISTS
+S_AUTO --> L_LISTS
+S_MANUAL --> L_LISTS
+S_OVERDUE --> L_LISTS
+S_SEQ --> L_LENS
+S_DONE --> L_LENS
+L_LISTS --> L_LENS
+L_LENS --> L_TODAY
+L_LISTS --> L_UNSCHED
+L_LISTS --> L_OVERDUE
+S_EVENT --> L_EVENTS
+S_EVENT --> L_TIMELINE
+S_AUTO --> L_TIMELINE
+S_MANUAL --> L_TIMELINE
+L_LISTS --> L_FILLER
+S_AUTO --> L_FILLER
+L_LISTS --> L_CAL
+L_LISTS --> L_MSGBOX
+L_LENS --> L_MSGBOX
+L_LENS --> L_NOTIF
+L_LENS --> W_TIMELINE
+L_LENS --> L_SNAP
+S_EVENT --> L_BUSY
+L_BUSY --> P_PLAN
+L_BUSY --> R_REFLOW
+L_BUSY --> L_ARB
+S_UNPLANNED --> L_ARB
+S_DAY --> L_ARB
+S_AUTO --> L_ARB
+S_MANUAL --> L_ARB
+S_EVENT --> L_ARB
+S_UNPLANNED --> L_COPY
+S_DAY --> L_COPY
+S_AUTO --> L_COPY
+S_MANUAL --> L_COPY
+S_UNPLANNED --> G_PROPOSE
+S_EVENT --> G_PROPOSE
+
+%% DEBUG only
+Z_EVAL -.-> F_CAPTURE
+Z_EVAL -.-> D_SWEEP
+Z_EVAL -.-> P_PLAN
+Z_HARNESS -.-> S_DONE
+Z_WIPE -.-> S_GONE
+Z_AUDIT -.-> L_LISTS
+
+classDef dead stroke-dasharray:6 4,stroke:#8a8f98,color:#7a7f88,fill:transparent

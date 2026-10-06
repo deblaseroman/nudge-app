@@ -1,0 +1,21 @@
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 3: the one request that writes the lines, the row-by-row decode, and the two writes that store the result. The request body and the storage keys are tables on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant GEN as NudgeCopyService.swift<br/>generateIfNeeded
+    participant CLAUDE as ClaudeService.swift<br/>generateNudgeCopy
+    participant DECODE as ClaudeService.swift<br/>decodeGeneratedCopy
+    participant CACHE as Copy cache and history<br/>NudgeCopyService.swift
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  GEN->>CLAUDE: generateNudgeCopy
+  CLAUDE->>API: POST prompt
+  API-->>CLAUDE: returns JSON text
+  CLAUDE->>DECODE: decodeGeneratedCopy
+  DECODE-->>CLAUDE: returns usable rows
+  CLAUDE-->>GEN: returns lines by index
+  GEN->>CACHE: NudgeCopyStore.save
+  GEN->>CACHE: NudgeCopyStore.appendHistory

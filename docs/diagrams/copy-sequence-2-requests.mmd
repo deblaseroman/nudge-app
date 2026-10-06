@@ -1,0 +1,17 @@
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 2: the inputs of one writing pass. buildRequests turns open rows into request items; the first name and the recent lines are read beside them. The per-kind selection is a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant GEN as NudgeCopyService.swift<br/>generateIfNeeded
+    participant REQ as NudgeCopyService.swift<br/>buildRequests
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant PROFILE as UserProfile rows<br/>UserProfile.swift
+    participant HIST as Recent lines list<br/>NudgeCopyService.swift
+  end
+  GEN->>REQ: buildRequests
+  REQ->>TASKS: fetch open rows
+  REQ->>REQ: dueDescription
+  REQ-->>GEN: returns request items
+  GEN->>PROFILE: fetch name
+  GEN->>HIST: NudgeCopyStore.history

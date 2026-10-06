@@ -1,0 +1,138 @@
+%% artifact: https://claude.ai/artifact/KDDqj1uEg7eTPpJpsKNsiM
+%% commit ede6774 (2026-10-06) · index: one map of the whole app. Each region is one diagram set in docs/diagrams, drawn with a few of that set's own boxes (file + function or type). Every box opens its set's artifact page, the link on the first line of that set's .mmd file.
+%% Arrows inside a region are unlabeled and explained on that set's page. Labeled arrows between regions say how the sets connect. Cylinder = stored state, stadium = state, thick border = a UNNotificationRequest is added here, thick arrow = done by iOS, line without an arrowhead = runs in.
+%% Sets: capture-sequence.mmd, task-lifecycle.mmd, copy-sequence.mmd, session-lifecycle.mmd, notification-flow.mmd, system-context.mmd. Page: docs/diagrams/index.html.
+flowchart TB
+
+  subgraph CAPTURE ["Capture sequence"]
+    direction LR
+    CAP_HOME["HomeTabView.swift<br/>sendMessage"]
+    CAP_CLAUDE["ClaudeService.swift<br/>sendChat"]
+    CAP_API["api.anthropic.com<br/>POST /v1/messages"]
+    CAP_WRITER["CaptureWriter.swift<br/>apply"]
+    CAP_HOME --> CAP_CLAUDE
+    CAP_CLAUDE <--> CAP_API
+    CAP_HOME --> CAP_WRITER
+  end
+
+  subgraph TASKS ["Task lifecycle"]
+    direction TB
+    TL_IMPORT["CalendarService.swift<br/>applyImportedSchedule"]
+    TL_PREP["ExamPrepSweep.swift<br/>run"]
+    TL_PLACE["TasksTabView.swift<br/>placeTask"]
+    TL_DONE["TasksTabView.swift<br/>toggleCompletion"]
+    TL_ROWS[("NudgeTask rows<br/>NudgeTask.swift")]
+    TL_PLAN["DayPlanEngine.swift<br/>plan"]
+    TL_SWEEP["PlacementRollover.swift<br/>sweep"]
+    TL_LISTS["NudgeTask.swift<br/>lists(on:)"]
+    TL_IMPORT --> TL_ROWS
+    TL_PREP --> TL_ROWS
+    TL_PLACE --> TL_ROWS
+    TL_DONE --> TL_ROWS
+    TL_ROWS <--> TL_PLAN
+    TL_ROWS <--> TL_SWEEP
+    TL_ROWS --> TL_LISTS
+  end
+
+  subgraph COPY ["Copy sequence"]
+    direction TB
+    CP_GEN["NudgeCopyService.swift<br/>NudgeCopyGenerator"]
+    CP_CLAUDE["ClaudeService.swift<br/>generateNudgeCopy"]
+    CP_CACHE[("Copy cache<br/>NudgeCopyService.swift")]
+    CP_GEN <--> CP_CLAUDE
+    CP_GEN --> CP_CACHE
+  end
+
+  subgraph SESSION ["Session lifecycle"]
+    direction TB
+    SE_IDLE(["SessionCoordinator.swift<br/>isSessionActive = false"])
+    SE_RUN(["SessionCoordinator.swift<br/>isSessionActive = true"])
+    SE_DONE(["SessionCoordinator.swift<br/>sessionState = .complete"])
+    SE_PUB[("activeSessionState<br/>SessionCoordinator.swift")]
+    SE_IDLE --> SE_RUN
+    SE_RUN --> SE_DONE
+    SE_DONE --> SE_IDLE
+    SE_RUN ==> SE_PUB
+    SE_PUB --> SE_RUN
+  end
+
+  subgraph NOTIF ["Notification flow"]
+    direction LR
+    NF_TRIG["ContentView.swift<br/>onChange(scenePhase)"]
+    NF_ARB["NudgeArbiter.swift<br/>reevaluate"]
+    NF_EXT["DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold"]
+    NF_WIDGET["CompleteTaskIntent.swift<br/>cancelPendingNudges"]
+    NF_UNC["UserNotifications<br/>UNUserNotificationCenter"]
+    NF_NSVC["NudgeNotificationService.swift<br/>handleResponse"]
+    NF_TRIG --> NF_ARB
+    NF_ARB --> NF_UNC
+    NF_EXT --> NF_UNC
+    NF_WIDGET --> NF_UNC
+    NF_UNC --> NF_NSVC
+  end
+
+  subgraph CTX ["System context"]
+    direction TB
+    SYS_APP["NudgeApp.swift<br/>NudgeApp"]
+    SYS_WIDGET["NudgeWidgetBundle.swift<br/>NudgeWidgetBundle"]
+    SYS_MON["DeviceActivityMonitorExtension.swift<br/>NudgeActivityMonitorExtension"]
+    SYS_REP["NudgeActivityReportExtension.swift<br/>NudgeActivityReportExtension"]
+    SYS_ANTH["api.anthropic.com<br/>POST /v1/messages"]
+    SYS_STORE[("Nudge.store<br/>SharedModelContainer.swift")]
+    SYS_DEFAULTS[("App Group UserDefaults<br/>SharedModelContainer.swift")]
+    SYS_APP <--> SYS_ANTH
+    SYS_APP <--> SYS_STORE
+    SYS_APP <--> SYS_DEFAULTS
+    SYS_WIDGET <--> SYS_STORE
+    SYS_WIDGET <--> SYS_DEFAULTS
+    SYS_MON <--> SYS_DEFAULTS
+  end
+
+  CAPTURE -- "CaptureWriter.apply inserts rows" --> TASKS
+  TASKS -- "buildRequests reads open tasks" --> COPY
+  TASKS -- "startSession on a task" --> SESSION
+  TASKS -- "builders read the rows" --> NOTIF
+  COPY -- "a written line per nudge" --> NOTIF
+  SESSION -- "start and end rerun the arbiter" --> NOTIF
+  NOTIF -- "all five run in these targets and stores" --- CTX
+
+  classDef add stroke-width:3px
+  class NF_ARB,NF_NSVC,NF_EXT add
+
+  click CAP_HOME href "https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk" "Capture sequence. The Home tab sends the brain dump with sendChat, applies task_updates to existing rows, hands new items to CaptureWriter.apply and saves. The page has an overview and 11 stages." _blank
+  click CAP_CLAUDE href "https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk" "Capture sequence. ClaudeService.sendChat builds the URLRequest, sends it through URLSession and returns a ClaudeResponse." _blank
+  click CAP_API href "https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk" "Capture sequence. The Anthropic Messages API receives the JSON body and answers with the HTTP response the capture is built from." _blank
+  click CAP_WRITER href "https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk" "Capture sequence. CaptureWriter.apply inserts the NudgeTask rows: undated, on a stated day, at a stated start, as an event, or as a numbered plan item." _blank
+
+  click TL_IMPORT href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Calendar import: importAppleCalendar and writeICalEvents create events, applyImportedSchedule sets the plan day or start on imported tasks. Close-up: task-lifecycle-creation-auto." _blank
+  click TL_PREP href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Generated rows: ExamPrepSweep.run inserts daily commitment rows and deletes spent ones, PlanProposalSweep adds accepted prep plans. Close-up: task-lifecycle-generated." _blank
+  click TL_PLACE href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. User placement: placeTask sets a manual start through setPlanStart. removeFromTimeline and the editor sheet change or clear it. Close-up: task-lifecycle-placement." _blank
+  click TL_DONE href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Completion: toggleCompletion sets isComplete and inserts or deletes the CompletedTaskRecord. The widget's CompleteTaskIntent completes rows from outside the app. Close-up: task-lifecycle-completion." _blank
+  click TL_ROWS href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. The persisted model. Row states: unplanned, plan day set, auto-placed, manually placed, overdue, plan sequence, event, complete, deleted. The plan helpers setPlanDay, setPlanStart, clearPlanTime, clearPlan and releaseAutoPlan are the only writers of the plan." _blank
+  click TL_PLAN href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Planners: DayPlanEngine.plan takes unplanned and day-planned rows as candidates and places today's automatically. autoPlanIfNewDay runs it once per day. Close-up: task-lifecycle-planner." _blank
+  click TL_SWEEP href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Rollover at launch, foreground and 6 AM: sweep clears plan times from before today and slips or clears the plan day, sweepMissedSessions logs missed sessions. Close-up: task-lifecycle-rollover." _blank
+  click TL_LISTS href "https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS" "Task lifecycle. Readers: lists(on:), belongs(to:), isUnscheduled and isOverdue decide which list, screen, widget or process sees a row." _blank
+
+  click CP_GEN href "https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X" "Copy sequence. NudgeCopyGenerator asks Claude for the lines, saves them and calls reevaluate. Stages 1 to 6 draw this path function by function. Stages 7 to 9 are the other places text is set." _blank
+  click CP_CLAUDE href "https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X" "Copy sequence. ClaudeService.generateNudgeCopy returns the written lines by index." _blank
+  click CP_CACHE href "https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X" "Copy sequence. Where the lines are kept. NudgeCopyStore.save writes them. NudgeCopyStore.validBody hands back a line, or nil, when the arbiter schedules a nudge." _blank
+
+  click SE_IDLE href "https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv" "Session lifecycle. No session: the Tasks tab and the widget show Start Session. startSession moves to running." _blank
+  click SE_RUN href "https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv" "Session lifecycle. Running in this process: currentTask set, sessionEnd = start + estimatedMinutes, the activeSessionState key published. finishSession and cancelSession leave it." _blank
+  click SE_DONE href "https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv" "Session lifecycle. The 3-second completion card. finishSession returns to idle 3 s later." _blank
+  click SE_PUB href "https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv" "Session lifecycle. A stored session with no process behind it: after iOS ends the process, the App Group key and the Live Activity are all that is left. restoreSession brings it back on relaunch. Close-ups: activity, start, end, sync, widget." _blank
+
+  click NF_TRIG href "https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk" "Notification flow. Everything that calls reevaluate: launch, scene-active, the 6 AM background task, session start and end, task edits, new copy. Close-ups: launch, triggers." _blank
+  click NF_ARB href "https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk" "Notification flow. The single decision engine: debounce, cancelAll, master toggle, 10 builders, gates, pickWinners, schedule. Close-up: arbiter." _blank
+  click NF_EXT href "https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk" "Notification flow. Screen Time: the NudgeActivityMonitor process posts limit-ladder and mirror notifications when a DeviceActivity threshold is crossed. Close-up: screentime." _blank
+  click NF_WIDGET href "https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk" "Notification flow. Completing a task from the widget removes its pending requests and flags the app to reevaluate on its next foreground. Close-up: widget." _blank
+  click NF_UNC href "https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk" "Notification flow. iOS. Requests are added at four sites: NudgeArbiter.schedule, the monitor extension's post, rescheduleSnoozed and sendTestNotification." _blank
+  click NF_NSVC href "https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk" "Notification flow. The delegate: taps and actions write the NudgeOutcome result, start a session, re-add a snoozed request or open a tab. Close-ups: delivery, outcomes, permission." _blank
+
+  click SYS_APP href "https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q" "System context. Target Nudge, the application. The only target that touches the network, the calendar or the Documents folder. Embeds the three extensions." _blank
+  click SYS_WIDGET href "https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q" "System context. Target NudgeWidgetExtension: two widgets and the Live Activity view. Opens the same Nudge.store and reads, writes and removes App Group keys." _blank
+  click SYS_MON href "https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q" "System context. Target NudgeActivityMonitor. Reads and writes App Group defaults and posts notifications. Never opens the store." _blank
+  click SYS_REP href "https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q" "System context. Target NudgeActivityReport. Draws Screen Time results inside the Stats tab. Opens no store, no defaults and no network." _blank
+  click SYS_ANTH href "https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q" "System context. One of the two network services. The other is the user's iCal feed host. Only the app target calls either." _blank
+  click SYS_STORE href "https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q" "System context. The SwiftData store in the App Group container, 18 model types. Opened by the app and by the widget extension." _blank
+  click SYS_DEFAULTS href "https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q" "System context. UserDefaults(suiteName: group.com.deblaser.nudge), the only UserDefaults domain in the project. Close-ups: network, widget, screentime, notifications." _blank

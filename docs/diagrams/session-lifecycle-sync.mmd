@@ -1,0 +1,52 @@
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: syncIfActivityDismissed, the reconciliation run at launch and on every scene-active. Diamonds are the values it branches on, in the order the code checks them. When no branch applies it returns without changing anything.
+flowchart TB
+  T_LAUNCH["ContentView.swift<br/>.task(id: notificationToken)"]
+  T_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  K_STATE[("activeSessionState<br/>SessionCoordinator.swift")]
+  Y_SYNC["SessionCoordinator.swift<br/>syncIfActivityDismissed"]
+  Y_ACTIVE{"SessionCoordinator.swift<br/>isSessionActive"}
+  Y_PUBEND{"SessionCoordinator.swift<br/>publishedEnd"}
+  Y_RESTORE["SessionCoordinator.swift<br/>restoreSession"]
+  Y_SCHED["SessionCoordinator.swift<br/>scheduleWork"]
+  Y_LEFT{"SessionCoordinator.swift<br/>leftoverActivity"}
+  Y_STOP["LiveActivityManager.swift<br/>endActivity"]
+  Y_ENDP{"SessionCoordinator.swift<br/>endPassed"}
+  Y_FINISH["SessionCoordinator.swift<br/>finishSession"]
+  Y_WID{"SessionCoordinator.swift<br/>widgetEnded"}
+  Y_PUBLISH["SessionCoordinator.swift<br/>publishSessionState"]
+  Y_REEVAL["SessionCoordinator.swift<br/>reevaluateAfterSessionEnd"]
+
+  T_LAUNCH --> Y_SYNC
+  T_SCENE --> Y_SYNC
+  K_STATE --> Y_SYNC
+  Y_SYNC --> Y_ACTIVE
+  Y_ACTIVE -- "false" --> Y_PUBEND
+  Y_PUBEND -- "future, task open" --> Y_RESTORE
+  Y_RESTORE --> Y_SCHED
+  Y_PUBEND -- "otherwise" --> Y_LEFT
+  Y_LEFT -- "key or activity left" --> Y_STOP
+  Y_ACTIVE -- "true" --> Y_ENDP
+  Y_ENDP -- "passed, key present" --> Y_FINISH
+  Y_ENDP -- "otherwise" --> Y_WID
+  Y_WID -- "key or activity gone" --> Y_PUBLISH
+  Y_WID --> Y_REEVAL
+
+  classDef ender stroke-width:3px
+  class Y_STOP ender
+
+  click T_LAUNCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L153" "Launch, after a 500 ms debounce and the day sweeps, before NudgeArbiter.reevaluate(.appLaunch). Also re-runs whenever a notification setting in the token changes." _blank
+  click T_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L181" "Every change of scenePhase to .active, first thing, before the sweeps and the scene-active reevaluate." _blank
+  click K_STATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L235" "published = appGroupDefaults.dictionary(forKey: activeSessionState). Reads timerEndDate, currentTaskID and startedAt." _blank
+  click Y_SYNC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L233" "syncIfActivityDismissed(). Reads the key, the coordinator's own fields and Activity.activities." _blank
+  click Y_ACTIVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L236" "false: this process holds no session, either a fresh launch or nothing was running. true: a session is in memory, so the process survived." _blank
+  click Y_PUBEND href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L248" "publishedEnd = the key's timerEndDate. Restore needs all of: publishedEnd later than now, a currentTaskID that parses, and fetchTask finding that task with isComplete false." _blank
+  click Y_RESTORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L303" "restoreSession(task:ends:startedAt:). currentTask, sessionState .active, isSessionActive true, sessionEnd = ends, sessionStartedAt from the key, session count at least 1. The key and the Live Activity are left as they are." _blank
+  click Y_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L435" "sessionEndTimer after max(1, time left) to handleTimerExpired. focusAlertTimer at startedAt + 20 min when that is still ahead and more than 10 s before the end." _blank
+  click Y_LEFT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L259" "leftoverActivity = Activity.activities is not empty. When the key exists or an activity is left: removes the key, calls endActivity, reloads the NudgeTaskWidget timeline. Quiet: no alarm. With neither, returns." _blank
+  click Y_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L88" "endActivity(). Ends every activity with the .complete content and .immediate dismissal." _blank
+  click Y_ENDP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L275" "endPassed = sessionEnd is set and not later than now. With the key still present the session simply ran out while the app was suspended." _blank
+  click Y_FINISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L376" "finishSession(). The normal end: alarm, endActivity, key removed, 3-second completion card." _blank
+  click Y_WID href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L276" "widgetEnded = the key is absent. Teardown runs when the key is absent, or when the end has not passed and Activity.activities is empty. Otherwise the function returns: everything agrees. Teardown: cancelAllTimers, isSessionActive false, sessionState .active, currentTask nil, sessionEnd .distantPast, sessionStartedAt nil. It does not call endActivity." _blank
+  click Y_PUBLISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L462" "publishSessionState(isActive: false, …). Removes the key if it is still there and reloads the widget timeline." _blank
+  click Y_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L358" "reevaluateAfterSessionEnd(). NudgeArbiter.reevaluate(reason: .sessionEnded) so the active-session gate stops rejecting candidates." _blank

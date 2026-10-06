@@ -1,0 +1,22 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 5: the arbiter cancels and reschedules its notifications from the changed rows, then writes the Screen Time snapshot. Callers and steps are in the tables on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant REEVAL as NudgeArbiter.swift<br/>reevaluate
+    participant SNAP as DistractionMonitor.swift<br/>writeSnapshot
+    participant OUT as NudgeOutcome rows<br/>NudgeOutcome.swift
+    participant KEYS as Arbiter keys<br/>NudgeArbiter.swift
+    participant SNAPKEY as Screen Time snapshot<br/>DistractionSettings.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  REEVAL->>UNC: remove pending requests
+  REEVAL->>KEYS: clear ids, prune
+  REEVAL->>OUT: delete future pending
+  REEVAL->>UNC: add request
+  REEVAL->>KEYS: record id, fire time
+  REEVAL->>OUT: insert pending row
+  REEVAL->>SNAP: writeSnapshot
+  SNAP->>SNAPKEY: save snapshot

@@ -1,0 +1,30 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: app launch wiring — delegate, categories, the 6 AM background task, the retired-notification sweep.
+flowchart TB
+  APP_LAUNCH["NudgeApp.swift<br/>didFinishLaunchingWithOptions"]
+  N_CATS["NudgeNotificationCategories.swift<br/>registerAll"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  T_PLIST["Info.plist<br/>BGTaskSchedulerPermittedIdentifiers"]
+  IOS_BG["BackgroundTasks<br/>BGTaskScheduler"]
+  T_BG["NudgeApp.swift<br/>handleDailyRecalc"]
+  N_RETIRED["NotificationScheduler.swift<br/>cancelRetiredDailyNotifications"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+
+  APP_LAUNCH -- "delegate" --> UNC
+  APP_LAUNCH --> N_CATS
+  N_CATS -- "categories" --> UNC
+  T_PLIST --> IOS_BG
+  APP_LAUNCH -- "register, submit" --> IOS_BG
+  IOS_BG -- "6 AM" --> T_BG
+  T_BG -- "backgroundTask" --> R_REEVAL
+  T_BG --> N_RETIRED
+  N_RETIRED -- "remove retired" --> UNC
+
+  click APP_LAUNCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L21" "didFinishLaunchingWithOptions. Sets UNUserNotificationCenter.current().delegate = NudgeNotificationService.shared synchronously so a response that launched the app is not lost; registers categories; calls NudgeNotificationService.configure(), which is empty; registers the dailyRecalc task and submits the next 6 AM request." _blank
+  click N_CATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationCategories.swift#L112" "registerAll → setNotificationCategories with 13 categories: eventBlock, idle, getAhead (legacy, nothing schedules it), prep, dueSoon, morningPrompt, floater, comeBack, placementLead, placementMissed, goalLapse, limit, mirror. Actions: startSession (foreground), snooze30, idleYesGood, idleNotYet (foreground), markUnhelpful (not foreground). Every category has customDismissAction." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "System notification center." _blank
+  click T_PLIST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Info.plist" "Nudge/Info.plist: BGTaskSchedulerPermittedIdentifiers lists com.deblaser.nudge.dailyRecalc; UIBackgroundModes lists fetch. Without the identifier iOS refuses the registration." _blank
+  click IOS_BG href "https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler" "BGAppRefreshTaskRequest with earliestBeginDate = next 6 AM; iOS chooses the actual time." _blank
+  click T_BG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "handleDailyRecalc: re-arms the next 6 AM run first, CalendarService.purgePastEvents, fetches the profile, reevaluate(.backgroundTask), cancelRetiredDailyNotifications, setTaskCompleted." _blank
+  click N_RETIRED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L58" "Removes the pre-Jul-2026 repeating requests nudge.daily.bedtimePlanning and nudge.daily.morningKickoff by id. Also called from ContentView .task(id: notificationToken). The class schedules nothing anymore; it also holds lastFocusSessionStartedAtKey." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "See the arbiter close-up." _blank

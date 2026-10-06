@@ -1,0 +1,18 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 1 of the capture path: from the tab-bar tap to the point where sendMessage has everything it passes to ClaudeService.sendChat. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant TAB as AppTabBar.swift<br/>handleFloatingTap
+    participant STORE as ChatComposerStore.swift<br/>sendAction
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant ROUTER as ChatRouter.swift<br/>isSmallTalk
+    participant ROWS as Nudge.store rows<br/>SharedModelContainer.swift
+    participant PQ as Plan question keys<br/>PlanProposalSweep.swift
+  end
+  TAB->>STORE: read sendAction
+  STORE->>SEND: sendMessage
+  SEND->>ROWS: read allTasks
+  SEND->>PQ: read outstandingParentID
+  SEND->>ROUTER: isSmallTalk
+  SEND->>ROWS: read tasks, goals, commitments

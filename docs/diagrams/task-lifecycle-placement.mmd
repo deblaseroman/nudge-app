@@ -1,0 +1,56 @@
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: the user's own writes to the plan clocks (timeline, editor, chat, a started session) and the reflow they trigger. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  U_PLACE["TasksTabView.swift<br/>placeTask"]
+  U_REMOVE["TasksTabView.swift<br/>removeFromTimeline"]
+  U_EDIT["TasksTabView.swift<br/>TaskEditorSheet.apply"]
+  U_CHAT["HomeTabView.swift<br/>sendMessage"]
+  U_SESSION["SessionCoordinator.swift<br/>startSession"]
+  R_STARTED["TimelineReflow.swift<br/>sessionStarted"]
+  R_DURATION["TimelineReflow.swift<br/>durationChanged"]
+  R_REFLOW["TimelineReflow.swift<br/>reflow"]
+  H_START["NudgeTask.swift<br/>setPlanStart"]
+  H_DAY["NudgeTask.swift<br/>setPlanDay"]
+  H_CLEARTIME["NudgeTask.swift<br/>clearPlanTime"]
+  H_CLEAR["NudgeTask.swift<br/>clearPlan"]
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_AUTO(["plannedStartDate set · plannedIsAuto true<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+
+  U_PLACE --> H_START
+  U_REMOVE --> H_CLEARTIME
+  U_EDIT --> H_START
+  U_EDIT --> H_DAY
+  U_EDIT -- "No date" --> H_CLEAR
+  U_EDIT -- "duration chip" --> R_DURATION
+  U_CHAT --> H_DAY
+  U_CHAT --> H_START
+  U_SESSION --> R_STARTED
+  R_STARTED --> H_START
+  R_STARTED --> R_REFLOW
+  R_DURATION --> R_REFLOW
+  R_REFLOW -- "push later" --> S_AUTO
+  R_REFLOW --> H_CLEARTIME
+  R_REFLOW --> H_START
+  H_START -- "auto false" --> S_MANUAL
+  H_DAY --> S_DAY
+  H_CLEARTIME --> S_DAY
+  H_CLEAR --> S_UNPLANNED
+
+  click U_PLACE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2058" "placeTask(task, at:): the placement sheet from a tapped timeline slot, or a drag. setPlanStart(time, auto: false), skipCount = 0. Deadline untouched. Then the arbiter." _blank
+  click U_REMOVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2074" "removeFromTimeline: clearPlanTime only; the day stays, so the row is still on today's list unplaced. Offered in the editor when the task has a placement." _blank
+  click U_EDIT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L3639" "TaskEditorSheet.apply(draft, to:), the one edit path for the Tasks tab and the Calendar tab. Events: dueDate, dueTime, specificTime written as one clock. Tasks, only when touched: schedule → skipCount = 0, then setPlanStart(auto: false) for a clock time, setPlanDay + clearPlanTime for a day only, clearPlan for No date; due → dueDate, dueTime, specificTime, plus setPlanDay(anchor) when owed today and no day chosen. A plan day later than the due day moves the due day to it (the due clock time kept). A duration chip writes estimatedMinutes and TimelineReflow.durationChanged (or clears plannedDurationMinutes)." _blank
+  click U_CHAT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L398" "task_updates in sendMessage. A dueDate or dueTime answer re-resolves specificTime; for a task with dueKind start the owed fields are cleared and the day goes to setPlanDay, with setPlanStart(auto: false) and a 60-minute default when a time came with it; otherwise the deadline is written and an owed-today task gets setPlanDay(anchor). Also writes commitmentStartDate from a today / tomorrow answer." _blank
+  click U_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "startSession(task:userName:), from the Tasks tab (attemptStartSession checks for an anchored conflict first) and the notification Start session action. Writes nudge.lastFocusSessionStartedAt, then TimelineReflow.sessionStarted before the arbiter reevaluate." _blank
+  click R_STARTED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L117" "sessionStarted(subject, at: now, minutes): setPlanStart(now floored to the minute, session minutes, auto: false), then reflow with the start pinned. Events return untouched." _blank
+  click R_DURATION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L104" "durationChanged(subject, to:): plannedDurationMinutes = minutes; reflow only when the subject is placed today." _blank
+  click R_REFLOW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L132" "reflow: anchored intervals are busy windows plus manual placements on the day. If the subject runs into one, its start moves earlier (setPlanStart with its own auto flag) unless pinned. Later auto placements that now collide are pushed later keeping their original gap, snapped to 15 minutes, hopping anchored intervals; one that no longer fits before the day window ends gets clearPlanTime. Saves and reloads the widget." _blank
+  click H_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L194" "setPlanStart(start, durationMinutes, auto): intendedDate = the start's day, plannedStartDate, plannedDurationMinutes, plannedIsAuto = auto. Every user entry passes auto: false; the reflow's start-earlier move keeps the row's own flag." _blank
+  click H_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L180" "setPlanDay(day): intendedDate, planDayIsAuto = false; a placement on another day is cleared. From the editor's day-only save, and from the chat's dueKind start or owed-today answer." _blank
+  click H_CLEARTIME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L210" "clearPlanTime: plannedStartDate, plannedDurationMinutes nil, plannedIsAuto false. The day stays. From removeFromTimeline and from the reflow when a pushed row no longer fits today." _blank
+  click H_CLEAR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L217" "clearPlan: clearPlanTime, then intendedDate nil and planDayIsAuto false." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "Unscheduled list." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "That day's lens, unplaced." _blank
+  click S_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L403" "Pushed rows keep plannedIsAuto true." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "Anchored placement." _blank

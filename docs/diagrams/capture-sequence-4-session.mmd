@@ -1,0 +1,20 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 4 of the capture path: the study-plan question keys, the chat transcript row, and the save that persists everything from stage 3. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant PLAN as PlanProposalSweep.swift<br/>requestPlan
+    participant PERSIST as HomeTabView.swift<br/>persistSession
+    participant PQ as Plan question keys<br/>PlanProposalSweep.swift
+    participant SESS as DailySession rows<br/>DailySession.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant CTX as SwiftData<br/>ModelContext
+  end
+  SEND->>PQ: markAsked
+  SEND->>PLAN: requestPlan
+  SEND->>PQ: clear
+  SEND->>PERSIST: persistSession
+  PERSIST->>SESS: update or insert
+  SEND->>CTX: save

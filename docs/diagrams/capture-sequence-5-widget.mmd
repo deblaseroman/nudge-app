@@ -1,0 +1,13 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 1: the widget extension rebuilds its timeline from the shared store. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant PROV as NudgeWidget.swift<br/>getTimeline
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant WK as WidgetKit<br/>WidgetCenter
+  end
+  WK->>PROV: getTimeline
+  PROV->>TASKS: fetch rows

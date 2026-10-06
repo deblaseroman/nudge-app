@@ -1,0 +1,36 @@
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: the three writers of isComplete, the completion log they keep, and who reads it. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  X_TOGGLE["TasksTabView.swift<br/>toggleCompletion"]
+  X_WIDGET["CompleteTaskIntent.swift<br/>perform"]
+  X_CHAT["HomeTabView.swift<br/>sendMessage"]
+  X_PURGEREC["TasksTabView.swift<br/>purgeOldCompletedRecords"]
+  X_SESSION["SessionCoordinator.swift<br/>completeCurrentTask"]
+  K_RECORD["completedAt · sourceTaskID<br/>CompletedTaskRecord.swift"]
+  S_OPEN(["isComplete false<br/>NudgeTask.swift"])
+  S_DONE(["isComplete true · completedAt<br/>NudgeTask.swift"])
+  X_CLASSIFY["NudgeOutcomeClassifier.swift<br/>classifyPending"]
+  X_STATS["StatsTabView.swift<br/>weekCompletedRecords"]
+
+  X_TOGGLE --> S_DONE
+  X_TOGGLE --> S_OPEN
+  X_TOGGLE --> K_RECORD
+  X_TOGGLE -- "current session task" --> X_SESSION
+  X_WIDGET --> S_DONE
+  X_WIDGET --> K_RECORD
+  X_CHAT --> S_DONE
+  X_CHAT --> S_OPEN
+  X_PURGEREC --> K_RECORD
+  K_RECORD --> X_CLASSIFY
+  K_RECORD --> X_STATS
+
+  click X_TOGGLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1891" "toggleCompletion(for:), from the row checkbox, the timeline block's long press and the session card. Check: isComplete true, completedAt now, NudgeGoal.recordActivity, completedCount = target for count tasks, a CompletedTaskRecord unless one exists. Uncheck: isComplete false, completedAt nil, one unit stepped back, the record deleted. Then the arbiter; if the session runs on this task, completeCurrentTask." _blank
+  click X_WIDGET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "perform() in the widget extension on the shared store: isComplete true, completedAt now, goal activity, a CompletedTaskRecord unless one exists, clears activeSessionState for that task, removes the task's pending nudges, sets nudge.arb.widgetMutated. No uncheck path." _blank
+  click X_CHAT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L409" "task_updates isComplete in sendMessage: isComplete and completedAt written both ways, goal activity on true. Writes no CompletedTaskRecord, so Stats and the outcome classifier never see a chat completion." _blank
+  click X_PURGEREC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2358" "purgeOldCompletedRecords on the Tasks tab's appear: deletes CompletedTaskRecord rows from before this week's start." _blank
+  click X_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L170" "completeCurrentTask writes no task field: it ends the session, records actual minutes in DurationModel and on the latest NudgeOutcome, then reevaluates with .taskCompleted." _blank
+  click K_RECORD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/CompletedTaskRecord.swift#L13" "id, title, priority, completedAt, sourceTaskID. Survives deletion of the task. Inserted by toggleCompletion (check) and CompleteTaskIntent; deleted by toggleCompletion (uncheck) and purgeOldCompletedRecords (before this week)." _blank
+  click S_OPEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L381" "Every open state in the overview. Reached again by toggleCompletion's uncheck and by task_updates isComplete false." _blank
+  click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L382" "Reached by toggleCompletion's check, CompleteTaskIntent.perform and task_updates isComplete true. Read by TaskSortComparator (bucket 4, newest first), planTasks and dayTasks (sunk), the widget (recentDone within 7 days by completedAt), PlacementRollover (a past plan day is set to nil), the arbiter's idle builder (completions in the 3-hour window via CompletedTaskRecord). Excluded from every candidate fetch." _blank
+  click X_CLASSIFY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeOutcomeClassifier.swift#L226" "A pending nudge counts as acted on when its task has a CompletedTaskRecord inside the 60-minute window after it fired." _blank
+  click X_STATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/StatsTabView.swift#L63" "todayCompletedRecords and weekCompletedRecords by completedAt; MissedSessionLog.count(since: startOfWeek) beside them." _blank

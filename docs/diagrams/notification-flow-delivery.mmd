@@ -1,0 +1,39 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: delivery and taps — foreground presentation and the delegate's branches. Drawn left to right so the delegate's six targets stack.
+flowchart LR
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  N_PRESENT["NudgeNotificationService.swift<br/>userNotificationCenter(willPresent:)"]
+  N_DELEGATE["NudgeNotificationService.swift<br/>handleResponse"]
+  S_OUTCOME["NudgeOutcome.swift<br/>NudgeOutcome"]
+  S_SESSION["SessionCoordinator.swift<br/>startSession"]
+  N_SNOOZE["NudgeNotificationService.swift<br/>rescheduleSnoozed"]
+  K_IDLE["App Group<br/>nudge.arb.idleDismissedFor"]
+  K_TAP["App Group<br/>nudge.tappedNudge*"]
+  UI_TAB["ContentView.swift<br/>deepLinkTab"]
+  UI_MSGBOX["TasksMessageBox.swift<br/>TappedNudgeContext.read"]
+
+  UNC -- "foreground" --> N_PRESENT
+  N_PRESENT -- "banner, sound" --> UNC
+  UNC -- "tap, action, dismiss" --> N_DELEGATE
+  N_DELEGATE -- "result, actedAt" --> S_OUTCOME
+  N_DELEGATE -- "Start session" --> S_SESSION
+  N_DELEGATE -- "Snooze 30 min" --> N_SNOOZE
+  N_SNOOZE -- "add" --> UNC
+  N_DELEGATE -- "Yes, I'm good" --> K_IDLE
+  N_DELEGATE -- "body tap, Not yet" --> K_TAP
+  K_TAP --> UI_MSGBOX
+  N_DELEGATE -- "open tab" --> UI_TAB
+
+  classDef add stroke-width:3px
+  class N_SNOOZE add
+
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "Delegate set in NudgeAppDelegate.didFinishLaunchingWithOptions. Action buttons by category: idle and floater have Yes I'm good, Not yet, 👎; prep and placementMissed have Start session, Snooze 30 min, 👎; morningPrompt has 👎; eventBlock, dueSoon, comeBack, placementLead, goalLapse, limit, mirror have none. Every category has customDismissAction, so swipe-away reaches the delegate." _blank
+  click N_PRESENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L149" "userNotificationCenter(_:willPresent:) returns [.banner, .sound] for every notification while the app is in the foreground." _blank
+  click N_DELEGATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L156" "userNotificationCenter(_:didReceive:) → handleResponse(actionID:notificationID:taskID:requestContent:). Reads userInfo taskID and kind and the category. Finds the newest pending NudgeOutcome row for the notificationID. dismiss → .dismissed. Start session → .tappedStart, startSession(for: taskID), Tasks tab. Snooze 30 min → .tappedSnooze, rescheduleSnoozed. Yes I'm good → .tappedSnooze, idleDismissedFor.today = true. Not yet → .tappedOpen, tappedNudge keys with the top open task and answer no, Tasks tab. Body tap → .tappedOpen, tappedNudge keys when the tab is Tasks, tab = stats for category.mirror, home for morningPrompt, else tasks. 👎 → recordFeedback writes NudgeOutcome.feedback, which nothing live reads." _blank
+  click S_OUTCOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L247" "result and actedAt written at once. A notification id can match more than one row; the newest still-pending one is taken." _blank
+  click S_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "Only when no session is active and the task still exists; profile name is passed. startSession writes nudge.lastFocusSessionStartedAt, sets sessionEnd, reflows the timeline, records goal activity, then reevaluates with .sessionStarted." _blank
+  click N_SNOOZE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L387" "rescheduleSnoozed(requestContent:originalID:). Clones title, body, sound, userInfo, category, interruption level and relevance score; UNTimeIntervalNotificationTrigger 30 min; id = originalID.snoozed. Not added to scheduledIDs and no NudgeOutcome row, so cancelAll never removes it." _blank
+  click K_IDLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1507" "nudge.arb.idleDismissedFor.yyyyMMdd. Read by buildIdleCandidates, which then skips the idle nudge for that day." _blank
+  click K_TAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L51" "nudge.tappedNudgeKind, TaskID, GoalID, Answer (no on Not yet, absent on a plain tap), Date. Read by TappedNudgeContext.read within messageBoxTapContextMinutes 30; TasksTabView clears them." _blank
+  click UI_TAB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L50" "Notification.Name.nudgeNotificationOpenTab posted on the next main-queue tick with userInfo tab; ContentView sets deepLinkTab." _blank
+  click UI_MSGBOX href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Components/TasksMessageBox.swift#L40" "The Tasks tab message box explains the tapped nudge, naming the task or goal." _blank

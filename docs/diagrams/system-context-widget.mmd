@@ -1,0 +1,51 @@
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: the channels between the app (boxes A_) and the widget extension (boxes W_). Arrow into storage = write, out of storage = read. Arrows are unlabeled where several enter one box; the cases are a table on the page.
+flowchart TB
+  A_PUBLISH["SessionCoordinator.swift<br/>publishSessionState"]
+  W_COMPLETE["CompleteTaskIntent.swift<br/>CompleteTaskIntent"]
+  A_LAM["LiveActivityManager.swift<br/>LiveActivityManager"]
+  W_STOP["NudgeWidget/FocusSessionIntents.swift<br/>EndFocusSessionIntent"]
+  OS_WC["WidgetKit<br/>WidgetCenter.reloadTimelines"]
+  ST_STORE[("Nudge.store<br/>SharedModelContainer.swift")]
+  ST_DEFAULTS[("App Group UserDefaults<br/>SharedModelContainer.swift")]
+  OS_UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  OS_AK["ActivityKit<br/>Activity"]
+  W_PROVIDER["NudgeWidget.swift<br/>NudgeTaskProvider"]
+  W_LA["TaskLiveActivityView.swift<br/>TaskLiveActivityView"]
+  W_FOOT["NudgeWidget.swift<br/>sessionButtonRow"]
+  W_COMP["NudgeCompanionWidget.swift<br/>NudgeCompanionView"]
+  A_URL["ContentView.swift<br/>onOpenURL"]
+
+  A_PUBLISH --> ST_DEFAULTS
+  A_PUBLISH --> OS_WC
+  W_COMPLETE --> ST_STORE
+  W_COMPLETE --> ST_DEFAULTS
+  W_COMPLETE --> OS_UNC
+  W_COMPLETE --> OS_WC
+  W_STOP --> OS_AK
+  W_STOP --> ST_DEFAULTS
+  W_STOP --> OS_WC
+  A_LAM --> OS_AK
+  OS_WC --> W_PROVIDER
+  ST_STORE --> W_PROVIDER
+  ST_DEFAULTS --> W_PROVIDER
+  W_PROVIDER --> ST_DEFAULTS
+  OS_AK --> W_LA
+  W_LA --> A_URL
+  W_FOOT --> A_URL
+  W_COMP --> A_URL
+
+  click A_PUBLISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L462" "App. publishSessionState writes or removes activeSessionState, then WidgetCenter.shared.reloadTimelines(ofKind: NudgeTaskWidget). Nine other app files call reloadTimelines after changing tasks; they are listed under the picture." _blank
+  click W_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "Widget extension. perform() fetches the task, sets isComplete and completedAt, inserts a CompletedTaskRecord, records goal activity and saves. Removes activeSessionState when it names this task. cancelPendingNudges reads pending notification requests, removes this task's, trims nudge.arb.scheduledIDs and sets nudge.arb.widgetMutated. Then reloads the timeline." _blank
+  click A_LAM href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L12" "App. Activity.request with TaskActivityAttributes, two updates for the stay-focused alert, and end with immediate dismissal. SessionCoordinator also reads Activity.activities to see whether one still exists." _blank
+  click W_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/FocusSessionIntents.swift#L35" "Widget extension. Run by the Dismiss button on a stale Live Activity. Ends every activity, removes activeSessionState, reloads the timeline." _blank
+  click OS_WC href "https://developer.apple.com/documentation/widgetkit/widgetcenter" "WidgetCenter.shared.reloadTimelines(ofKind: NudgeTaskWidget). WidgetKit then asks NudgeTaskProvider for a new timeline in the widget extension process." _blank
+  click ST_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L301" "The widget opens Nudge.store as widgetModelContainer, from the same App Group container URL the app uses." _blank
+  click ST_DEFAULTS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L27" "The widget opens the suite by name each time: UserDefaults(suiteName: group.com.deblaser.nudge)." _blank
+  click OS_UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "From the widget extension: pendingNotificationRequests() and removePendingNotificationRequests(withIdentifiers:). It never adds a request." _blank
+  click OS_AK href "https://developer.apple.com/documentation/activitykit/activity" "The Live Activity for TaskActivityAttributes. The app creates and updates it; the system hands its state to the widget extension to draw; either side can end it." _blank
+  click W_PROVIDER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L331" "Widget extension. fetchTimelineState reads tasks, events and completions from the store and activeSessionState from defaults. When the stored session end has passed it removes the key (L598)." _blank
+  click W_LA href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/TaskLiveActivityView.swift#L75" "Widget extension. ActivityConfiguration(for: TaskActivityAttributes.self): reads context.state, context.attributes and context.isStale. widgetURL nudge://focus-session." _blank
+  click W_FOOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L975" "Widget extension. Three Link(destination:) to nudge://focus-session: Start Session, and the pause and stop capsules while a session runs." _blank
+  click W_COMP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeCompanionWidget.swift#L39" "Widget extension. The mascot widget: no data, a timeline that never refreshes, widgetURL nudge://open." _blank
+  click A_URL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L68" "App. DeepLink parses the host: focus-session switches to the Tasks tab, open does nothing more than open the app, start-session would start a session but nothing sends it." _blank

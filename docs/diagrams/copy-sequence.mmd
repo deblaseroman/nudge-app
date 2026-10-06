@@ -1,0 +1,22 @@
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · overview at type level: where a scheduled nudge's text comes from, where it is kept, and how it is attached. Stages 1 to 6 draw this path function by function; stages 7 to 9 are the other places text is set. Arrows are numbered and explained in the steps table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant GEN as NudgeCopyService.swift<br/>NudgeCopyGenerator
+    participant CS as ClaudeService.swift<br/>ClaudeService
+    participant CACHE as Copy cache<br/>NudgeCopyService.swift
+    participant ARB as NudgeArbiter.swift<br/>NudgeArbiter
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  GEN->>CS: generateNudgeCopy
+  CS-->>GEN: returns lines by index
+  GEN->>CACHE: NudgeCopyStore.save
+  GEN->>ARB: reevaluate
+  ARB->>ARB: build template candidates
+  ARB->>ARB: resolvedBody
+  ARB->>CACHE: NudgeCopyStore.validBody
+  CACHE-->>ARB: line or nil
+  ARB->>UNC: add request

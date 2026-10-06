@@ -1,0 +1,26 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · overview of the brain-dump capture path at type level. Stages 1 to 4 draw it function by function. Arrows are numbered, labeled with the call or what they carry, and explained in the steps table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant HV as HomeTabView.swift<br/>HomeTabView
+    participant CS as ClaudeService.swift<br/>ClaudeService
+    participant CW as CaptureWriter.swift<br/>CaptureWriter
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  HV->>CS: sendChat
+  CS->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>CS: returns data, response
+  CS-->>HV: returns ClaudeResponse
+  HV->>TASKS: apply task_updates
+  HV->>CW: apply
+  CW->>TASKS: insert rows
+  HV->>TASKS: save

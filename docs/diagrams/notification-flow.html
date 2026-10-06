@@ -1,0 +1,877 @@
+<meta charset="utf-8">
+<title>Nudge Notification Flow</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: an overview first, then one close-up per section, each a top-to-bottom figure with its reads listed in tables beside it. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #1c2029;
+  --muted: #5d6471;
+  --line: #d3d7df;
+  --accent: #0e6f6f;
+  --accent-soft: #d9ecec;
+  --dead: #8a8f98;
+  --node: #ffffff;
+  --node-border: #3c4654;
+  --cluster: #eceef2;
+  --cluster-border: #b9bfca;
+  --edge: #4b5563;
+  --edge-label: #f4f5f7;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+    --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+    --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+    --edge: #b6bdc8; --edge-label: #14171c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+  --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+  --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+  --edge: #b6bdc8; --edge-label: #14171c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; margin: 0; }
+.wrap { padding-inline: 16px; padding-block: 20px 48px; max-width: 1480px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 12px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.stamp { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.stamp code { background: var(--accent-soft); color: var(--fg); padding: 1px 6px; border-radius: 3px; }
+p.lede { max-width: 72ch; margin: 0 0 14px; color: var(--muted); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin-bottom: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); align-items: center; margin-bottom: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 26px; height: 14px; border: 1.5px solid var(--node-border); border-radius: 2px; background: var(--node); }
+.sw.dead { border-style: dashed; border-color: var(--dead); background: transparent; }
+.sw.add { border-width: 3px; }
+figure { margin: 0; }
+figure + figure { margin-top: 22px; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
+.stage { display: inline-block; padding: 16px; min-width: 100%; }
+.stage svg { display: block; max-width: none !important; height: auto; }
+.stage a { cursor: pointer; }
+.stage .node:hover rect, .stage .node:hover polygon { stroke: var(--accent) !important; stroke-width: 2.5px; }
+.status { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); padding: 10px 14px; }
+.status.error { color: #b3401f; }
+pre.fallback { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; padding: 14px; margin: 0; }
+figcaption { font-size: 13px; color: var(--muted); margin: 8px 2px 0; max-width: 90ch; }
+section { margin-top: 40px; scroll-margin-top: 12px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+h2 .src, h3 .src { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 10px; }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; }
+.intro { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+.reads { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; max-width: 100ch; }
+.reads b { color: var(--fg); font-weight: 500; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; border-top: 0; position: sticky; top: 0; background: var(--bg); }
+td.k, th.k { white-space: nowrap; }
+td code, li code, p code { font-family: var(--font-mono); font-size: 12.5px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.tablewrap table th { background: var(--surface); }
+ol.dead { padding-left: 22px; margin: 0; max-width: 100ch; }
+ol.dead li { margin: 0 0 10px; }
+ol.dead li a { font-family: var(--font-mono); font-size: 12.5px; }
+a { color: var(--accent); }
+.note { font-size: 13.5px; color: var(--muted); max-width: 90ch; }
+.mermaidTooltip { position: absolute; max-width: 420px; padding: 8px 11px; font-family: var(--font-body); font-size: 12.5px; line-height: 1.45; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.18); text-align: left; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 480px) { h1 { font-size: 20px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Nudge Notification Flow</h1>
+  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-04 · reference: <code>docs/diagrams/notification-flow.mmd</code> · page: <code>docs/diagrams/notification-flow.html</code></div>
+</header>
+<p class="lede">Every place a notification request is handed to iOS, traced backward. The overview shows the main path from a trigger to a delivered notification; each close-up shows one part top to bottom. Every box names a file and a function, clicks through to that file at this commit, and carries its parameters, values and rules in a hover tooltip. Reads that fan out to many boxes are tables, not arrows.</p>
+
+<nav class="toc">
+  <a href="#sec-overview">Overview</a>
+  <a href="#sec-arbiter">Arbiter run</a>
+  <a href="#sec-builders">Builder inputs</a>
+  <a href="#sec-delivery">Delivery and taps</a>
+  <a href="#sec-screentime">Screen Time extension</a>
+  <a href="#sec-copy">AI copy</a>
+  <a href="#sec-launch">Launch, triggers, widget, permission</a>
+  <a href="#sec-keys">App Group keys</a>
+  <a href="#sec-addsites">Add sites</a>
+  <a href="#sec-targets">Targets</a>
+  <a href="#sec-dead">No effect</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw"></i> live code: click to open the file, hover for detail</span>
+  <span><i class="sw add"></i> a request is added to UNUserNotificationCenter here</span>
+  <span><i class="sw dead"></i> exists, no effect (only the fatigue gate is drawn; the rest are listed at the end)</span>
+</div>
+
+<section id="sec-overview">
+  <h2>Overview <span class="src">notification-flow-overview.mmd</span></h2>
+  <p class="intro">Labeled arrows are the main path: a trigger runs the arbiter, the arbiter picks the body and adds the request, iOS delivers it to the delegate. The Screen Time extension adds on its own path. Unlabeled arrows are explained in the close-ups. Click a box to jump to its close-up.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · overview. Labeled arrows are the main path from a trigger to a delivered notification; the rest are drawn unlabeled and explained in the close-ups. Thick border = a UNNotificationRequest is added here.
+flowchart TB
+  TRIG["ContentView.swift<br/>onChange(scenePhase)"]
+  LAUNCH["NudgeApp.swift<br/>didFinishLaunchingWithOptions"]
+  IOS_BG["BackgroundTasks<br/>BGTaskScheduler"]
+  ARB["NudgeArbiter.swift<br/>reevaluate"]
+  STORE["SharedModelContainer.swift<br/>container"]
+  GROUP["SharedModelContainer.swift<br/>appGroupDefaults"]
+  COPY["NudgeCopyService.swift<br/>NudgeCopyStore.validBody"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  NSVC["NudgeNotificationService.swift<br/>userNotificationCenter(didReceive:)"]
+  WIDGET["CompleteTaskIntent.swift<br/>cancelPendingNudges"]
+  DMON["DistractionMonitor.swift<br/>apply"]
+  IOS_DA["DeviceActivity<br/>DeviceActivityCenter"]
+  EXT["DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold"]
+
+  TRIG -- "reevaluate" --> ARB
+  ARB -- "resolvedBody" --> COPY
+  ARB -- "add" --> UNC
+  UNC -- "deliver" --> NSVC
+  EXT -- "add" --> UNC
+
+  LAUNCH --> UNC
+  LAUNCH --> IOS_BG
+  IOS_BG --> TRIG
+  STORE --> ARB
+  ARB --> STORE
+  GROUP --> ARB
+  ARB --> GROUP
+  COPY --> GROUP
+  ARB --> DMON
+  NSVC --> UNC
+  NSVC --> STORE
+  NSVC --> GROUP
+  WIDGET --> UNC
+  WIDGET --> GROUP
+  GROUP --> TRIG
+  DMON --> IOS_DA
+  IOS_DA --> EXT
+  GROUP --> EXT
+  EXT --> GROUP
+
+  classDef add stroke-width:3px
+  class ARB,NSVC,EXT add
+
+  click TRIG href "#sec-launch" "Everything that calls reevaluate: ContentView .task(id: notificationToken) at launch and on toggle changes, scene-active (sceneActive, or taskCompleted when the widget flag is set), the reevaluates after auto-plan and new copy, NudgeApp handleDailyRecalc at 6 AM, SessionCoordinator start / complete / end, TasksTabView, HomeTabView, CalendarTabView, DayPlanRefiner, NudgeCopyGenerator.noteShift." _self
+  click LAUNCH href "#sec-launch" "Sets UNUserNotificationCenter.delegate, registers the 13 notification categories, registers and submits the com.deblaser.nudge.dailyRecalc background task." _self
+  click IOS_BG href "#sec-launch" "Wakes handleDailyRecalc at or after 6 AM; permitted by Nudge/Info.plist." _self
+  click ARB href "#sec-arbiter" "Single decision engine: debounce, cancelAll, master toggle, 10 builders, gates, pickWinners, schedule. Reads tasks, profile, outcomes and App Group histories; writes NudgeOutcome(.pending), scheduledIDs and the history maps; adds and removes requests; writes the Screen Time snapshot afterwards." _self
+  click STORE href "#sec-builders" "SwiftData store: NudgeTask, UserProfile, NudgeOutcome, NudgeGoal, CompletedTaskRecord. The builder table shows who reads what." _self
+  click GROUP href "#sec-keys" "App Group group.com.deblaser.nudge: scheduledIDs, five history maps, idleDismissed, lastFocusSessionStartedAt, widgetMutated, copy cache, tappedNudge keys, AppOpenLog, Screen Time settings, snapshot, rung keys, breadcrumbs." _self
+  click COPY href "#sec-copy" "Copy is written ahead by Claude, cached in nudge.copy.cache, validated and placeholder-filled at scheduling time; any miss uses the builder's template." _self
+  click UNC href "#sec-addsites" "The four add sites: NudgeArbiter.schedule, NudgeActivityMonitorExtension.post, rescheduleSnoozed, sendTestNotification." _self
+  click NSVC href "#sec-delivery" "willPresent shows banner and sound; didReceive writes the outcome result, starts a session, re-adds a snoozed request, writes the idleDismissed and tappedNudge keys, and posts the tab to open. The foreground sweep records outcomes." _self
+  click WIDGET href "#sec-launch" "Completing a task from the widget removes its pending arbiter requests, trims scheduledIDs and sets widgetMutated so the app reevaluates undebounced on its next foreground." _self
+  click DMON href "#sec-screentime" "App side of Screen Time: authorization, daily and weekly schedules with the limit thresholds, and the snapshot the extension reads." _self
+  click IOS_DA href "#sec-screentime" "Runs the NudgeActivityMonitor process when a threshold is crossed." _self
+  click EXT href "#sec-screentime" "Reads settings, snapshot and rung keys from the App Group; writes rung keys and breadcrumbs; posts limit-ladder and mirror notifications with placeholder copy." _self
+    </script>
+    <figcaption>Thirteen parts across three targets and iOS. Thick borders mark the three parts that add requests; the arbiter is the only one that schedules nudges.</figcaption>
+  </figure>
+</section>
+
+<section id="sec-arbiter">
+  <h2>Arbiter run <span class="src">notification-flow-arbiter.mmd</span></h2>
+  <p class="intro">One call to <code>reevaluate</code>, from debounce to the request. Gates are drawn in the order they are checked. Builder inputs are in the next section; gate inputs are in the table under the figure.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: one arbiter run, from debounce through scheduling. Gates are drawn in the order passesGates checks them. Builder and gate inputs are tables on the page.
+flowchart TB
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+  R_DEBOUNCE{"NudgeArbiter.swift<br/>lastReevaluatedAt"}
+  R_CANCEL["NudgeArbiter.swift<br/>cancelAll"]
+  R_MASTER{"UserProfile.swift<br/>notificationsEnabled"}
+  B_ALL["NudgeArbiter.swift<br/>build…Candidates"]
+  R_TIER["NudgeArbiter.swift<br/>tier"]
+  R_CAND["NudgeArbiter.swift<br/>NudgeCandidate"]
+  R_GATES["NudgeArbiter.swift<br/>passesGates"]
+  G_SESSION["NudgeArbiter.swift<br/>firesDuringActiveSession"]
+  G_COOL["NudgeArbiter.swift<br/>firesInsideActivityCooldown"]
+  G_QUIET["NudgeArbiter.swift<br/>passesQuietHours"]
+  G_BUSY["BusyWindowResolver.swift<br/>isBusy"]
+  G_SLOT["NudgeArbiter.swift<br/>GateContext.placementIntervals"]
+  G_FATIGUE["NudgeArbiter.swift<br/>taskFatigueCount"]:::dead
+  R_PICK["NudgeArbiter.swift<br/>pickWinners"]
+  R_SCHED["NudgeArbiter.swift<br/>schedule"]
+  R_BODY["NudgeArbiter.swift<br/>resolvedBody"]
+  W_GROUP["App Group<br/>nudge.arb.* keys"]
+  W_OUTCOME["NudgeOutcome.swift<br/>NudgeOutcome"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+
+  R_REEVAL --> R_DEBOUNCE
+  R_DEBOUNCE -- "debounced: return" --> R_REEVAL
+  R_DEBOUNCE --> R_CANCEL
+  R_CANCEL -- "remove pending" --> UNC
+  R_CANCEL -- "clear ids, prune" --> W_GROUP
+  R_CANCEL -- "delete rows" --> W_OUTCOME
+  R_CANCEL --> R_MASTER
+  R_MASTER -- "off: return" --> R_REEVAL
+  R_MASTER -- "on" --> B_ALL
+  B_ALL --> R_TIER
+  R_TIER --> R_CAND
+  B_ALL --> R_CAND
+  R_CAND --> R_GATES
+  R_GATES -- "budget-exempt" --> R_PICK
+  R_GATES -- "discretionary" --> G_SESSION
+  G_SESSION --> G_COOL
+  G_COOL --> G_QUIET
+  G_QUIET --> G_BUSY
+  G_BUSY --> G_SLOT
+  G_SLOT -. "switched off" .-> G_FATIGUE
+  G_SLOT -- "eligible" --> R_PICK
+  R_PICK -- "winners" --> R_SCHED
+  R_SCHED --> R_BODY
+  R_BODY -- "body" --> R_SCHED
+  R_SCHED -- "add" --> UNC
+  R_SCHED -- "id, fire time" --> W_GROUP
+  R_SCHED -- "pending row" --> W_OUTCOME
+
+  classDef dead stroke-dasharray:6 4,stroke:#8a8f98,color:#7a7f88,fill:transparent
+  classDef add stroke-width:3px
+  class R_SCHED add
+
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "reevaluate(reason:profile:modelContext:). Reasons: appLaunch, sceneActive, sessionStarted, sessionEnded, taskCompleted, taskCreatedOrEdited, backgroundTask. After scheduling it calls DistractionMonitor.writeSnapshot (see the Screen Time close-up)." _blank
+  click R_DEBOUNCE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L354" "Returns early when the reason is time-triggered (appLaunch, sceneActive, backgroundTask) and the last run was under 60 s ago. Data-driven reasons always run." _blank
+  click R_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L535" "cancelAll(modelContext:). removePendingNotificationRequests for every id in nudge.arb.scheduledIDs, then clears the set. Prunes eventReminderHistory, dueSoonHistory, placementMissedHistory (2 days), goalLapseHistory (90 days), morningPromptHistory (7 days). Deletes NudgeOutcome rows that are pending with a future scheduledFor, and every row older than 14 days." _blank
+  click R_MASTER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L372" "Master switch from Settings. When off the run returns here; cancelAll already removed everything, so nothing stays scheduled." _blank
+  click B_ALL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L381" "Ten builders in this order: buildEventBlockCandidates, buildMorningPromptCandidates, buildIdleCandidates, buildPrepCandidates, buildDueSoonCandidates, buildFloaterCheckInCandidates, buildComeBackCandidates, buildPlacementLeadCandidates, buildPlacementMissedCandidates, buildGoalLapseCandidates. Each returns zero or more candidates; inputs and rules are in the builder tables." _blank
+  click R_TIER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4065" "tier(for:fireDate:) per task and fire date. critical: overdue, due within 12 h, or an exam / midterm / final / quiz / test / deadline / presentation / interview / due keyword within 48 h. warning: within 72 h, or keyword within a week. Sets the title prefix (⚠️ or 🔴 with uppercase), interruption level (active or timeSensitive) and relevance score (0.5, 0.75, 1.0)." _blank
+  click R_CAND href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L87" "id · kind · fireDate · title · body (template) · categoryID · taskID · tier · urgency · importance · countsAgainstBudget · estimatedMinutes · namedTaskID · goalID · anchoredToUserTime. score = EisenhowerScorer.score(urgency, importance) = urgency^1.1 × importance^0.9." _blank
+  click R_GATES href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2713" "passesGates(_:context:). Budget-exempt kinds (eventBlock, morningPrompt, dueSoon) skip every gate. Discretionary kinds are checked in the order drawn; the first failing gate drops the candidate. GateContext carries the profile, the model context, now, and the other tasks' planned slots." _blank
+  click G_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2824" "Discretionary only. Blocks when SessionCoordinator.isSessionActive and fireDate is before SessionCoordinator.sessionEnd." _blank
+  click G_COOL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2863" "Discretionary only. Blocks when fireDate is inside [nudge.lastFocusSessionStartedAt, + recentActivityCooldownMinutes 90). The key is written by SessionCoordinator.startSession." _blank
+  click G_QUIET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2988" "Discretionary and not anchoredToUserTime. Window from UserProfile: quietHoursStartTime / EndTime when quietHoursFollowSleepSchedule is false and both are set, else bedtime − preBedtimeQuietMinutes 60 to wake + postWakeQuietMinutes 30, as clock minutes that may wrap midnight. A zero-length window fails open." _blank
+  click G_BUSY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/BusyWindowResolver.swift#L93" "Discretionary only. isBusy(at:modelContext:) blocks when fireDate is inside an informational event, its postEventBufferMinutes 15 tail, or a gap under interEventGapToleranceMinutes 90 between events." _blank
+  click G_SLOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L397" "Discretionary only. Blocks when fireDate is inside another task's planned slot: plannedStartDate plus plannedDurationMinutes, else estimatedMinutes, else 30. The slot's own task passes." _blank
+  click G_FATIGUE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2782" "Would block a kind with successIsObservableInApp and a taskID when the task has perTaskMaxNudges 3 or more ignored or dismissed NudgeOutcome rows in 14 days. NudgeConfig.fatigueGateEnabled is false, so it never runs." _blank
+  click R_PICK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4016" "pickWinners(from:context:budget:). Budget-exempt candidates pass straight through. Discretionary ones per fire day, highest score first: at most dailyNudgeBudget 10, and none within minNudgeSpacingMinutes 90 of any already-chosen winner, event blocks included." _blank
+  click R_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4094" "schedule(_:modelContext:). title = tier.styledTitle(candidate.title); body = resolvedBody; sound default; categoryIdentifier = candidate.categoryID; interruptionLevel and relevanceScore from tier; userInfo kind, taskID, goalID; UNCalendarNotificationTrigger at fireDate, repeats false; center.add(request). Then inserts the id into scheduledIDs, writes the fire time into the kind's history map (eventBlock, dueSoon, placementMissed, goalLapse per goal, morningPrompt per fire day with the named task), and inserts NudgeOutcome(.pending) with kind, notificationID, taskID, scheduledFor, estimatedMinutes." _blank
+  click R_BODY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4214" "resolvedBody(for:modelContext:). NudgeCopyStore.validBody(kind, namedTaskID ?? taskID, fireDate), then NudgeCopyFill.fill. Any miss returns candidate.body, the builder's template. See the AI copy close-up." _blank
+  click W_GROUP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L180" "nudge.arb.scheduledIDs, eventReminderHistory, dueSoonHistory, placementMissedHistory, goalLapseHistory, morningPromptHistory. See the keys table." _blank
+  click W_OUTCOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L247" "One pending row per scheduled request. Resolved by a tap (delegate) or by the foreground sweep (classifier)." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "UNUserNotificationCenter.current(): add and removePendingNotificationRequests." _blank
+    </script>
+    <figcaption>At most one discretionary winner per 90-minute window and ten per day; budget-exempt kinds (event block, morning prompt, due soon) skip the gates and the budget.</figcaption>
+  </figure>
+  <p class="reads"><b>reads:</b> UserProfile (notificationsEnabled, wake, bedtime, quiet hours), NudgeConfig (budget 10, spacing 90, cooldown 90, quiet buffers 30/60, event buffers 15/90), SessionCoordinator (isSessionActive, sessionEnd), App Group (scheduledIDs, five history maps, lastFocusSessionStartedAt), NudgeTask (placed tasks for the slot gate, events for the busy gate), NudgeOutcome (future-pending and stale rows in cancelAll). After scheduling, reevaluate calls DistractionMonitor.writeSnapshot.</p>
+
+  <h3>Gates</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Gate</th><th>Applies to</th><th>Reads</th><th>Blocks when</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2824">firesDuringActiveSession</a></td><td>countsAgainstBudget</td><td>SessionCoordinator.isSessionActive, sessionEnd</td><td>a session is active and fireDate is before its end</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2863">firesInsideActivityCooldown</a></td><td>countsAgainstBudget</td><td>App Group nudge.lastFocusSessionStartedAt; NudgeConfig.recentActivityCooldownMinutes 90</td><td>fireDate is inside [lastStart, lastStart + 90 min)</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2988">passesQuietHours</a></td><td>countsAgainstBudget and not anchoredToUserTime</td><td>UserProfile quietHoursFollowSleepSchedule, quietHoursStartTime/EndTime, bedtime, wake; NudgeConfig postWakeQuietMinutes 30, preBedtimeQuietMinutes 60</td><td>fireDate's clock minute is inside the quiet window; a zero-length window fails open</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/BusyWindowResolver.swift#L93">BusyWindowResolver.isBusy</a></td><td>countsAgainstBudget</td><td>NudgeTask informational events; NudgeConfig postEventBufferMinutes 15, interEventGapToleranceMinutes 90</td><td>fireDate is inside an event, its tail buffer, or a short gap between events</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2751">placementIntervals</a></td><td>countsAgainstBudget</td><td>NudgeTask open placed tasks: plannedStartDate, plannedDurationMinutes or estimatedMinutes or 30</td><td>fireDate is inside another task's planned slot</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2782">taskFatigueCount (off)</a></td><td>kinds with successIsObservableInApp and a taskID</td><td>NudgeOutcome ignored/dismissed rows in 14 days; NudgeConfig.perTaskMaxNudges 3</td><td>never: NudgeConfig.fatigueGateEnabled is false</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-builders">
+  <h2>Builder inputs</h2>
+  <p class="intro">Which builder reads which input. Each builder runs only when its UserProfile toggle is on and returns zero or more candidates.</p>
+  <div class="tablewrap"><table>
+    <tr>
+      <th class="k">Builder</th><th>UserProfile</th><th>NudgeTask</th><th>NudgeConfig</th><th>NudgeGoal</th><th>CompletedTaskRecord</th><th>NudgeOutcome</th><th>App Group</th><th>BusyWindowResolver</th><th>StartByPlanner</th><th>DurationModel</th><th>EisenhowerScorer</th><th>NudgeIntelligence</th><th>TaskSortComparator</th>
+    </tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L662">buildEventBlockCandidates</a></td><td>eventReminderNotificationsEnabled</td><td>isInformationalEvent, specificTime, title, taskCategory</td><td>eventReminderLeadMinutes 60, eventBlockGapHours 2</td><td></td><td></td><td></td><td>eventReminderHistory: skip if delivered</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L871">buildMorningPromptCandidates</a></td><td>morningCheckInNotificationsEnabled, wake, bedtime</td><td>open non-events, stakes, dueDate, specificTime, intentIsFuture</td><td>postWakeQuietMinutes 30, morningPromptBusyDayThreshold 0.5, morningPromptMaxConsecutiveDays 2</td><td></td><td></td><td></td><td>morningPromptHistory: no-repeat rule</td><td>dayLoad, isBusy at fire time</td><td></td><td>estimate (tie-break)</td><td>urgency (tie-break)</td><td></td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1314">buildIdleCandidates</a></td><td>sessionStarterNotificationsEnabled, wake</td><td>open non-events, intentIsFuture, deadline, dependsOnTaskId</td><td>idleThresholdHours 3</td><td></td><td>completedAt in the 3 h pre-fire window</td><td></td><td>lastFocusSessionStartedAt in window; idleDismissedFor.day</td><td></td><td>isDeepWork</td><td>estimate</td><td>urgency, importance</td><td>statedUrgency</td><td>picks the target task</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1542">buildPrepCandidates</a></td><td>taskDueSoonNotificationsEnabled, wake</td><td>open non-events with dueDate</td><td>prepAnchorHoursAfterWake 2, urgentThreshold 0.5</td><td></td><td></td><td></td><td></td><td></td><td>plan(for:) picks the start day, sessionsNeeded, isDeepWork</td><td>estimate</td><td>urgency (floored), importance</td><td>statedUrgency</td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1668">buildDueSoonCandidates</a></td><td>dueSoonReminderNotificationsEnabled</td><td>open dated, sortDeadline, source not prep or commitment</td><td>dueSoonLeadMinutes 120, dueSoonBatchWindowMinutes 60</td><td></td><td></td><td></td><td>dueSoonHistory: skip if delivered</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1902">buildFloaterCheckInCandidates</a></td><td>floaterCheckInNotificationsEnabled, wake</td><td>open, undated, no intendedDate, not placed on the fire day, sequenceIndex</td><td>floaterCheckInHoursAfterWake 6</td><td></td><td></td><td></td><td></td><td></td><td>isDeepWork</td><td>estimate</td><td>importance</td><td>statedUrgency</td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2107">buildComeBackCandidates</a></td><td>comeBackNotificationsEnabled, wake</td><td>open count</td><td>comeBackAfterDays 3, comeBackAnchorHoursAfterWake 2</td><td></td><td>latest completedAt</td><td>tappedStart / tappedOpen / tappedSnooze rows, actedAt</td><td>AppOpenLog last timestamp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2373">buildPlacementLeadCandidates</a></td><td>placementLeadNotificationsEnabled</td><td>open placed: plannedStartDate, plannedIsAuto, stakes, deadline</td><td>placementLeadMinutes by stakes 60/15/5, placementClusterGapHours 2, placementUrgencyFloor 0.75</td><td></td><td></td><td></td><td></td><td></td><td>isDeepWork</td><td>estimate</td><td>urgency (floored), importance</td><td>statedUrgency</td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2527">buildPlacementMissedCandidates</a></td><td>placementMissedNotificationsEnabled</td><td>open placed: plannedStartDate, plannedDurationMinutes, plannedIsAuto, deadline</td><td>placementMissedGraceMinutes 30, placementMissedRepeatMinutes 120, placementMissedMaxAttempts 4, minNudgeSpacingMinutes 90, placementUrgencyFloor 0.75</td><td></td><td></td><td></td><td>placementMissedHistory: catch-up only if none delivered</td><td></td><td>isDeepWork</td><td>estimate</td><td>urgency (floored), importance</td><td>statedUrgency</td><td></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2241">buildGoalLapseCandidates</a></td><td>goalLapseNotificationsEnabled, wake</td><td></td><td>goalLapseAfterDays 30, goalLapseMinDaysBetweenPerGoal 30, goalLapseAnchorHoursAfterWake 8</td><td>isActive, lastActivityAt, createdAt</td><td></td><td></td><td>goalLapseHistory: per-goal monthly cap</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  </table></div>
+  <p class="note">Every builder also calls <code>tier(for:fireDate:)</code>, which reads the task's title and deadline. The AI-copy swap in <code>resolvedBody</code> applies to every kind.</p>
+
+  <h3>What each builder emits</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Kind</th><th>Budget</th><th>Fire time</th><th>Title</th><th>Template body</th><th>Stops or delays</th><th>Category / actions</th></tr>
+    <tr><td class="k">eventBlock</td><td>exempt, anchoredToUserTime</td><td>60 min before the block's first event; ASAP if inside the lead and the event is more than 5 min out</td><td>Heads up</td><td>"<i>Event</i> in 1 hour (<i>time</i>)." plus the next events in the block</td><td>already delivered (history); event less than 5 min out</td><td>category.event, no actions</td></tr>
+    <tr><td class="k">morningPrompt</td><td>exempt</td><td>wake + 30 min, today or tomorrow</td><td>Good morning</td><td>Biggest thing on your list: "<i>task</i>", <i>due phrase</i>.</td><td>fire day at least 50 % committed; fire time busy; no open task to name; same task named two mornings running steps aside within one stakes tier</td><td>category.morning, 👎</td></tr>
+    <tr><td class="k">idle</td><td>counts</td><td>wake + 3 h, today or tomorrow</td><td>Check-in</td><td>Have you worked on anything yet?</td><td>Yes I'm good tapped today; a session started or a task completed in the 3 h before; no open task</td><td>category.idle: Yes I'm good, Not yet, 👎</td></tr>
+    <tr><td class="k">prep</td><td>counts</td><td>wake + 2 h on the planner's start day, walked forward to the first future anchor before the deadline</td><td>Time to get ahead</td><td>deep work: "Your deadline is in N days. At one session a day that's maybe N real shots at…"; else "… needs a start. Just N min."</td><td>no plan; no dueDate; no anchor left before the deadline</td><td>category.prep: Start session, Snooze 30 min, 👎</td></tr>
+    <tr><td class="k">dueSoon</td><td>exempt, anchoredToUserTime</td><td>120 min before the earliest deadline in a 60 min batch; ASAP inside the lead</td><td>Due soon</td><td>"<i>task</i>" is due at <i>time</i>. / N things due by <i>time</i>: …</td><td>already delivered; deadline less than 5 min out; generated prep or commitment rows</td><td>category.dueSoon, no actions</td></tr>
+    <tr><td class="k">floater</td><td>counts</td><td>wake + 6 h, today or tomorrow</td><td>Check-in</td><td>Have you worked on anything yet?</td><td>no open undated task; every one placed on the fire day; a plan collapses it to the next plan item</td><td>category.floater: Yes I'm good, Not yet, 👎</td></tr>
+    <tr><td class="k">comeBack</td><td>counts</td><td>wake + 2 h on day lastEngagement + 3, walked forward up to 7 days</td><td>Looking ahead</td><td>Come back, you have some tasks to complete! / Come back! There's got to be something you need to plan.</td><td>pushed out by every app open, tapped nudge or completion</td><td>category.comeBack, no actions</td></tr>
+    <tr><td class="k">placementLead</td><td>counts, anchoredToUserTime when placed by hand</td><td>60 / 15 / 5 min before the first slot of a cluster by stakes</td><td>ANCHORED HIGH / MEDIUM / LOW</td><td>"<i>task</i>" is set for <i>time</i>, then "<i>next</i>" at <i>time</i>…</td><td>fire time already past (no ASAP fallback)</td><td>category.placementLead, no actions</td></tr>
+    <tr><td class="k">placementMissed</td><td>counts, anchoredToUserTime when placed by hand</td><td>slot + 30 min, then every 120 min, up to 4, clipped to the slot's day; catch-up ASAP if none delivered</td><td>Still open</td><td>"<i>task</i>" was set for <i>time</i> and is still open. Just N min. Start there?</td><td>next attempt within 90 min makes the catch-up skip</td><td>category.placementMissed: Start session, Snooze 30 min, 👎</td></tr>
+    <tr><td class="k">goalLapse</td><td>counts</td><td>wake + 8 h on day lapseStart + 30, or the monthly cap day, walked forward up to 7 days</td><td>Got a minute?</td><td>Nothing's wrong. There's just something worth a look when you have a moment.</td><td>no active goal; one candidate per run (earliest)</td><td>category.goalLapse, no actions</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-delivery">
+  <h2>Delivery and taps</h2>
+  <p class="intro">What happens after iOS delivers a request. First the delegate's branches, then the foreground sweep that records outcomes and the Settings test button.</p>
+  <figure>
+    <h3>Delegate <span class="src">notification-flow-delivery.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: delivery and taps — foreground presentation and the delegate's branches. Drawn left to right so the delegate's six targets stack.
+flowchart LR
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  N_PRESENT["NudgeNotificationService.swift<br/>userNotificationCenter(willPresent:)"]
+  N_DELEGATE["NudgeNotificationService.swift<br/>handleResponse"]
+  S_OUTCOME["NudgeOutcome.swift<br/>NudgeOutcome"]
+  S_SESSION["SessionCoordinator.swift<br/>startSession"]
+  N_SNOOZE["NudgeNotificationService.swift<br/>rescheduleSnoozed"]
+  K_IDLE["App Group<br/>nudge.arb.idleDismissedFor"]
+  K_TAP["App Group<br/>nudge.tappedNudge*"]
+  UI_TAB["ContentView.swift<br/>deepLinkTab"]
+  UI_MSGBOX["TasksMessageBox.swift<br/>TappedNudgeContext.read"]
+
+  UNC -- "foreground" --> N_PRESENT
+  N_PRESENT -- "banner, sound" --> UNC
+  UNC -- "tap, action, dismiss" --> N_DELEGATE
+  N_DELEGATE -- "result, actedAt" --> S_OUTCOME
+  N_DELEGATE -- "Start session" --> S_SESSION
+  N_DELEGATE -- "Snooze 30 min" --> N_SNOOZE
+  N_SNOOZE -- "add" --> UNC
+  N_DELEGATE -- "Yes, I'm good" --> K_IDLE
+  N_DELEGATE -- "body tap, Not yet" --> K_TAP
+  K_TAP --> UI_MSGBOX
+  N_DELEGATE -- "open tab" --> UI_TAB
+
+  classDef add stroke-width:3px
+  class N_SNOOZE add
+
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "Delegate set in NudgeAppDelegate.didFinishLaunchingWithOptions. Action buttons by category: idle and floater have Yes I'm good, Not yet, 👎; prep and placementMissed have Start session, Snooze 30 min, 👎; morningPrompt has 👎; eventBlock, dueSoon, comeBack, placementLead, goalLapse, limit, mirror have none. Every category has customDismissAction, so swipe-away reaches the delegate." _blank
+  click N_PRESENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L149" "userNotificationCenter(_:willPresent:) returns [.banner, .sound] for every notification while the app is in the foreground." _blank
+  click N_DELEGATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L156" "userNotificationCenter(_:didReceive:) → handleResponse(actionID:notificationID:taskID:requestContent:). Reads userInfo taskID and kind and the category. Finds the newest pending NudgeOutcome row for the notificationID. dismiss → .dismissed. Start session → .tappedStart, startSession(for: taskID), Tasks tab. Snooze 30 min → .tappedSnooze, rescheduleSnoozed. Yes I'm good → .tappedSnooze, idleDismissedFor.today = true. Not yet → .tappedOpen, tappedNudge keys with the top open task and answer no, Tasks tab. Body tap → .tappedOpen, tappedNudge keys when the tab is Tasks, tab = stats for category.mirror, home for morningPrompt, else tasks. 👎 → recordFeedback writes NudgeOutcome.feedback, which nothing live reads." _blank
+  click S_OUTCOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L247" "result and actedAt written at once. A notification id can match more than one row; the newest still-pending one is taken." _blank
+  click S_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "Only when no session is active and the task still exists; profile name is passed. startSession writes nudge.lastFocusSessionStartedAt, sets sessionEnd, reflows the timeline, records goal activity, then reevaluates with .sessionStarted." _blank
+  click N_SNOOZE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L387" "rescheduleSnoozed(requestContent:originalID:). Clones title, body, sound, userInfo, category, interruption level and relevance score; UNTimeIntervalNotificationTrigger 30 min; id = originalID.snoozed. Not added to scheduledIDs and no NudgeOutcome row, so cancelAll never removes it." _blank
+  click K_IDLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1507" "nudge.arb.idleDismissedFor.yyyyMMdd. Read by buildIdleCandidates, which then skips the idle nudge for that day." _blank
+  click K_TAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L51" "nudge.tappedNudgeKind, TaskID, GoalID, Answer (no on Not yet, absent on a plain tap), Date. Read by TappedNudgeContext.read within messageBoxTapContextMinutes 30; TasksTabView clears them." _blank
+  click UI_TAB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L50" "Notification.Name.nudgeNotificationOpenTab posted on the next main-queue tick with userInfo tab; ContentView sets deepLinkTab." _blank
+  click UI_MSGBOX href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Components/TasksMessageBox.swift#L40" "The Tasks tab message box explains the tapped nudge, naming the task or goal." _blank
+    </script>
+    <figcaption>Taps resolve the pending outcome row at once. The 👎 action writes NudgeOutcome.feedback, which nothing live reads.</figcaption>
+  </figure>
+  <figure>
+    <h3>Outcome recording and the test button <span class="src">notification-flow-outcomes.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: outcome recording on each foreground, and the Settings test notification.
+flowchart TB
+  T_FG["ContentView.swift<br/>recordForegroundAndClassifyOutcomes"]
+  S_APPOPEN["AppOpenLog.swift<br/>record"]
+  S_CLASSIFIER["NudgeOutcomeClassifier.swift<br/>classifyPending"]
+  S_OUTCOME["NudgeOutcome.swift<br/>NudgeOutcome"]
+  K_SESSION["App Group<br/>nudge.lastFocusSessionStartedAt"]
+  S_DONE["CompletedTaskRecord.swift<br/>CompletedTaskRecord"]
+  UI_SETTINGS["SettingsTabView.swift<br/>sendTestNotification button"]
+  N_TEST["NudgeNotificationService.swift<br/>sendTestNotification"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+
+  T_FG --> S_APPOPEN
+  T_FG --> S_CLASSIFIER
+  S_CLASSIFIER -- "pending rows" --> S_OUTCOME
+  S_CLASSIFIER --> K_SESSION
+  S_CLASSIFIER --> S_DONE
+  S_CLASSIFIER -- "didOpen" --> S_APPOPEN
+  S_CLASSIFIER -- "acted, engaged, ignored" --> S_OUTCOME
+  UI_SETTINGS --> N_TEST
+  N_TEST -- "add" --> UNC
+
+  classDef add stroke-width:3px
+  class N_TEST add
+
+  click T_FG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L337" "Runs on every scene-active, before the reevaluate: AppOpenLog.record(), then classifyPending. Record-then-classify is safe because the grace period (90) is longer than the response window (60)." _blank
+  click S_APPOPEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/AppOpenLog.swift#L40" "Appends a foreground timestamp to App Group defaults, ignoring one within 60 s of the last; keeps appOpenLogRetentionDays 14 and at most appOpenLogMaxEntries 400. timestamps() is read by buildComeBackCandidates; didOpen(in:) by the classifier." _blank
+  click S_CLASSIFIER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeOutcomeClassifier.swift#L70" "For each pending row whose scheduledFor is more than outcomeClassificationGraceMinutes 90 ago, window = [scheduledFor, + outcomeActionWindowMinutes 60]. acted when a focus session started in the window, or for morningPrompt a NudgeTask was created in it, or the row's task has a CompletedTaskRecord in it; engaged when AppOpenLog.didOpen; else ignored. Writes result and classifiedAt. Recording only: nothing live acts on the result." _blank
+  click S_OUTCOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L247" "Rows the delegate never heard about. Tapped rows are no longer pending and are not swept." _blank
+  click K_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L51" "Only the most recent session start is stored, so an older row's session can be missed; never a false positive." _blank
+  click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/CompletedTaskRecord.swift" "Canonical completion log, written by the in-app checkbox, session completion and the widget intent; survives task deletion." _blank
+  click UI_SETTINGS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L88" "Send test notification (5 sec) in the Notifications section." _blank
+  click N_TEST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L121" "sendTestNotification(). Title Test, body Notifications are enabled — new system not yet built., default sound, UNTimeIntervalNotificationTrigger 5 s, id nudge.test.UUID. Bypasses the arbiter and writes nothing." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "UNUserNotificationCenter.current().add" _blank
+    </script>
+    <figcaption>Untouched rows are classified on the next foreground after a 90-minute grace. The test button adds directly, outside the arbiter.</figcaption>
+  </figure>
+  <p class="reads"><b>reads:</b> UNNotificationContent.userInfo (kind, taskID, goalID) and categoryIdentifier; NudgeTask (top open task for Not yet, the task for Start session); UserProfile.name for the session; AppOpenLog, nudge.lastFocusSessionStartedAt, CompletedTaskRecord and NudgeTask.createdAt in the classifier; NudgeConfig outcomeClassificationGraceMinutes 90, outcomeActionWindowMinutes 60.</p>
+</section>
+
+<section id="sec-screentime">
+  <h2>Screen Time extension <span class="src">notification-flow-screentime.mmd</span></h2>
+  <p class="intro">The app arms DeviceActivity schedules and writes a snapshot; the extension process decides and posts, reading only App Group defaults.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: the Screen Time extension — arming in the app, deciding and posting in the NudgeActivityMonitor process.
+flowchart TB
+  UI_SETTINGS["SettingsTabView.swift<br/>saveDistractions"]
+  T_CV_TASK["ContentView.swift<br/>.task(id: notificationToken)"]
+  K_DSET["App Group<br/>nudge.distractions.settings"]
+  D_MON["DistractionMonitor.swift<br/>apply"]
+  IOS_DA["DeviceActivity<br/>DeviceActivityCenter"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+  D_SNAP["DistractionMonitor.swift<br/>writeSnapshot"]
+  K_DSNAP["App Group<br/>nudge.distractions.snapshot"]
+  X_THRESH["DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold"]
+  X_CRUMB["DeviceActivityMonitorExtension.swift<br/>crumb"]
+  K_CRUMB["App Group<br/>nudge.distractions.breadcrumbs"]
+  X_GUARD{"DistractionSettings.swift<br/>DistractionSettings"}
+  K_RUNG["App Group<br/>nudge.distractions.lastRungAt"]
+  X_DECIDE["DistractionSettings.swift<br/>LimitDecider.decide"]
+  X_SILENT{"DistractionSettings.swift<br/>LimitDecision"}
+  X_COPY["DistractionSettings.swift<br/>LimitDecision.placeholderBody"]
+  X_POST["DeviceActivityMonitorExtension.swift<br/>post"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+
+  UI_SETTINGS --> K_DSET
+  UI_SETTINGS -- "apply(force: true)" --> D_MON
+  T_CV_TASK --> D_MON
+  K_DSET --> D_MON
+  D_MON -- "startMonitoring" --> IOS_DA
+  R_REEVAL --> D_SNAP
+  D_SNAP --> K_DSNAP
+  IOS_DA -- "threshold crossed" --> X_THRESH
+  X_THRESH --> X_CRUMB
+  X_CRUMB --> K_CRUMB
+  K_DSET --> X_THRESH
+  X_THRESH --> X_GUARD
+  X_GUARD -- "off: return" --> X_THRESH
+  X_GUARD -- "mirror" --> K_RUNG
+  X_GUARD -- "mirror" --> X_POST
+  X_GUARD -- "ladder" --> X_DECIDE
+  K_DSNAP --> X_DECIDE
+  K_RUNG --> X_DECIDE
+  X_THRESH -- "even when silent" --> K_RUNG
+  X_DECIDE --> X_SILENT
+  X_SILENT -- "silent: return" --> X_THRESH
+  X_SILENT --> X_COPY
+  X_COPY --> X_POST
+  X_POST -- "add" --> UNC
+  X_POST --> X_CRUMB
+
+  classDef add stroke-width:3px
+  class X_POST add
+
+  click UI_SETTINGS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L526" "saveDistractions encodes the FamilyActivitySelection, stamps authorized from DistractionMonitor.isAuthorized, saves DistractionSettings, then apply(profile:force: true). authorizeDistractions calls DistractionMonitor.requestAuthorization (AuthorizationCenter.requestAuthorization(for: .individual)) and saves authorized." _blank
+  click T_CV_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L164" "apply(profile:) after the launch reevaluate, not forced." _blank
+  click K_DSET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L20" "DistractionSettings: selectionData, dailyLimitMinutes 30, limitLadderEnabled, mirrorEnabled, authorized. Also read by StatsTabView." _blank
+  click D_MON href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L62" "apply(profile:force:). Reads profile wake and bedtime as the day window and the saved settings. Re-asks authorization once per launch when a selection exists and status is notDetermined. Skips when nudge.distractions.registeredSignature (wake, bed, limit, toggles, authorized, selection) is unchanged, unless forced. stopMonitoring both schedules, then: daily schedule wake → bed repeating, events nudge.limit.100 / 150 / 175 at limit, 1.5 × limit, 1.75 × limit minutes; weekly schedule Monday 00:00 → Sunday 23:59, event nudge.mirror at 7 × limit × 1.25. Stops monitoring when not authorized, no selection, or both kinds off." _blank
+  click IOS_DA href "https://developer.apple.com/documentation/deviceactivity" "Family Controls entitlement on Nudge and NudgeActivityMonitor; NudgeActivityMonitor/Info.plist declares com.apple.deviceactivity.monitor-extension. iOS runs the extension process when a threshold is crossed." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L482" "The arbiter calls writeSnapshot after every pass, so the snapshot is as fresh as the schedule." _blank
+  click D_SNAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L219" "writeSnapshot(profile:modelContext:now:). Reads DayWindow.resolve(wake, bedtime), NudgeTask.dayLens for today (title, minutes, planned start and end), today's informational events with their duration, the latest CompletedTaskRecord and nudge.lastFocusSessionStartedAt. Writes writtenAt, dayStart, dayEnd, bedtime, items, lastWorkAt." _blank
+  click K_DSNAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L53" "DistractionSnapshot as ISO 8601 JSON. The extension cannot open the SwiftData store." _blank
+  click X_THRESH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L50" "eventDidReachThreshold(_:activity:) in the NudgeActivityMonitor process. Reads only App Group defaults. Rung from the event name: nudge.limit.100 → 1, 150 → 2, 175 → 3. Writes lastRungAt and lastRungDay before deciding, so a silent decision still advances them." _blank
+  click X_CRUMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L32" "crumb(_:) appends a timestamped line, capped at 40. intervalDidStart and intervalDidEnd also leave crumbs; post leaves posted or post FAILED." _blank
+  click K_CRUMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L30" "The only evidence the app has that iOS called the extension. Read by DistractionMonitor.debugDump in DEBUG." _blank
+  click X_GUARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L58" "nudge.mirror requires mirrorEnabled; the limit events require limitLadderEnabled. A mirror firing stamps nudge.distractions.mirrorLastFiredAt and posts the fixed MIRROR line: Hey, got a sec? I want to show you something." _blank
+  click K_RUNG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L24" "nudge.distractions.lastRungAt, lastRungDay, mirrorLastFiredAt. lastRungAt is used only when lastRungDay is today's stamp." _blank
+  click X_DECIDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L127" "LimitDecider.decide(snapshot:now:rung:lastRungAt:). No snapshot or from another day → random; inside an event → silent; before dayStart or after bedtime → random; within 60 min of bedtime → bedtimeTask (smallest task that fits) or windDown; rung outside 1...3 → random; else rung(n, calm when lastWorkAt is after lastRungAt)." _blank
+  click X_SILENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L90" "Only .silent stops the post. Every other decision, random included, posts." _blank
+  click X_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L100" "placeholderTitle: LIMIT 1 / 2 / 3, LIMIT BEDTIME, LIMIT WINDDOWN, RANDOM LIMIT. placeholderBody: the reason, the task that fits before bed, It's almost bedtime. Wind down., or Rung n with or without you worked since the last one. No AI copy." _blank
+  click X_POST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98" "post(id:title:body:category:userInfo:). UNMutableNotificationContent with categoryIdentifier category.limit or category.mirror (registered by the app), userInfo nudgeKind and rung, interruptionLevel timeSensitive, trigger nil (immediate). Ids nudge.ext.limit.yyyyMMdd.rung and nudge.ext.mirror.yyyyMMdd." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "A tap on a mirror notification routes to the Stats tab; limit taps route to Tasks." _blank
+    </script>
+    <figcaption>The only decision that can silence a limit rung is being inside an event; everything else the brief did not name posts a RANDOM LIMIT line.</figcaption>
+  </figure>
+  <p class="reads"><b>reads:</b> UserProfile wake and bedtime (schedule window and snapshot); DistractionSettings selectionData, dailyLimitMinutes 30, limitLadderEnabled, mirrorEnabled; NudgeTask day lens and today's events, CompletedTaskRecord latest, nudge.lastFocusSessionStartedAt (snapshot); entitlements family-controls and app group on Nudge and NudgeActivityMonitor; NudgeActivityMonitor/Info.plist extension point. The registered-signature key <code>nudge.distractions.registeredSignature</code> stops a launch from restarting the schedules.</p>
+</section>
+
+<section id="sec-copy">
+  <h2>AI copy <span class="src">notification-flow-copy.mmd</span></h2>
+  <p class="intro">The text of an arbiter nudge: generated ahead of time, cached, then validated and filled when the request is built. No API call sits in the arbiter's path.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: AI copy — generated ahead by Claude, cached in App Group defaults, validated and filled by the arbiter at scheduling time.
+flowchart TB
+  T_CV_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  T_COPY["NudgeCopyService.swift<br/>NudgeCopyGenerator.noteShift"]
+  C_GEN["NudgeCopyService.swift<br/>NudgeCopyGenerator.generateIfNeeded"]
+  C_REQ["NudgeCopyService.swift<br/>NudgeCopyGenerator.buildRequests"]
+  S_TASK["NudgeTask.swift<br/>NudgeTask"]
+  C_CLAUDE["ClaudeService.swift<br/>generateNudgeCopy"]
+  C_SECRETS["Secrets.plist<br/>ANTHROPIC_API_KEY"]
+  K_COPY["App Group<br/>nudge.copy.cache"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+  R_SCHED["NudgeArbiter.swift<br/>schedule"]
+  R_BODY["NudgeArbiter.swift<br/>resolvedBody"]
+  C_STORE["NudgeCopyService.swift<br/>NudgeCopyStore.validBody"]
+  C_FILL["NudgeCopyService.swift<br/>NudgeCopyFill.fill"]
+
+  T_CV_SCENE -- "newDay, calendarImport" --> C_GEN
+  T_COPY -- "generatedWork" --> C_GEN
+  C_GEN -- "throttles" --> K_COPY
+  C_GEN --> C_REQ
+  C_REQ --> S_TASK
+  C_GEN --> C_CLAUDE
+  C_SECRETS --> C_CLAUDE
+  C_CLAUDE -- "bodies" --> C_GEN
+  C_GEN -- "save" --> K_COPY
+  C_GEN -- "new copy" --> R_REEVAL
+  R_REEVAL --> R_SCHED
+  R_SCHED --> R_BODY
+  R_BODY --> C_STORE
+  C_STORE --> K_COPY
+  C_STORE -- "still valid?" --> S_TASK
+  C_STORE -- "line or nil" --> R_BODY
+  R_BODY --> C_FILL
+  C_FILL --> S_TASK
+  C_FILL -- "filled or nil" --> R_BODY
+  R_BODY -- "body" --> R_SCHED
+
+  classDef add stroke-width:3px
+  class R_SCHED add
+
+  click T_CV_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L275" "In the scene-active Task, after purge, rollover, calendar refresh and auto-plan. Trigger is .calendarImport when the refresh imported events, else .newDay. A true result triggers a reevaluate with .taskCreatedOrEdited." _blank
+  click T_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L338" "noteShift(_:modelContext:) is fire-and-forget: generateIfNeeded(.generatedWork), then reevaluate(.taskCreatedOrEdited) if new copy landed. Called from ExamPrepSweep.run and PlanProposalSweep." _blank
+  click C_GEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L246" "generateIfNeeded(trigger:modelContext:now:). Throttles read from App Group defaults: skips .newDay when nudge.copyGen.lastRunDay is today; skips any trigger within copyGenMinMinutesBetween 15 of nudge.copyGen.lastAttempt; stops at copyGenMaxPerDay 6 generations for the day. An empty request list stamps the day and returns false. Passes the profile's first name. On success: NudgeCopyStore.save, recordGeneration, appendHistory, stamp the day, return true. A failed call leaves the old cache. DEBUG flag -nudge-regenerate-copy forces one pass per launch." _blank
+  click C_REQ href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L373" "buildRequests fetches up to 80 open rows. Per-task lines, copyGenTasksPerKind 4 each: morningPrompt (stakes-first, nearer deadline), prep and dueSoon (dated, deadline ahead and inside copyCacheDays + 2), eventBlock (upcoming events), placementLead and placementMissed (placed tasks), floater (undated, TaskSortComparator order). Kind-generic lines: idle, comeBack, goalLapse. Each request names its fillable placeholders: task, due, time, day, name, goal, and carries dueAtGeneration." _blank
+  click S_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift" "Generation reads the open list (isComplete, isInformationalEvent, dueDate, specificTime, sortDeadline, plannedStartDate, stakes). Validation re-reads the named task. Fill reads the task's title, deadline and planned slot, the NudgeGoal title for goalLapse, and UserProfile.name." _blank
+  click C_CLAUDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L947" "generateNudgeCopy(requests:userName:recentBodies:) — one batched request; the last copyHistoryLimit 40 lines are passed as do-not-echo examples; returns bodies by request index." _blank
+  click C_SECRETS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L20" "Primary key source read by ClaudeService. With no key, generation fails and every nudge uses its template." _blank
+  click K_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L69" "nudge.copy.cache (JSON array of kindRaw, taskID, taskTitle, dueAtGeneration, body), nudge.copy.generatedAt, nudge.copy.history, nudge.copy.countDay, nudge.copy.count, nudge.copyGen.lastRunDay, nudge.copyGen.lastAttempt." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L283" "New copy triggers another reevaluate with .taskCreatedOrEdited so scheduled requests carry it." _blank
+  click R_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4094" "content.body = resolvedBody(for: candidate)." _blank
+  click R_BODY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4214" "resolvedBody(for:modelContext:). A synchronous cache read with no API call in the arbiter's path. Looks up by namedTaskID ?? taskID. Every kind swaps since Oct 4 2026. Any nil returns candidate.body, the template." _blank
+  click C_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L140" "validBody(kind:taskID:fireDate:modelContext:). nil when generatedAt is missing, older than copyCacheDays 3, or in the future. Prefers the (kind, task) entry, else the kind-generic one. A task-keyed entry is served only while the task is still open and its effective deadline (specificTime, else end-of-day sortDeadline) equals dueAtGeneration to the minute, or is still absent when written as undated." _blank
+  click C_FILL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L527" "fill(_:candidate:modelContext:). Replaces task, goal, name, due, time, day. Anchor: eventBlock → specificTime; dueSoon, prep, morningPrompt → specificTime or the end-of-day deadline; placementLead, placementMissed → plannedStartDate. day is relative to the candidate's fireDate (today, tomorrow, yesterday, weekday, month day). due carries its own tense (was due yesterday / due tomorrow at 3:00 PM) and a leading is / was / due is stripped. time for a bare due date reads the end of the day. Any unresolved placeholder → nil → template." _blank
+    </script>
+    <figcaption>Every miss falls back to the builder's template, so a missing key, no network, or a stale entry leaves the nudge as it was before generated copy existed.</figcaption>
+  </figure>
+  <p class="reads"><b>reads:</b> NudgeConfig copyCacheDays 3, copyGenTasksPerKind 4, copyHistoryLimit 40, copyGenMinMinutesBetween 15, copyGenMaxPerDay 6; NudgeTask isComplete, isInformationalEvent, dueDate, specificTime, sortDeadline, plannedStartDate, stakes; NudgeGoal.title; UserProfile.name; Secrets.plist ANTHROPIC_API_KEY.</p>
+</section>
+
+<section id="sec-launch">
+  <h2>Launch, triggers, widget, permission</h2>
+  <p class="intro">Four small stories: how the delegate, categories and background task are wired at launch; every caller of <code>reevaluate</code>; what the widget does to pending requests; and where notification permission is asked and shown.</p>
+  <figure>
+    <h3>App launch wiring <span class="src">notification-flow-launch.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: app launch wiring — delegate, categories, the 6 AM background task, the retired-notification sweep.
+flowchart TB
+  APP_LAUNCH["NudgeApp.swift<br/>didFinishLaunchingWithOptions"]
+  N_CATS["NudgeNotificationCategories.swift<br/>registerAll"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  T_PLIST["Info.plist<br/>BGTaskSchedulerPermittedIdentifiers"]
+  IOS_BG["BackgroundTasks<br/>BGTaskScheduler"]
+  T_BG["NudgeApp.swift<br/>handleDailyRecalc"]
+  N_RETIRED["NotificationScheduler.swift<br/>cancelRetiredDailyNotifications"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+
+  APP_LAUNCH -- "delegate" --> UNC
+  APP_LAUNCH --> N_CATS
+  N_CATS -- "categories" --> UNC
+  T_PLIST --> IOS_BG
+  APP_LAUNCH -- "register, submit" --> IOS_BG
+  IOS_BG -- "6 AM" --> T_BG
+  T_BG -- "backgroundTask" --> R_REEVAL
+  T_BG --> N_RETIRED
+  N_RETIRED -- "remove retired" --> UNC
+
+  click APP_LAUNCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L21" "didFinishLaunchingWithOptions. Sets UNUserNotificationCenter.current().delegate = NudgeNotificationService.shared synchronously so a response that launched the app is not lost; registers categories; calls NudgeNotificationService.configure(), which is empty; registers the dailyRecalc task and submits the next 6 AM request." _blank
+  click N_CATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationCategories.swift#L112" "registerAll → setNotificationCategories with 13 categories: eventBlock, idle, getAhead (legacy, nothing schedules it), prep, dueSoon, morningPrompt, floater, comeBack, placementLead, placementMissed, goalLapse, limit, mirror. Actions: startSession (foreground), snooze30, idleYesGood, idleNotYet (foreground), markUnhelpful (not foreground). Every category has customDismissAction." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "System notification center." _blank
+  click T_PLIST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Info.plist" "Nudge/Info.plist: BGTaskSchedulerPermittedIdentifiers lists com.deblaser.nudge.dailyRecalc; UIBackgroundModes lists fetch. Without the identifier iOS refuses the registration." _blank
+  click IOS_BG href "https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler" "BGAppRefreshTaskRequest with earliestBeginDate = next 6 AM; iOS chooses the actual time." _blank
+  click T_BG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "handleDailyRecalc: re-arms the next 6 AM run first, CalendarService.purgePastEvents, fetches the profile, reevaluate(.backgroundTask), cancelRetiredDailyNotifications, setTaskCompleted." _blank
+  click N_RETIRED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L58" "Removes the pre-Jul-2026 repeating requests nudge.daily.bedtimePlanning and nudge.daily.morningKickoff by id. Also called from ContentView .task(id: notificationToken). The class schedules nothing anymore; it also holds lastFocusSessionStartedAtKey." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "See the arbiter close-up." _blank
+    </script>
+    <figcaption>The delegate is set before launch completes; the background task is only an earliest-begin request, so the app-open trigger is the reliable path.</figcaption>
+  </figure>
+  <figure>
+    <h3>Triggers of the arbiter <span class="src">notification-flow-triggers.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: every caller of NudgeArbiter.reevaluate and the reason it passes.
+flowchart TB
+  T_CV_TASK["ContentView.swift<br/>.task(id: notificationToken)"]
+  T_CV_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  T_CV_DAY["DayPlanEngine.swift<br/>autoPlanIfNewDay"]
+  T_SESS["SessionCoordinator.swift<br/>startSession"]
+  T_UI["TasksTabView.swift<br/>refreshNotifications"]
+  T_BG["NudgeApp.swift<br/>handleDailyRecalc"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+
+  T_CV_TASK -- "appLaunch" --> R_REEVAL
+  T_CV_SCENE -- "sceneActive, taskCompleted" --> R_REEVAL
+  T_CV_SCENE --> T_CV_DAY
+  T_CV_DAY -- "taskCreatedOrEdited" --> R_REEVAL
+  T_SESS -- "session reasons" --> R_REEVAL
+  T_UI -- "taskCreatedOrEdited" --> R_REEVAL
+  T_BG -- "backgroundTask" --> R_REEVAL
+
+  click T_CV_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L98" "Runs at launch and whenever the token changes: bedtime, wake, notificationsEnabled, the nine per-kind toggles except goalLapse, quietHoursFollowSleepSchedule, quietHoursStartTime, quietHoursEndTime. Trailing-edge 500 ms debounce. Then purgePastEvents, PlacementRollover, ExamPrepSweep, PlanProposalSweep, cancelRetiredDailyNotifications, SessionCoordinator.syncIfActivityDismissed, reevaluate(.appLaunch), DistractionMonitor.apply." _blank
+  click T_CV_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L169" "On scene-active: purgePastEvents, PlacementRollover, ExamPrepSweep, PlanProposalSweep, recordForegroundAndClassifyOutcomes, then reevaluate with .taskCompleted when nudge.arb.widgetMutated was set (and cleared), else .sceneActive. Then a Task: calendar refresh, autoPlanIfNewDay, NudgeCopyGenerator.generateIfNeeded." _blank
+  click T_CV_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L255" "Inside the scene-active Task: a reevaluate after DayPlanEngine.autoPlanIfNewDay placed tasks, and another after NudgeCopyGenerator.generateIfNeeded returned true." _blank
+  click T_SESS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "startSession writes nudge.lastFocusSessionStartedAt and sessionEnd before reevaluate(.sessionStarted); completing the session's task runs reevaluate(.taskCompleted); reevaluateAfterSessionEnd runs reevaluate(.sessionEnded)." _blank
+  click T_UI href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2347" "TasksTabView.refreshNotifications from about 17 edit sites. Also with .taskCreatedOrEdited: HomeTabView after brain-dump capture and after plan proposals are written; CalendarTabView after edits, deletes, planning a day and screenshot import; DayPlanRefiner after applying placements; NudgeCopyGenerator.noteShift after new copy. DEBUG launch arguments (EvalHarness, CaptureHistoryExporter, -nudge-import-ical) also call it." _blank
+  click T_BG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "The 6 AM background task; see the launch wiring picture." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "appLaunch, sceneActive and backgroundTask are debounced for 60 s; the other reasons always run." _blank
+    </script>
+    <figcaption>Seven reasons reach the arbiter. Time-triggered ones (appLaunch, sceneActive, backgroundTask) are debounced; data-driven ones always run.</figcaption>
+  </figure>
+  <figure>
+    <h3>Widget <span class="src">notification-flow-widget.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: the widget — completing a task from the home screen removes its pending nudges and asks the app to reevaluate.
+flowchart TB
+  W_INTENT["CompleteTaskIntent.swift<br/>perform"]
+  W_CANCEL["CompleteTaskIntent.swift<br/>cancelPendingNudges"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  K_IDS["App Group<br/>nudge.arb.scheduledIDs"]
+  K_WIDGET["App Group<br/>nudge.arb.widgetMutated"]
+  T_CV_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+
+  W_INTENT --> W_CANCEL
+  W_CANCEL -- "remove task's requests" --> UNC
+  W_CANCEL -- "trim" --> K_IDS
+  W_CANCEL -- "set" --> K_WIDGET
+  K_WIDGET --> T_CV_SCENE
+  T_CV_SCENE -- "taskCompleted" --> R_REEVAL
+
+  click W_INTENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "perform() in the NudgeWidgetExtension target (entitlement: app group). Marks the task complete in the shared store, records goal activity and a CompletedTaskRecord, clears activeSessionState when a session runs on that task, cancels its nudges, reloads the widget timeline, posts the Darwin notification com.nudge.sessionStateChanged, fires a haptic." _blank
+  click W_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L128" "cancelPendingNudges(for:defaults:). pendingNotificationRequests, then removePendingNotificationRequests for ids with prefix nudge.arb. that contain the task UUID (prep, floater, placementLead, placementMissed); trims those ids from nudge.arb.scheduledIDs; sets nudge.arb.widgetMutated. The widget cannot run the arbiter, so kinds that only name the task (the morning prompt) wait for the app." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "removePendingNotificationRequests(withIdentifiers:)" _blank
+  click K_IDS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L180" "Kept honest so the arbiter's cancelAll does not try to remove ids the widget already removed." _blank
+  click K_WIDGET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L139" "ContentView reads it on the next scene-active, clears it, and passes the undebounced .taskCompleted reason." _blank
+  click T_CV_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L210" "widgetMutated ? .taskCompleted : .sceneActive" _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "See the arbiter close-up." _blank
+    </script>
+    <figcaption>The widget adds nothing. It removes the completed task's pending arbiter requests and leaves a flag for the app's next foreground.</figcaption>
+  </figure>
+  <figure>
+    <h3>Permission request <span class="src">notification-flow-permission.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: the notification permission request and where its status is shown.
+flowchart TB
+  UI_ONBOARD["OnboardingCompleteView.swift<br/>askPermission"]
+  UI_SETTINGS["SettingsTabView.swift<br/>notificationPermissionCard"]
+  N_AUTH["NudgeNotificationService.swift<br/>requestAuthorizationIfNeeded"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  UI_HOME["HomeTabView.swift<br/>notificationsDisabledBanner"]
+
+  UI_ONBOARD --> N_AUTH
+  UI_SETTINGS --> N_AUTH
+  N_AUTH -- "requestAuthorization" --> UNC
+  UNC -- "status" --> N_AUTH
+  N_AUTH --> UI_HOME
+
+  click UI_ONBOARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Onboarding/OnboardingCompleteView.swift#L161" "Onboarding's permission step. Anything other than authorized shows the denied screen." _blank
+  click UI_SETTINGS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L339" "Allow notifications button when notDetermined; Open system settings when denied; the status text otherwise." _blank
+  click N_AUTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L95" "requestAuthorizationIfNeeded() asks only when authorizationState() is notDetermined, with options alert, badge, sound, providesAppNotificationSettings; authorized, provisional and ephemeral map to authorized; a thrown error maps to denied. No userNotificationCenter(_:openSettingsFor:) delegate method backs the providesAppNotificationSettings option." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "notificationSettings().authorizationStatus and requestAuthorization(options:). iOS gates delivery on this status for every add site." _blank
+  click UI_HOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L33" "Mirrors authorizationStatus; shows a banner when iOS reports denied while the profile's master toggle is on." _blank
+    </script>
+    <figcaption>iOS gates delivery on this status for every add site. The app asks once, then points at system settings.</figcaption>
+  </figure>
+  <p class="reads"><b>reads:</b> UserProfile (the notificationToken fields: bedtime, wake, notificationsEnabled, nine per-kind toggles, quiet-hours toggle and times); Nudge/Info.plist; the authorization status from UNUserNotificationCenter; nudge.arb.widgetMutated and nudge.arb.scheduledIDs. DEBUG launch arguments (EvalHarness, CaptureHistoryExporter) also call reevaluate; see the no-effect list.</p>
+</section>
+
+<section id="sec-keys">
+  <h2>App Group keys</h2>
+  <p class="intro">Everything in <code>group.com.deblaser.nudge</code> that the notification paths touch. Shared by all three targets.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Key</th><th>Written by</th><th>Read by</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L180">nudge.arb.scheduledIDs</a></td><td>NudgeArbiter.schedule (insert), cancelAll (clear), CompleteTaskIntent.cancelPendingNudges (trim)</td><td>NudgeArbiter.cancelAll</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L185">nudge.arb.eventReminderHistory · dueSoonHistory · placementMissedHistory · goalLapseHistory · morningPromptHistory</a></td><td>NudgeArbiter.schedule (fire time per kind), cancelAll (prune: 2 days, 90 days for goals, 7 days for morning)</td><td>buildEventBlock, buildDueSoon, buildPlacementMissed, buildGoalLapse, buildMorningPrompt</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1507">nudge.arb.idleDismissedFor.yyyyMMdd</a></td><td>NudgeNotificationService.handleResponse on Yes, I'm good</td><td>buildIdleCandidates</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L51">nudge.lastFocusSessionStartedAt</a></td><td>SessionCoordinator.startSession</td><td>buildIdleCandidates, firesInsideActivityCooldown, NudgeOutcomeClassifier, DistractionMonitor.writeSnapshot</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L139">nudge.arb.widgetMutated</a></td><td>CompleteTaskIntent.cancelPendingNudges</td><td>ContentView scene-active (reads then clears)</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L69">nudge.copy.cache · generatedAt · history · countDay · count · nudge.copyGen.lastRunDay · lastAttempt</a></td><td>NudgeCopyStore.save, recordGeneration, appendHistory; NudgeCopyGenerator.generateIfNeeded</td><td>NudgeCopyStore.validBody; NudgeCopyGenerator throttles</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L51">nudge.tappedNudgeKind · TaskID · GoalID · Answer · Date</a></td><td>NudgeNotificationService.handleResponse on body tap and Not yet</td><td>TappedNudgeContext.read (TasksMessageBox); TasksTabView clears</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/AppOpenLog.swift#L40">AppOpenLog timestamps</a></td><td>AppOpenLog.record on every foreground</td><td>buildComeBackCandidates, NudgeOutcomeClassifier.didOpen</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L20">nudge.distractions.settings</a></td><td>SettingsTabView.saveDistractions, DistractionMonitor.requestAuthorization</td><td>DistractionMonitor.apply, NudgeActivityMonitorExtension, StatsTabView</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L53">nudge.distractions.snapshot</a></td><td>DistractionMonitor.writeSnapshot after every arbiter pass</td><td>LimitDecider.decide via the extension</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L51">nudge.distractions.registeredSignature</a></td><td>DistractionMonitor.apply</td><td>DistractionMonitor.apply (skip when unchanged)</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L24">nudge.distractions.lastRungAt · lastRungDay · mirrorLastFiredAt</a></td><td>NudgeActivityMonitorExtension.eventDidReachThreshold</td><td>the extension (same-day lastRungAt); DistractionMonitor.debugDump (DEBUG)</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L30">nudge.distractions.breadcrumbs</a></td><td>NudgeActivityMonitorExtension.crumb</td><td>DistractionMonitor.debugDump (DEBUG)</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-addsites">
+  <h2>The four add sites</h2>
+  <p class="intro">Only these four call sites hand a <code>UNNotificationRequest</code> to the system. The first is the arbiter and carries every scheduled nudge. The other three bypass the arbiter's gates.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Site</th><th>Trigger</th><th>Text</th><th>Writes</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4129">NudgeArbiter.schedule()</a></td><td>reevaluate(reason:) from the triggers above, after debounce, cancelAll, master toggle, 10 builders, passesGates, pickWinners</td><td>resolvedBody: cached AI line from NudgeCopyStore filled by NudgeCopyFill, else the builder's template; title styled by tier</td><td>scheduledIDs, five history maps, a pending NudgeOutcome row, then the Screen Time snapshot</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L106">NudgeActivityMonitorExtension.post()</a></td><td>iOS DeviceActivity threshold in the extension process; schedules registered by DistractionMonitor.apply</td><td>LimitDecision placeholder strings (LIMIT 1/2/3, LIMIT BEDTIME, LIMIT WINDDOWN, RANDOM LIMIT) or the fixed MIRROR line</td><td>lastRungAt / lastRungDay / mirrorLastFiredAt, breadcrumbs</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L403">NudgeNotificationService.rescheduleSnoozed()</a></td><td>Snooze 30 min action on a delivered prep or placementMissed nudge</td><td>Clone of the delivered content, same title and body</td><td>Nothing: the <code>.snoozed</code> id is not in scheduledIDs and gets no NudgeOutcome row, so cancelAll never removes it</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L133">NudgeNotificationService.sendTestNotification()</a></td><td>Settings tab button</td><td>Fixed "Test" copy, 5 s trigger</td><td>Nothing</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-targets">
+  <h2>Targets searched</h2>
+  <p class="intro">From <code>Nudge.xcodeproj/project.pbxproj</code>: four native targets. Three touch notifications. NudgeActivityReport (ExtensionKit report renderer) contains no notification code.</p>
+  <ul class="note">
+    <li><strong>Nudge</strong> (app): arbiter, delegate, test button, categories, authorization, AI copy, Screen Time arming. Entitlements: app group, family-controls. Info.plist: BGTaskSchedulerPermittedIdentifiers, UIBackgroundModes fetch.</li>
+    <li><strong>NudgeWidgetExtension</strong>: removes pending arbiter requests for a task completed from the widget and raises the <code>widgetMutated</code> flag. Adds nothing. Entitlements: app group.</li>
+    <li><strong>NudgeActivityMonitor</strong>: posts the limit ladder and mirror notifications with placeholder copy. Entitlements: family-controls, app group. Info.plist: deviceactivity.monitor-extension.</li>
+    <li><strong>NudgeActivityReport</strong>: no notification requests.</li>
+  </ul>
+</section>
+
+<section id="sec-dead">
+  <h2>Exists but has no effect</h2>
+  <p class="intro">Only the fatigue gate is drawn (dashed, in the arbiter close-up). Everything here is in the complete reference diagram.</p>
+  <ol class="dead">
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeConfig.swift#L66">NudgeConfig.fatigueGateEnabled = false</a> switches off the per-task fatigue gate in passesGates, so taskFatigueCount never runs and the classifier's <code>.ignored</code> rows and the delegate's <code>.dismissed</code> rows are read by no live decision.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L350">recordFeedback → NudgeOutcome.feedback / feedbackAt</a>: written on the 👎 action, read only by the DEBUG dump in NudgeOutcomeClassifier.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeOutcome.swift#L255">NudgeOutcome.firedAt</a> is never written.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L109">NudgeCandidate.receptivity</a> is not part of scoring; <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L94">NudgeCandidate.interruption</a> is overridden by <code>tier.interruption</code> in schedule(); <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L161">quadrant</a> is printed in DEBUG only.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L75">NudgeNotificationService.configure()</a> has an empty body; <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L115">scheduleAllNotifications()</a> is empty and nothing calls it; <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L362">pickTopOpenTask()</a> is called by nothing.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L28">Notification.Name.nudgeIdleNotYetTapped</a> is observed by TasksTabView but never posted; <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L39">pendingIdleTaskIDKey / pendingIdleTaskDateKey</a> are read and cleared by TasksTabView.consumePendingIdleTask but never written.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L104">.providesAppNotificationSettings</a> is requested, but no <code>userNotificationCenter(_:openSettingsFor:)</code> delegate method exists, so the in-app settings link leads nowhere specific.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/UserProfile.swift#L174">UserProfile legacy toggles</a> (eveningCheckIn, deadlinePrep, windDown, habitReminder, monthlyCheckIn, smartNotifications, streak, reEngagement, milestone) and the integer <code>quietHoursStart / quietHoursEnd</code> are stored and never read.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/SentNotificationFlag.swift">SentNotificationFlag</a> and <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NotificationEvent.swift">NotificationEvent</a> (with SmartNotificationType and NotificationTone) are in all three schema lists and never inserted or fetched.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationCategories.swift#L26">category.getAhead</a> is registered but no request has carried it since the Aug 2026 split.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L3048">NudgeArbiter debug*Impact, debugDumpPendingCensus, hadCalendarEvent, legacyInsideAwakeWindow</a> are DEBUG-only and schedule nothing; <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L186">appGroupID</a> and <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1517">idleDismissAppGroupID</a> are declared and never read.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/EvalHarness.swift#L212">EvalHarness</a> and <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureHistoryExporter.swift#L143">CaptureHistoryExporter</a> call reevaluate only under DEBUG launch arguments.</li>
+  </ol>
+  <p class="note">Not dead but worth knowing: <code>goalLapseNotificationsEnabled</code> is read by its builder yet is missing from ContentView's notificationToken, so flipping it waits for the next unrelated reevaluate.</p>
+</section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function isDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function themeVars() {
+    return {
+      fontFamily: cssVar('--font-body') || 'sans-serif',
+      fontSize: '13px',
+      primaryColor: cssVar('--node'),
+      primaryTextColor: cssVar('--fg'),
+      primaryBorderColor: cssVar('--node-border'),
+      secondaryColor: cssVar('--node'),
+      tertiaryColor: cssVar('--cluster'),
+      lineColor: cssVar('--edge'),
+      textColor: cssVar('--fg'),
+      nodeTextColor: cssVar('--fg'),
+      clusterBkg: cssVar('--cluster'),
+      clusterBorder: cssVar('--cluster-border'),
+      titleColor: cssVar('--fg'),
+      edgeLabelBackground: cssVar('--edge-label'),
+      nodeBorder: cssVar('--node-border'),
+      mainBkg: cssVar('--node')
+    };
+  }
+
+  var figures = Array.prototype.slice.call(document.querySelectorAll('figure'));
+
+  function hrefOf(a) { return a.getAttribute('href') || a.getAttribute('xlink:href') || ''; }
+
+  function wireLinks(stage) {
+    stage.querySelectorAll('a').forEach(function (a) {
+      var h = hrefOf(a);
+      if (h.charAt(0) === '#') {
+        a.removeAttribute('target');
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          var target = document.getElementById(h.slice(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener');
+      }
+    });
+  }
+
+  async function renderOne(fig, index) {
+    var src = fig.querySelector('.mmd-src').textContent.trim();
+    var stage = fig.querySelector('.stage');
+    var status = fig.querySelector('.status');
+    var canvas = fig.querySelector('.canvas');
+    try {
+      var out = await mermaid.render('nudge-flow-' + index + '-' + Date.now(), src);
+      stage.innerHTML = out.svg;
+      if (out.bindFunctions) out.bindFunctions(stage);
+      stage.hidden = false;
+      status.hidden = true;
+      wireLinks(stage);
+    } catch (e) {
+      status.textContent = 'Mermaid could not render this figure: ' + (e && e.message ? e.message : e);
+      status.className = 'status error';
+      status.hidden = false;
+      var pre = document.createElement('pre');
+      pre.className = 'fallback';
+      pre.textContent = src;
+      canvas.appendChild(pre);
+    }
+  }
+
+  async function renderAll() {
+    if (!window.mermaid) {
+      figures.forEach(function (fig) {
+        var status = fig.querySelector('.status');
+        status.textContent = 'The Mermaid library did not load. Source shown below.';
+        status.className = 'status error';
+        var pre = document.createElement('pre');
+        pre.className = 'fallback';
+        pre.textContent = fig.querySelector('.mmd-src').textContent.trim();
+        fig.querySelector('.canvas').appendChild(pre);
+      });
+      return;
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'base',
+      themeVariables: themeVars(),
+      maxTextSize: 400000,
+      maxEdges: 2000,
+      flowchart: { htmlLabels: true, useMaxWidth: false, curve: 'basis', nodeSpacing: 24, rankSpacing: 44, padding: 8 }
+    });
+    for (var i = 0; i < figures.length; i++) {
+      await renderOne(figures[i], i);
+    }
+  }
+
+  var lastDark = isDark();
+  function onThemeChange() {
+    var now = isDark();
+    if (now !== lastDark) { lastDark = now; renderAll(); }
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', onThemeChange); else if (mq.addListener) mq.addListener(onThemeChange);
+  }
+  new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  renderAll();
+})();
+</script>

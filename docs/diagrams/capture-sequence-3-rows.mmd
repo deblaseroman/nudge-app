@@ -1,0 +1,23 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 3 of the capture path: every change the reply makes to task and goal rows before the save. Steps and the fields written are in the tables on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant WRITER as CaptureWriter.swift<br/>apply
+    participant FOLLOW as HomeTabView.swift<br/>commitmentStartDayFollowUp
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant GOALS as NudgeGoal rows<br/>NudgeGoal.swift
+    participant LOG as Capture log file<br/>CaptureHistoryExporter.swift
+  end
+  SEND->>TASKS: apply task_updates
+  SEND->>GOALS: recordActivity
+  SEND->>WRITER: apply
+  WRITER->>TASKS: clear sequenceIndex
+  WRITER->>TASKS: delete replaced duplicate
+  WRITER->>TASKS: insert rows
+  WRITER->>LOG: append line (DEBUG)
+  WRITER-->>SEND: returns CaptureWriteResult
+  SEND->>FOLLOW: created rows
+  FOLLOW->>TASKS: write start-day fields
+  FOLLOW-->>SEND: returns sentence or nil

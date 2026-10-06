@@ -1,0 +1,46 @@
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: the planners and their undo. Only two model helpers write a planner placement: setPlanStart and releaseAutoPlan. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  P_BTN["TasksTabView.swift<br/>planMyDay"]
+  P_CAL["CalendarTabView.swift<br/>planSelectedDay"]
+  P_AUTO["DayPlanEngine.swift<br/>autoPlanIfNewDay"]
+  P_REFINE["DayPlanRefiner.swift<br/>refine"]
+  P_CLEAR["TasksTabView.swift<br/>clearPlan"]
+  P_PLAN["DayPlanEngine.swift<br/>plan"]
+  P_APPLY["DayPlanRefiner.swift<br/>applyPlacements"]
+  H_START["NudgeTask.swift<br/>setPlanStart"]
+  H_RELEASE["NudgeTask.swift<br/>releaseAutoPlan"]
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_AUTO(["plannedStartDate set · plannedIsAuto true<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+
+  P_BTN --> P_PLAN
+  P_CAL --> P_PLAN
+  P_AUTO --> P_PLAN
+  P_REFINE --> P_APPLY
+  P_CLEAR --> H_RELEASE
+  S_UNPLANNED --> P_PLAN
+  S_DAY --> P_PLAN
+  S_AUTO --> H_RELEASE
+  P_PLAN --> H_RELEASE
+  P_PLAN --> H_START
+  P_APPLY --> H_START
+  H_START -- "today" --> S_AUTO
+  H_START -- "future day" --> S_MANUAL
+  H_RELEASE -- "planDayIsAuto false" --> S_DAY
+  H_RELEASE -- "planDayIsAuto true" --> S_UNPLANNED
+
+  click P_BTN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2093" "planMyDay: DayPlanEngine.planToday(clearAutoFirst: true), a replan. Writes PlanOutcomeContext for the message box on refusals, then reevaluates the arbiter on every outcome." _blank
+  click P_CAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L408" "planSelectedDay: DayPlanEngine.plan(day: selectedDay) without clearing. Placements on a future day are written with auto: false so that day's morning run respects them." _blank
+  click P_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L549" "autoPlanIfNewDay, from the scene-active Task in ContentView after the calendar refresh, on the first foreground of a day. Once per day (nudge.autoPlan.lastRunDay); skipped when any auto placement already sits on today. planToday(clearAutoFirst: false); a placement writes PlanOutcomeContext .planned isAuto and triggers a reevaluate." _blank
+  click P_REFINE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanRefiner.swift#L49" "refine(profile:modelContext:force:), from HomeTabView.handlePlanIntent when the chat recognises a plan-my-day request. Reads today's busy intervals and the top 8 open unplaced tasks (plan tasks first, no future-intent tasks), asks Claude for placements, then applyPlacements." _blank
+  click P_CLEAR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2142" "clearPlan: releaseAutoPlan on every row with plannedIsAuto and a plannedStartDate today. Manual placements untouched. Then the arbiter." _blank
+  click P_PLAN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L99" "plan(day:profile:modelContext:clearAutoFirst:). Window from DayWindow (wake+30 to bed−60), scan from now on today. Replan (clearAutoFirst) releases today's auto rows first. Busy: event windows, every existing placement, one hour before each event. Candidates: open, non-event, unplaced; prep and commitment rows only on their own day; plan tasks whose day is this day (in sequenceIndex order), then tasks that belong(to: day), then the rest by Eisenhower score, excluding rows whose scheduledDay is a different future day. Bands (anytime, daytime, business hours) bound the gap search; a generated session may displace one strictly lower-stakes auto placement (releaseAutoPlan on it). setPlanStart(start, planningMinutes, auto: isToday), at most planMaxPlacementsPerRun per run." _blank
+  click P_APPLY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanRefiner.swift#L175" "applyPlacements: for each returned placement whose task is open, not an event, still unplaced and whose interval sits inside a free gap handed to the model, setPlanStart(start, durationMinutes, auto: true)." _blank
+  click H_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L194" "setPlanStart: intendedDate = the start's day, plannedStartDate, plannedDurationMinutes, plannedIsAuto = auto; planDayIsAuto = auto when the day is new. From DayPlanEngine.plan auto is isToday; from DayPlanRefiner.applyPlacements auto is always true." _blank
+  click H_RELEASE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L225" "releaseAutoPlan: clearPlanTime always; intendedDate cleared too only when planDayIsAuto. A day the user chose survives. Called by clearPlan (today's auto rows), by plan on a replan (today's auto rows) and on a displacement (one lower-stakes auto row)." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "Unscheduled list. A candidate for the planner on any day unless it is a generated row for another day." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "That day's lens, unplaced. A candidate for its own day's run; a future plan day keeps it out of other days' runs." _blank
+  click S_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L403" "Today's timeline, movable. Read by releaseAutoPlan's callers as today's auto rows." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "That day's timeline, anchored." _blank

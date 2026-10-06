@@ -1,0 +1,752 @@
+<meta charset="utf-8">
+<title>Nudge Session Lifecycle</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: two state machines first (session record, Live Activity), then one close-up per code path, each a top-to-bottom figure with its cases listed in tables under it. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #1c2029;
+  --muted: #5d6471;
+  --line: #d3d7df;
+  --accent: #0e6f6f;
+  --accent-soft: #d9ecec;
+  --dead: #8a8f98;
+  --node: #ffffff;
+  --node-border: #3c4654;
+  --cluster: #eceef2;
+  --cluster-border: #b9bfca;
+  --edge: #4b5563;
+  --edge-label: #f4f5f7;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+    --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+    --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+    --edge: #b6bdc8; --edge-label: #14171c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+  --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+  --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+  --edge: #b6bdc8; --edge-label: #14171c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; margin: 0; }
+.wrap { padding-inline: 16px; padding-block: 20px 48px; max-width: 1480px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 12px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.stamp { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.stamp code { background: var(--accent-soft); color: var(--fg); padding: 1px 6px; border-radius: 3px; }
+p.lede { max-width: 72ch; margin: 0 0 14px; color: var(--muted); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin-bottom: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); align-items: center; margin-bottom: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 26px; height: 14px; border: 1.5px solid var(--node-border); border-radius: 2px; background: var(--node); }
+.sw.state { border-radius: 8px; }
+.sw.dead { border-style: dashed; border-color: var(--dead); background: transparent; }
+.sw.add { border-width: 3px; }
+.ar { display: inline-block; width: 26px; height: 0; border-top: 3.5px solid var(--edge); }
+figure { margin: 0; }
+figure + figure { margin-top: 22px; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
+.stage { display: inline-block; padding: 16px; min-width: 100%; }
+.stage svg { display: block; max-width: none !important; height: auto; }
+.stage a { cursor: pointer; }
+.stage .node:hover rect, .stage .node:hover polygon, .stage .node:hover path { stroke: var(--accent) !important; stroke-width: 2.5px; }
+.status { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); padding: 10px 14px; }
+.status.error { color: #b3401f; }
+pre.fallback { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; padding: 14px; margin: 0; }
+figcaption { font-size: 13px; color: var(--muted); margin: 8px 2px 0; max-width: 90ch; }
+section { margin-top: 40px; scroll-margin-top: 12px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+h2 .src, h3 .src { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 10px; }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; }
+.intro { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+.reads { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; max-width: 100ch; }
+.reads b { color: var(--fg); font-weight: 500; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; border-top: 0; position: sticky; top: 0; background: var(--bg); }
+td.k, th.k { white-space: nowrap; }
+td code, li code, p code { font-family: var(--font-mono); font-size: 12.5px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.tablewrap table th { background: var(--surface); }
+ol.dead { padding-left: 22px; margin: 0; max-width: 100ch; }
+ol.dead li { margin: 0 0 10px; }
+ol.dead li a { font-family: var(--font-mono); font-size: 12.5px; }
+a { color: var(--accent); }
+a[data-s] { text-decoration: underline; cursor: pointer; }
+.note { font-size: 13.5px; color: var(--muted); max-width: 90ch; }
+ul.note li { margin: 0 0 6px; }
+.mermaidTooltip { position: absolute; max-width: 420px; padding: 8px 11px; font-family: var(--font-body); font-size: 12.5px; line-height: 1.45; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.18); text-align: left; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 480px) { h1 { font-size: 20px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Nudge Session Lifecycle</h1>
+  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-06 · reference: <code>docs/diagrams/session-lifecycle.mmd</code> · page: <code>docs/diagrams/session-lifecycle.html</code></div>
+</header>
+<p class="lede">A focus session is kept in three places: <code>SessionCoordinator</code>'s memory in the app process, the <code>activeSessionState</code> key in the App Group, and one Live Activity in ActivityKit. The first state machine follows the session record through suspension, process death and relaunch. The second follows the Live Activity. The close-ups show the calls behind each move. Every box names a file and a function or type, clicks through to that file at this commit, and carries its values in a hover tooltip.</p>
+
+<nav class="toc">
+  <a href="#sec-session">Session states</a>
+  <a href="#sec-activity">Live Activity states</a>
+  <a href="#sec-process">Suspended, killed, relaunched</a>
+  <a href="#sec-start">Start and update</a>
+  <a href="#sec-end">Ending the Live Activity</a>
+  <a href="#sec-sync">Launch and foreground</a>
+  <a href="#sec-widget">Widget extension</a>
+  <a href="#sec-stores">Where state lives</a>
+  <a href="#sec-targets">Targets</a>
+  <a href="#sec-dead">No effect</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw state"></i> a state: click to open the file, hover for its values</span>
+  <span><i class="sw"></i> a function or type</span>
+  <span><i class="sw add"></i> <code>Activity.end</code> is called here</span>
+  <span><i class="ar"></i> done by iOS, no app code runs</span>
+  <span><i class="sw dead"></i> exists, no effect (none sits on a main path; all are listed at the end)</span>
+</div>
+
+<section id="sec-session">
+  <h2>Session states <span class="src">session-lifecycle.mmd</span></h2>
+  <p class="intro">The session record: what <code>SessionCoordinator</code> holds in memory plus the <code>activeSessionState</code> key. One arrow per pair of states, labeled with the main function; every other trigger is in the table under the picture. Drawn with flowchart syntax so each state links to its file and has a tooltip.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · state machine: the focus session behind the Live Activity (SessionCoordinator memory plus the activeSessionState App Group key), through suspension, process death and relaunch. Flowchart syntax so every state links to its file and has a tooltip. One arrow per pair of states, labeled with the main function; other triggers are in the triggers table on the page. Thick arrow = done by iOS, no app code runs. The Live Activity's own states are in session-lifecycle-activity.mmd.
+flowchart TB
+  S_IDLE(["SessionCoordinator.swift<br/>isSessionActive = false"])
+  S_RUN(["SessionCoordinator.swift<br/>isSessionActive = true"])
+  S_DONE(["SessionCoordinator.swift<br/>sessionState = .complete"])
+  S_PUB[("activeSessionState<br/>SessionCoordinator.swift")]
+  S_DET(["SessionCoordinator.swift<br/>widgetEnded"])
+
+  S_IDLE -- "startSession" --> S_RUN
+  S_RUN -- "finishSession" --> S_DONE
+  S_DONE -- "finishSession, 3 s later" --> S_IDLE
+  S_RUN -- "cancelSession" --> S_IDLE
+  S_RUN == "iOS ends the process" ==> S_PUB
+  S_PUB -- "restoreSession" --> S_RUN
+  S_PUB -- "syncIfActivityDismissed" --> S_IDLE
+  S_RUN -- "CompleteTaskIntent.perform" --> S_DET
+  S_DET -- "syncIfActivityDismissed" --> S_IDLE
+  S_DET -- "handleTimerExpired" --> S_DONE
+
+  click S_IDLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L27" "No session. isSessionActive false, currentTask nil, sessionStartedAt nil, no pending work items, no activeSessionState key. The Tasks tab and the widget show Start Session." _blank
+  click S_RUN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L76" "Running in this process. isSessionActive true, sessionState .active, currentTask set, sessionEnd = start + estimatedMinutes (60 when nil), sessionStartedAt set. Up to three in-process work items wait: the end timer, the 20-minute alert, its 10-second revert. The key holds isActive, isPaused false, timerEndDate, currentTaskID, startedAt. A suspended app stays here: nothing runs and the work items wait." _blank
+  click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L378" "The 3-second completion card. sessionState .complete while isSessionActive is still true. Timers cancelled, sessionStartedAt nil, key already removed, endActivity already requested. The arbiter's active-session gate still sees a session until the deferred block runs." _blank
+  click S_PUB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L485" "Stored session with no process behind it. The app process that started it is gone, so there is no memory and no timer. What is left: the App Group key (isActive, isPaused, timerEndDate, currentTaskID, startedAt) and the Live Activity, whose stale date is the end instant." _blank
+  click S_DET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L276" "Ended from outside while this process still holds it. isSessionActive is true, but the key is gone (widgetEnded = published == nil) or the Live Activity is gone. The widget process cannot reach the coordinator, so this lasts until the next scene-active or until the pending end timer fires." _blank
+    </script>
+    <figcaption>Five states. The thick arrow is the only move no code performs: the process ends and the session survives as the stored key and the Live Activity.</figcaption>
+  </figure>
+
+  <h3>States</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">State</th><th>Coordinator memory</th><th>activeSessionState key</th><th>What the user sees</th></tr>
+    <tr><td class="k"><a data-s="SC#L27">isSessionActive = false</a></td><td>No task, no timers</td><td>Absent</td><td>Start Session button in the Tasks tab and the widget</td></tr>
+    <tr><td class="k"><a data-s="SC#L76">isSessionActive = true</a></td><td><code>sessionState .active</code>, task, <code>sessionEnd</code>, <code>sessionStartedAt</code>, pending work items</td><td>Present, end in the future</td><td>Focusing card with checkmark and stop; widget row and footer count down; Live Activity counts down</td></tr>
+    <tr><td class="k"><a data-s="SC#L378">sessionState = .complete</a></td><td><code>isSessionActive</code> still true for 3 s, timers cancelled</td><td>Removed</td><td>All Done card; alarm sound 1005; Live Activity dismissed</td></tr>
+    <tr><td class="k"><a data-s="SC#L485">activeSessionState (stored only)</a></td><td>None: no process</td><td>Present</td><td>Widget and Live Activity keep counting down from the stored end date</td></tr>
+    <tr><td class="k"><a data-s="SC#L276">widgetEnded</a></td><td>Still a running session, timers still pending</td><td>Removed by the widget extension (or the Live Activity is gone)</td><td>Widget shows Start Session; the app still shows the Focusing card until it reconciles</td></tr>
+  </table></div>
+
+  <h3>Triggers</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Move</th><th class="k">Main function</th><th>Every trigger</th><th>What it does</th></tr>
+    <tr><td class="k">not active → active</td><td class="k"><a data-s="SC#L71">startSession</a></td><td><a data-s="TTV#L2411">TasksTabView.attemptStartSession</a> from the session picker (<a data-s="TTV#L898">L898</a>) and the idle confirmation sheet (<a data-s="TTV#L910">L910</a>); the conflict alert's Start anyway (<a data-s="TTV#L1840">L1840</a>); <a data-s="NNS#L368">NudgeNotificationService.startSession(for:)</a> on the Start session notification action, only when no session is active; <a data-s="CV#L85">ContentView.onOpenURL</a> for <code>nudge://start-session</code>, which nothing emits</td><td>Sets the fields, writes the key, requests the Live Activity, schedules the end timer and the 20-minute alert. Steps are under <a href="#sec-start">Start and update</a>.</td></tr>
+    <tr><td class="k">active → .complete</td><td class="k"><a data-s="SC#L376">finishSession</a></td><td><a data-s="SC#L371">handleTimerExpired</a> when the end timer fires; <a data-s="SC#L170">completeCurrentTask</a> from the checkmark on the session card (<a data-s="TTV#L1805">L1805</a>) and from <a data-s="TTV#L1963">toggleCompletion</a> when the checked task is the session's; <a data-s="SC#L279">syncIfActivityDismissed</a> when the app resumes after the end instant with the key still present</td><td>Cancels the timers, sets <code>.complete</code>, plays the alarm, calls <code>endActivity</code>, clears <code>sessionStartedAt</code>, removes the key and reloads the widget. <code>completeCurrentTask</code> also records the minutes in <code>DurationModel</code> and reevaluates with <code>.taskCompleted</code>.</td></tr>
+    <tr><td class="k">.complete → not active</td><td class="k"><a data-s="SC#L393">finishSession</a></td><td>Its own <code>DispatchQueue.main.asyncAfter</code> block, 3 s later</td><td><code>isSessionActive = false</code>, <code>currentTask = nil</code>, <code>sessionState = .active</code>, then <code>reevaluateAfterSessionEnd</code> (<code>.sessionEnded</code>). <code>sessionEnd</code> keeps its old value.</td></tr>
+    <tr><td class="k">active → not active</td><td class="k"><a data-s="SC#L328">cancelSession</a></td><td>The Cancel session alert on the session card (<a data-s="TTV#L1848">L1848</a>); <a data-s="SC#L72">startSession</a>, which cancels a running session before starting the next; the app target's <a data-s="AFI#L34">EndFocusSessionIntent.perform</a>, which no view references</td><td>Cancels the timers, calls <code>endActivity</code>, resets every field, removes the key, reevaluates with <code>.sessionEnded</code>. No alarm, no duration record.</td></tr>
+    <tr><td class="k">active → stored only</td><td class="k">iOS ends the process</td><td>No code. The cases the code prepares for are named in the comment at <a data-s="SC#L237">SessionCoordinator.swift L237</a>: iOS reclaims the suspended app, the user force-quits, the phone restarts.</td><td>Memory and the three work items are lost. The key and the Live Activity stay as they were.</td></tr>
+    <tr><td class="k">stored only → active</td><td class="k"><a data-s="SC#L303">restoreSession</a></td><td><a data-s="SC#L250">syncIfActivityDismissed</a> at launch (<a data-s="CV#L153">ContentView L153</a>) or scene-active (<a data-s="CV#L181">L181</a>), when the stored end is in the future and <code>fetchTask</code> finds the task still open</td><td>Rebuilds the fields from the key, schedules the end timer for the time left (1 s minimum) and the 20-minute alert if its moment is still ahead. The key and the Live Activity are not touched.</td></tr>
+    <tr><td class="k">stored only → not active</td><td class="k"><a data-s="SC#L260">syncIfActivityDismissed</a></td><td>At launch when the stored end has passed, or the task is missing or complete. With no app process running, the widget extension can also remove the key: <a data-s="CTI#L84">CompleteTaskIntent.perform</a> on the session's task, <a data-s="WFI#L41">EndFocusSessionIntent.perform</a> (Dismiss), <a data-s="NW#L598">fetchTimelineState</a> once the end has passed.</td><td>Removes the key, calls <code>endActivity</code>, reloads the widget. Quiet: no alarm, no duration record, no <code>.sessionEnded</code> pass (the launch reevaluate follows at <a data-s="CV#L156">ContentView L156</a>).</td></tr>
+    <tr><td class="k">active → widgetEnded</td><td class="k"><a data-s="CTI#L29">CompleteTaskIntent.perform</a></td><td>The widget checkbox on the session's task removes the key (<a data-s="CTI#L82">L82</a>). Also: <a data-s="WFI#L41">EndFocusSessionIntent.perform</a> from Dismiss; <a data-s="NW#L598">fetchTimelineState</a> once the stored end has passed; the Live Activity no longer existing, read at <a data-s="SC#L277">L277</a>. That last check is also true when no activity was ever created: <a data-s="LAM#L26">startActivity</a> returns early when Live Activities are disabled, and a failed request is only printed (<a data-s="SC#L141">L141</a>).</td><td>Nothing in the app process. The intents post a Darwin notification that nothing observes.</td></tr>
+    <tr><td class="k">widgetEnded → not active</td><td class="k"><a data-s="SC#L282">syncIfActivityDismissed</a></td><td>The next scene-active (<a data-s="CV#L181">ContentView L181</a>)</td><td>Cancels the timers, resets every field, removes the key, reevaluates with <code>.sessionEnded</code>. It does not call <code>endActivity</code>; see the notes under <a href="#sec-end">Ending the Live Activity</a>.</td></tr>
+    <tr><td class="k">widgetEnded → .complete</td><td class="k"><a data-s="SC#L371">handleTimerExpired</a></td><td>The end timer is still scheduled in memory. If it fires before the next scene-active, the session finishes the normal way.</td><td>Alarm, <code>finishSession</code>, <code>endActivity</code>.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-activity">
+  <h2>Live Activity states <span class="src">session-lifecycle-activity.mmd</span></h2>
+  <p class="intro">The one <code>Activity&lt;TaskActivityAttributes&gt;</code>. The app writes three states; the widget extension derives a fourth from the stale date and can end the activity itself.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · state machine: the Live Activity (Activity of TaskActivityAttributes). States are SessionState cases; .timeUp is never written, the widget derives it from isStale. One arrow per pair of states, labeled with the main function. Thick arrow = done outside the app, no app code runs.
+flowchart TB
+  A_NONE(["LiveActivityManager.swift<br/>currentActivity = nil"])
+  A_ACTIVE(["TaskActivityAttributes.swift<br/>SessionState.active"])
+  A_ALERT(["TaskActivityAttributes.swift<br/>SessionState.stayFocusedAlert"])
+  A_TIMEUP(["TaskActivityAttributes.swift<br/>SessionState.timeUp"])
+  A_COMPLETE(["TaskActivityAttributes.swift<br/>SessionState.complete"])
+
+  A_NONE -- "startActivity" --> A_ACTIVE
+  A_ACTIVE -- "showStayFocusedAlert" --> A_ALERT
+  A_ALERT -- "revertToActive" --> A_ACTIVE
+  A_ACTIVE -- "displayState" --> A_TIMEUP
+  A_ALERT -- "displayState" --> A_TIMEUP
+  A_ACTIVE -- "endActivity" --> A_COMPLETE
+  A_ALERT -- "endActivity" --> A_COMPLETE
+  A_TIMEUP -- "endActivity" --> A_COMPLETE
+  A_COMPLETE -- "endActivity, .immediate" --> A_NONE
+  A_TIMEUP -- "EndFocusSessionIntent.perform" --> A_NONE
+  A_ACTIVE == "removed outside the app" ==> A_NONE
+
+  click A_NONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L16" "No Live Activity. currentActivity is the first entry of Activity.activities for TaskActivityAttributes." _blank
+  click A_ACTIVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L28" "ContentState: taskName = the task title, sessionState .active, timerEnd = sessionEnd, nextTaskName nil. Attributes: userName, totalTasksToday 1, currentTaskIndex 1. staleDate = sessionEnd. pushType nil, so only this app and its widget extension can change it. Shown as FOCUSING with a countdown." _blank
+  click A_ALERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L33" "Same content with sessionState .stayFocusedAlert: the red STAY FOCUSED banner, 20 minutes in, for 10 seconds. Only the activity changes; the coordinator's own sessionState stays .active." _blank
+  click A_TIMEUP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L37" "Never written. displayState in TaskLiveActivityView returns .timeUp when context.isStale is true and the stored state is .active or .stayFocusedAlert. Shows TIME'S UP, hides the countdown, and offers Dismiss on the lock screen and in the expanded island." _blank
+  click A_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/TaskActivityAttributes.swift#L32" "The final content handed to Activity.end: taskName All done plus the user name, sessionState .complete, timerEnd now, staleDate now, dismissalPolicy .immediate. The activity is removed in the same call." _blank
+    </script>
+    <figcaption>Three written states and one derived. The app ends the activity through <code>.complete</code>; the widget's Dismiss ends it with no final content.</figcaption>
+  </figure>
+
+  <h3>Triggers</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Move</th><th class="k">Main function</th><th>Every trigger</th><th>What it does</th></tr>
+    <tr><td class="k">none → .active</td><td class="k"><a data-s="LAM#L21">startActivity</a></td><td><a data-s="SC#L136">SessionCoordinator.startSession</a></td><td>Returns without an activity when <code>areActivitiesEnabled</code> is false. Otherwise <code>Activity.request</code> with <code>staleDate = taskEnds</code> and <code>pushType: nil</code>. A thrown error is printed by the caller.</td></tr>
+    <tr><td class="k">.active → .stayFocusedAlert</td><td class="k"><a data-s="LAM#L60">showStayFocusedAlert</a></td><td><a data-s="SC#L407">triggerFocusAlert</a>, run by <code>focusAlertTimer</code> 20 minutes after the start. Scheduled only when the session is longer than 20 min 10 s (<a data-s="SC#L151">L151</a>); rescheduled by <a data-s="SC#L313">restoreSession</a> if its moment is still ahead.</td><td><code>Activity.update</code> with the same <code>timerEnd</code> and stale date, so the countdown does not jump.</td></tr>
+    <tr><td class="k">.stayFocusedAlert → .active</td><td class="k"><a data-s="LAM#L73">revertToActive</a></td><td><a data-s="SC#L418">revertFocusAlert</a>, 10 s after the alert</td><td><code>Activity.update</code> back to <code>.active</code>.</td></tr>
+    <tr><td class="k">.active or .stayFocusedAlert → .timeUp</td><td class="k"><a data-s="TLV#L352">displayState</a></td><td>No call. The stale date written at <a data-s="LAM#L48">LiveActivityManager L48</a> passes and the system re-renders the activity with <code>isStale</code>. This happens whenever the app has not ended the activity by the end instant: it was suspended or its process was gone.</td><td>Display only. The stored content is unchanged.</td></tr>
+    <tr><td class="k">any → .complete → none</td><td class="k"><a data-s="LAM#L88">endActivity</a></td><td><a data-s="SC#L382">finishSession</a>, <a data-s="SC#L338">cancelSession</a>, <a data-s="SC#L263">syncIfActivityDismissed</a>. Callers of those are under <a href="#sec-end">Ending the Live Activity</a>.</td><td>Ends every activity of this type, not only the first, with the <code>.complete</code> content and <code>.immediate</code> dismissal.</td></tr>
+    <tr><td class="k">.timeUp → none</td><td class="k"><a data-s="WFI#L35">EndFocusSessionIntent.perform</a></td><td>The Dismiss buttons in <a data-s="TLV#L246">lockScreenView</a> and <a data-s="TLV#L322">expandedBottom</a>, drawn only in <code>.timeUp</code>. Runs in the widget extension.</td><td><code>activity.end(nil, dismissalPolicy: .immediate)</code> for every activity, removes the key, reloads the widget timeline, posts a Darwin notification nothing observes.</td></tr>
+    <tr><td class="k">.active → none</td><td class="k">removed outside the app</td><td>No app code. The app only detects it: <a data-s="SC#L277">syncIfActivityDismissed L277</a> and <a data-s="SC#L259">L259</a> read <code>Activity.activities.isEmpty</code>.</td><td>On the next scene-active the coordinator tears its session down.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-process">
+  <h2>Suspended, killed, relaunched</h2>
+  <p class="intro">The end timer and the alert timers are <code>DispatchWorkItem</code>s on the main queue (<a data-s="SC#L435">scheduleWork</a>). They exist only in the app process, so what happens at the end instant depends on whether that process is running.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Situation</th><th>What runs</th><th>Coordinator</th><th>Key</th><th>Live Activity</th></tr>
+    <tr><td class="k">App running at the end instant</td><td><a data-s="SC#L371">handleTimerExpired</a> → <code>finishSession</code></td><td><code>.complete</code> for 3 s, then not active</td><td>Removed</td><td>Ended with <code>.complete</code></td></tr>
+    <tr><td class="k">Suspended, before the end</td><td>Nothing</td><td>Unchanged; work items wait</td><td>Unchanged</td><td>Counts down by itself from <code>timerEnd</code></td></tr>
+    <tr><td class="k">End instant passes with the app suspended or gone</td><td>No app code. The widget timeline refreshes at the end instant (<a data-s="NW#L674">sessionExpiry</a>) and <a data-s="NW#L598">fetchTimelineState</a> drops the key.</td><td>Unchanged if suspended; none if gone</td><td>Removed by the widget on its refresh</td><td>Stale: TIME'S UP with Dismiss</td></tr>
+    <tr><td class="k">Resumed after the end, key still present</td><td><a data-s="SC#L279">syncIfActivityDismissed</a> → <code>finishSession</code></td><td><code>.complete</code> for 3 s, then not active</td><td>Removed</td><td>Ended with <code>.complete</code>, alarm plays</td></tr>
+    <tr><td class="k">Resumed after the widget removed the key</td><td><a data-s="SC#L282">syncIfActivityDismissed</a> teardown</td><td>Reset, <code>.sessionEnded</code> reevaluate</td><td>Already gone</td><td>Not ended by this call</td></tr>
+    <tr><td class="k">Process killed mid-session</td><td>Nothing</td><td>Lost with the process</td><td>Stays</td><td>Stays; goes stale at the end instant</td></tr>
+    <tr><td class="k">Relaunched before the end</td><td><a data-s="CV#L153">ContentView .task</a> → <code>syncIfActivityDismissed</code> → <a data-s="SC#L303">restoreSession</a></td><td>Rebuilt from the key, timers rescheduled</td><td>Unchanged</td><td>Unchanged</td></tr>
+    <tr><td class="k">Relaunched after the end</td><td><code>syncIfActivityDismissed</code> → <a data-s="SC#L260">quiet end</a></td><td>Stays not active</td><td>Removed if still there</td><td>Ended with <code>.complete</code>, no alarm</td></tr>
+    <tr><td class="k">Never reopened after the end</td><td>Only the widget extension</td><td>None</td><td>Removed on the widget refresh</td><td>TIME'S UP until Dismiss runs <a data-s="WFI#L35">EndFocusSessionIntent</a></td></tr>
+  </table></div>
+</section>
+
+<section id="sec-start">
+  <h2>Start and update <span class="src">session-lifecycle-start.mmd</span></h2>
+  <p class="intro">From a start request to the Live Activity, and the two timers that update or end it. <code>startSession</code> does more than is drawn; its full order is in the table under the picture.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: starting a session, requesting the Live Activity, and the in-process timers that update and end it. startSession's other calls (cancelSession, lastFocusSessionStartedAt, TimelineReflow, NudgeGoal, NudgeArbiter) are a table on the page.
+flowchart TB
+  U_PICK["TasksTabView.swift<br/>attemptStartSession"]
+  U_NOTIF["NudgeNotificationService.swift<br/>startSession(for:)"]
+  C_START["SessionCoordinator.swift<br/>startSession"]
+  C_PUBLISH["SessionCoordinator.swift<br/>publishSessionState"]
+  K_STATE[("activeSessionState<br/>SessionCoordinator.swift")]
+  L_START["LiveActivityManager.swift<br/>startActivity"]
+  AK_REQ["ActivityKit<br/>Activity.request"]
+  C_SCHED["SessionCoordinator.swift<br/>scheduleWork"]
+  C_EXPIRE["SessionCoordinator.swift<br/>handleTimerExpired"]
+  C_FINISH["SessionCoordinator.swift<br/>finishSession"]
+  C_ALERT["SessionCoordinator.swift<br/>triggerFocusAlert"]
+  L_ALERT["LiveActivityManager.swift<br/>showStayFocusedAlert"]
+  C_REVERT["SessionCoordinator.swift<br/>revertFocusAlert"]
+  L_REVERT["LiveActivityManager.swift<br/>revertToActive"]
+  AK_UPD["ActivityKit<br/>Activity.update"]
+
+  U_PICK --> C_START
+  U_NOTIF --> C_START
+  C_START --> C_PUBLISH
+  C_PUBLISH --> K_STATE
+  C_START --> L_START
+  L_START --> AK_REQ
+  C_START --> C_SCHED
+  C_SCHED -- "at sessionEnd" --> C_EXPIRE
+  C_EXPIRE --> C_FINISH
+  C_SCHED -- "after 20 min" --> C_ALERT
+  C_ALERT --> L_ALERT
+  C_ALERT -- "10 s later" --> C_REVERT
+  C_REVERT --> L_REVERT
+  L_ALERT --> AK_UPD
+  L_REVERT --> AK_UPD
+
+  click U_PICK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2411" "attemptStartSession(_ task). Called from the session picker sheet and the idle confirmation sheet. If TimelineReflow.anchoredConflict finds an anchored item in the way it sets sessionStartConflict for the Start anyway alert instead; otherwise it calls startSession(task:userName:) with the profile name." _blank
+  click U_NOTIF href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L368" "startSession(for: taskID, context:). Runs on the Start session notification action. Returns when taskID is nil, when a session is already active, or when the task no longer exists. userName is the profile name or an empty string." _blank
+  click C_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "startSession(task:userName:). minutes = task.estimatedMinutes, 60 when nil. sessionEnd = now + minutes. Full order of its calls is in the table under the picture." _blank
+  click C_PUBLISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L462" "publishSessionState(isActive: true, currentTaskID: task.id, timerEndDate: sessionEnd). Writes the dictionary, then WidgetCenter.reloadTimelines(ofKind: NudgeTaskWidget) so the widget shows the timer at once." _blank
+  click K_STATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L485" "App Group group.com.deblaser.nudge, key activeSessionState. isActive true, isPaused false, timerEndDate (epoch seconds), currentTaskID (UUID string), startedAt (epoch seconds, read only by the app's restore)." _blank
+  click L_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L21" "startActivity(userName:taskTitle:taskEnds:). Returns without doing anything when ActivityAuthorizationInfo().areActivitiesEnabled is false. Attributes: userName, totalTasksToday 1, currentTaskIndex 1. State: taskName, .active, timerEnd = taskEnds, nextTaskName nil. A thrown error is caught and printed by startSession." _blank
+  click AK_REQ href "https://developer.apple.com/documentation/activitykit/activity" "Activity.request(attributes:content:pushType: nil). content.staleDate = taskEnds, so the system marks the activity stale at the session's end instant even if the app is not running." _blank
+  click C_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L435" "scheduleWork(after:block:). A DispatchWorkItem on DispatchQueue.main.asyncAfter. It lives in the app process only. sessionEndTimer is scheduled for the full duration; focusAlertTimer for 20 minutes, only when the session is longer than 20 min 10 s. cancelAllTimers cancels both and the revert." _blank
+  click C_EXPIRE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L371" "handleTimerExpired(). playAlarmSound (system sound 1005), then finishSession, which plays it again." _blank
+  click C_FINISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L376" "finishSession(). Ends the Live Activity; see Ending the Live Activity." _blank
+  click C_ALERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L407" "triggerFocusAlert(). Runs only when isSessionActive, sessionState is .active and currentTask is set. Schedules focusAlertRevertTimer for focusAlertDuration, 10 s." _blank
+  click L_ALERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L60" "showStayFocusedAlert(taskTitle:taskEnds:). State .stayFocusedAlert with the same timerEnd and staleDate." _blank
+  click C_REVERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L418" "revertFocusAlert(). Runs only when isSessionActive and currentTask is set." _blank
+  click L_REVERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L73" "revertToActive(taskTitle:taskEnds:). State .active with the same timerEnd and staleDate." _blank
+  click AK_UPD href "https://developer.apple.com/documentation/activitykit/activity" "currentActivity?.update(ActivityContent(state:staleDate: taskEnds)). currentActivity is the first activity of this type; with none, the call does nothing." _blank
+    </script>
+    <figcaption>The only place an activity is requested is <code>startActivity</code>; the only updates are the 20-minute alert and its revert.</figcaption>
+  </figure>
+
+  <h3>Who calls startSession</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Caller</th><th>When</th><th>Guard</th></tr>
+    <tr><td class="k"><a data-s="TTV#L2411">TasksTabView.attemptStartSession</a></td><td>A task picked in the session picker (<a data-s="TTV#L898">L898</a>) or confirmed in the idle sheet (<a data-s="TTV#L910">L910</a>). The picker opens from the Start Session button (<a data-s="TTV#L2422">L2422</a>).</td><td>The button returns when a session is active. An anchored conflict routes to the alert instead.</td></tr>
+    <tr><td class="k"><a data-s="TTV#L1840">TasksTabView Start anyway</a></td><td>The conflict alert's primary button</td><td>None. This alert is attached inside the <code>isSessionActive</code> branch of <code>startSessionButton</code> (<a data-s="TTV#L1835">L1835</a>).</td></tr>
+    <tr><td class="k"><a data-s="NNS#L368">NudgeNotificationService.startSession(for:)</a></td><td>Start session action on a delivered nudge (<a data-s="NNS#L200">L200</a>)</td><td>No active session, task exists</td></tr>
+    <tr><td class="k"><a data-s="CV#L85">ContentView.onOpenURL</a></td><td><code>nudge://start-session</code>; no code emits this URL</td><td>No active session, a profile, an open task</td></tr>
+  </table></div>
+
+  <h3>startSession in order</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Line</th><th>Call or write</th><th>Effect</th></tr>
+    <tr><td class="k"><a data-s="SC#L72">L72</a></td><td><code>cancelSession()</code></td><td>Ends a session already running in memory. Returns at once when <code>isSessionActive</code> is false, so a Live Activity left over from a dead process is not ended here.</td></tr>
+    <tr><td class="k"><a data-s="SC#L74">L74</a></td><td><code>currentTask</code>, <code>sessionState = .active</code>, <code>isSessionActive = true</code>, <code>sessionStartedAt</code>, <code>sessionCountByTaskID</code></td><td>The in-memory session</td></tr>
+    <tr><td class="k"><a data-s="SC#L82">L82</a></td><td>App Group <code>nudge.lastFocusSessionStartedAt = now</code></td><td>Read by the arbiter's cooldown gate, the idle builder, the outcome classifier and the Screen Time snapshot. Never cleared.</td></tr>
+    <tr><td class="k"><a data-s="SC#L91">L91</a></td><td><a data-s="TR#L117">TimelineReflow.sessionStarted</a></td><td>Moves the task's timeline block to now</td></tr>
+    <tr><td class="k"><a data-s="SC#L103">L103</a></td><td><code>sessionEnd = now + minutes × 60</code></td><td>Set before the reevaluate so the arbiter's session gate sees the real end</td></tr>
+    <tr><td class="k"><a data-s="SC#L113">L113</a></td><td><a data-s="NG#L48">NudgeGoal.recordActivity</a></td><td>Counts the start as work on the task's goal</td></tr>
+    <tr><td class="k"><a data-s="SC#L119">L119</a></td><td><code>NudgeArbiter.reevaluate(.sessionStarted)</code></td><td>Drops discretionary nudges that would land inside the session (<a data-s="ARB#L2824">firesDuringActiveSession</a>)</td></tr>
+    <tr><td class="k"><a data-s="SC#L129">L129</a></td><td><code>publishSessionState(isActive: true, …)</code></td><td>Writes the key, reloads the widget timeline</td></tr>
+    <tr><td class="k"><a data-s="SC#L136">L136</a></td><td><code>activityManager.startActivity</code></td><td>Requests the Live Activity; an error is printed</td></tr>
+    <tr><td class="k"><a data-s="SC#L145">L145</a></td><td><code>sessionEndTimer = scheduleWork(after: duration)</code></td><td><code>handleTimerExpired</code> at the end instant</td></tr>
+    <tr><td class="k"><a data-s="SC#L151">L151</a></td><td><code>focusAlertTimer = scheduleWork(after: 20 min)</code></td><td>Only when the session is longer than 20 min 10 s</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-end">
+  <h2>Ending the Live Activity <span class="src">session-lifecycle-end.mmd</span></h2>
+  <p class="intro">Two call sites end an activity: <code>LiveActivityManager.endActivity</code> in the app and <code>EndFocusSessionIntent.perform</code> in the widget extension. Every route to them is drawn; the cases for each box are in the table.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: every path that ends the Live Activity. Thick border = Activity.end is called here. The app-side paths run in the Nudge process; displayState and EndFocusSessionIntent.perform run in NudgeWidgetExtension. Arrows are unlabeled where several enter one box; the cases are a table on the page.
+flowchart TB
+  E_CARD["TasksTabView.swift<br/>startSessionButton"]
+  E_TOGGLE["TasksTabView.swift<br/>toggleCompletion"]
+  E_TIMER["SessionCoordinator.swift<br/>handleTimerExpired"]
+  E_SYNC["SessionCoordinator.swift<br/>syncIfActivityDismissed"]
+  E_START["SessionCoordinator.swift<br/>startSession"]
+  E_COMPLETE["SessionCoordinator.swift<br/>completeCurrentTask"]
+  E_FINISH["SessionCoordinator.swift<br/>finishSession"]
+  E_CANCEL["SessionCoordinator.swift<br/>cancelSession"]
+  E_STOP["LiveActivityManager.swift<br/>endActivity"]
+  W_VIEW["TaskLiveActivityView.swift<br/>displayState"]
+  W_STOP["NudgeWidget/FocusSessionIntents.swift<br/>EndFocusSessionIntent.perform"]
+  AK_STOP["ActivityKit<br/>Activity.end"]
+
+  E_CARD --> E_COMPLETE
+  E_CARD --> E_CANCEL
+  E_TOGGLE --> E_COMPLETE
+  E_COMPLETE --> E_FINISH
+  E_TIMER --> E_FINISH
+  E_SYNC --> E_FINISH
+  E_SYNC --> E_STOP
+  E_START --> E_CANCEL
+  E_FINISH --> E_STOP
+  E_CANCEL --> E_STOP
+  E_STOP --> AK_STOP
+  W_VIEW -- "Dismiss" --> W_STOP
+  W_STOP --> AK_STOP
+
+  classDef ender stroke-width:3px
+  class E_STOP,W_STOP ender
+
+  click E_CARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1780" "The session card in the Tasks tab. Checkmark (only while sessionState is .active) calls completeCurrentTask. Stop opens the Cancel Session alert; its Cancel session button calls cancelSession and reloads the widget timeline." _blank
+  click E_TOGGLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1891" "toggleCompletion(for:). Calls completeCurrentTask only when a session is active, the task was just checked, and it is the session's task. Completing any other task leaves the session running." _blank
+  click E_TIMER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L371" "handleTimerExpired(). Run by sessionEndTimer at sessionEnd, scheduled by startSession or restoreSession. Plays the alarm, then finishSession. Only fires while the app process is alive and not suspended." _blank
+  click E_SYNC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L233" "syncIfActivityDismissed(). Called at launch and on every scene-active. With a session in memory, the end passed and the key still present it calls finishSession. With no session in memory and a key or an activity left over that cannot be restored, it removes the key and calls endActivity directly, with no alarm." _blank
+  click E_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L72" "startSession begins with cancelSession(), which ends the running session's activity before a new one is requested. cancelSession returns at once when no session is active in memory." _blank
+  click E_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L170" "completeCurrentTask(). Returns when no session is active. Calls finishSession, then records the elapsed minutes in DurationModel, stamps actualMinutes and sessionCount on the task's newest NudgeOutcome, and reevaluates with .taskCompleted." _blank
+  click E_FINISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L376" "finishSession(). cancelAllTimers, sessionState = .complete, alarm sound 1005, endActivity, sessionStartedAt = nil, publishSessionState(isActive: false). Three seconds later: isSessionActive = false, currentTask = nil, sessionState = .active, reevaluateAfterSessionEnd." _blank
+  click E_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L328" "cancelSession(). Returns when no session is active. cancelAllTimers, endActivity, reset of every field, publishSessionState(isActive: false), reevaluateAfterSessionEnd. No alarm." _blank
+  click E_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L88" "endActivity(). For every activity of TaskActivityAttributes: end with final state taskName All done plus the user name, sessionState .complete, timerEnd now, staleDate now, dismissalPolicy .immediate. Does nothing when there is none." _blank
+  click W_VIEW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/TaskLiveActivityView.swift#L352" "displayState(context). Returns .timeUp when the activity is stale and its stored state is .active or .stayFocusedAlert. Only that state draws the Dismiss button, on the lock screen (L246) and in the expanded island (L322)." _blank
+  click W_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/FocusSessionIntents.swift#L35" "EndFocusSessionIntent.perform(), widget target. activity.end(nil, dismissalPolicy: .immediate) for every activity, removes activeSessionState, reloads the NudgeTaskWidget timeline, posts the Darwin notification com.nudge.sessionStateChanged, which nothing observes." _blank
+  click AK_STOP href "https://developer.apple.com/documentation/activitykit/activity" "Activity.end(_:dismissalPolicy:). Called from two places only: LiveActivityManager.endActivity (L99) and the widget target's EndFocusSessionIntent.perform (L38)." _blank
+    </script>
+    <figcaption>Every app-side route converges on <code>endActivity</code>; the widget has one route, Dismiss, which exists only after the activity has gone stale.</figcaption>
+  </figure>
+
+  <h3>Every path</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Trigger</th><th>Route to Activity.end</th><th class="k">Process</th><th>Alarm</th><th>Key</th><th>Arbiter</th></tr>
+    <tr><td class="k">End timer fires</td><td><a data-s="SC#L371">handleTimerExpired</a> → <a data-s="SC#L376">finishSession</a> → <a data-s="LAM#L88">endActivity</a></td><td class="k">app</td><td>Twice: L372 and L379</td><td>Removed</td><td><code>.sessionEnded</code> after 3 s</td></tr>
+    <tr><td class="k">Checkmark on the session card</td><td><a data-s="TTV#L1805">startSessionButton</a> → <a data-s="SC#L170">completeCurrentTask</a> → finishSession → endActivity</td><td class="k">app</td><td>Once</td><td>Removed</td><td><code>.taskCompleted</code> now, <code>.sessionEnded</code> after 3 s</td></tr>
+    <tr><td class="k">Task checkbox on the session's task</td><td><a data-s="TTV#L1963">toggleCompletion</a> → completeCurrentTask → finishSession → endActivity</td><td class="k">app</td><td>Once</td><td>Removed</td><td>Same as above</td></tr>
+    <tr><td class="k">Cancel session alert</td><td><a data-s="TTV#L1848">startSessionButton</a> → <a data-s="SC#L328">cancelSession</a> → endActivity</td><td class="k">app</td><td>No</td><td>Removed</td><td><code>.sessionEnded</code> now</td></tr>
+    <tr><td class="k">Another session starts</td><td><a data-s="SC#L72">startSession</a> → cancelSession → endActivity, only when a session is active in memory</td><td class="k">app</td><td>No</td><td>Removed, then rewritten</td><td><code>.sessionEnded</code>, then <code>.sessionStarted</code></td></tr>
+    <tr><td class="k">Resumed after the end instant</td><td><a data-s="SC#L279">syncIfActivityDismissed</a> → finishSession → endActivity, when the key is still present</td><td class="k">app</td><td>Once</td><td>Removed</td><td><code>.sessionEnded</code> after 3 s</td></tr>
+    <tr><td class="k">Launch or foreground, no session in memory</td><td><a data-s="SC#L263">syncIfActivityDismissed</a> → endActivity, when a key or an activity is left and cannot be restored</td><td class="k">app</td><td>No</td><td>Removed at L261</td><td>None from this branch</td></tr>
+    <tr><td class="k">Dismiss on TIME'S UP</td><td><a data-s="TLV#L246">TaskLiveActivityView</a> → <a data-s="WFI#L35">EndFocusSessionIntent.perform</a> → <code>activity.end(nil)</code></td><td class="k">widget</td><td>No</td><td>Removed at L41</td><td>None; the app reconciles on its next foreground</td></tr>
+  </table></div>
+
+  <h3>Ends the session but not the Live Activity</h3>
+  <ul class="note">
+    <li><a data-s="CTI#L82">CompleteTaskIntent.perform</a> (widget checkbox on the session's task) removes the key and calls nothing in ActivityKit.</li>
+    <li><a data-s="NW#L598">NudgeTaskProvider.fetchTimelineState</a> removes the key once the stored end has passed.</li>
+    <li>The teardown branch of <a data-s="SC#L282">syncIfActivityDismissed</a> (session in memory, key or activity gone) resets the coordinator and does not call <code>endActivity</code>.</li>
+    <li>In each case an activity that is still up is ended later by the next <code>syncIfActivityDismissed</code> call (its <code>leftoverActivity</code> check at <a data-s="SC#L259">L259</a>), by Dismiss once it is stale, or by the <code>endActivity</code> of a later session, which ends every activity of the type.</li>
+  </ul>
+</section>
+
+<section id="sec-sync">
+  <h2>Launch and foreground <span class="src">session-lifecycle-sync.mmd</span></h2>
+  <p class="intro"><code>syncIfActivityDismissed</code> is the only code that reconciles the three stores. It runs at launch and on every scene-active, before the arbiter.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: syncIfActivityDismissed, the reconciliation run at launch and on every scene-active. Diamonds are the values it branches on, in the order the code checks them. When no branch applies it returns without changing anything.
+flowchart TB
+  T_LAUNCH["ContentView.swift<br/>.task(id: notificationToken)"]
+  T_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  K_STATE[("activeSessionState<br/>SessionCoordinator.swift")]
+  Y_SYNC["SessionCoordinator.swift<br/>syncIfActivityDismissed"]
+  Y_ACTIVE{"SessionCoordinator.swift<br/>isSessionActive"}
+  Y_PUBEND{"SessionCoordinator.swift<br/>publishedEnd"}
+  Y_RESTORE["SessionCoordinator.swift<br/>restoreSession"]
+  Y_SCHED["SessionCoordinator.swift<br/>scheduleWork"]
+  Y_LEFT{"SessionCoordinator.swift<br/>leftoverActivity"}
+  Y_STOP["LiveActivityManager.swift<br/>endActivity"]
+  Y_ENDP{"SessionCoordinator.swift<br/>endPassed"}
+  Y_FINISH["SessionCoordinator.swift<br/>finishSession"]
+  Y_WID{"SessionCoordinator.swift<br/>widgetEnded"}
+  Y_PUBLISH["SessionCoordinator.swift<br/>publishSessionState"]
+  Y_REEVAL["SessionCoordinator.swift<br/>reevaluateAfterSessionEnd"]
+
+  T_LAUNCH --> Y_SYNC
+  T_SCENE --> Y_SYNC
+  K_STATE --> Y_SYNC
+  Y_SYNC --> Y_ACTIVE
+  Y_ACTIVE -- "false" --> Y_PUBEND
+  Y_PUBEND -- "future, task open" --> Y_RESTORE
+  Y_RESTORE --> Y_SCHED
+  Y_PUBEND -- "otherwise" --> Y_LEFT
+  Y_LEFT -- "key or activity left" --> Y_STOP
+  Y_ACTIVE -- "true" --> Y_ENDP
+  Y_ENDP -- "passed, key present" --> Y_FINISH
+  Y_ENDP -- "otherwise" --> Y_WID
+  Y_WID -- "key or activity gone" --> Y_PUBLISH
+  Y_WID --> Y_REEVAL
+
+  classDef ender stroke-width:3px
+  class Y_STOP ender
+
+  click T_LAUNCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L153" "Launch, after a 500 ms debounce and the day sweeps, before NudgeArbiter.reevaluate(.appLaunch). Also re-runs whenever a notification setting in the token changes." _blank
+  click T_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L181" "Every change of scenePhase to .active, first thing, before the sweeps and the scene-active reevaluate." _blank
+  click K_STATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L235" "published = appGroupDefaults.dictionary(forKey: activeSessionState). Reads timerEndDate, currentTaskID and startedAt." _blank
+  click Y_SYNC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L233" "syncIfActivityDismissed(). Reads the key, the coordinator's own fields and Activity.activities." _blank
+  click Y_ACTIVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L236" "false: this process holds no session, either a fresh launch or nothing was running. true: a session is in memory, so the process survived." _blank
+  click Y_PUBEND href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L248" "publishedEnd = the key's timerEndDate. Restore needs all of: publishedEnd later than now, a currentTaskID that parses, and fetchTask finding that task with isComplete false." _blank
+  click Y_RESTORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L303" "restoreSession(task:ends:startedAt:). currentTask, sessionState .active, isSessionActive true, sessionEnd = ends, sessionStartedAt from the key, session count at least 1. The key and the Live Activity are left as they are." _blank
+  click Y_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L435" "sessionEndTimer after max(1, time left) to handleTimerExpired. focusAlertTimer at startedAt + 20 min when that is still ahead and more than 10 s before the end." _blank
+  click Y_LEFT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L259" "leftoverActivity = Activity.activities is not empty. When the key exists or an activity is left: removes the key, calls endActivity, reloads the NudgeTaskWidget timeline. Quiet: no alarm. With neither, returns." _blank
+  click Y_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L88" "endActivity(). Ends every activity with the .complete content and .immediate dismissal." _blank
+  click Y_ENDP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L275" "endPassed = sessionEnd is set and not later than now. With the key still present the session simply ran out while the app was suspended." _blank
+  click Y_FINISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L376" "finishSession(). The normal end: alarm, endActivity, key removed, 3-second completion card." _blank
+  click Y_WID href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L276" "widgetEnded = the key is absent. Teardown runs when the key is absent, or when the end has not passed and Activity.activities is empty. Otherwise the function returns: everything agrees. Teardown: cancelAllTimers, isSessionActive false, sessionState .active, currentTask nil, sessionEnd .distantPast, sessionStartedAt nil. It does not call endActivity." _blank
+  click Y_PUBLISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L462" "publishSessionState(isActive: false, …). Removes the key if it is still there and reloads the widget timeline." _blank
+  click Y_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L358" "reevaluateAfterSessionEnd(). NudgeArbiter.reevaluate(reason: .sessionEnded) so the active-session gate stops rejecting candidates." _blank
+    </script>
+    <figcaption>Left branch: no session in this process, so restore it or end what is left. Right branch: a session is in memory, so finish it or tear it down to match the outside.</figcaption>
+  </figure>
+
+  <h3>Branches</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Session in memory</th><th>Condition</th><th>Result</th><th>Live Activity</th></tr>
+    <tr><td class="k">No</td><td>Stored end in the future, task found and open (<a data-s="SC#L250">L250</a>)</td><td><code>restoreSession</code></td><td>Untouched</td></tr>
+    <tr><td class="k">No</td><td>Otherwise, and a key or an activity exists (<a data-s="SC#L260">L260</a>)</td><td>Key removed, widget reloaded</td><td>Ended, no alarm</td></tr>
+    <tr><td class="k">No</td><td>No key and no activity</td><td>Returns</td><td>None</td></tr>
+    <tr><td class="k">Yes</td><td>Key present, end not passed, activity exists (<a data-s="SC#L277">L277</a>)</td><td>Returns</td><td>Untouched</td></tr>
+    <tr><td class="k">Yes</td><td>End passed and key present (<a data-s="SC#L278">L278</a>)</td><td><code>finishSession</code></td><td>Ended, alarm</td></tr>
+    <tr><td class="k">Yes</td><td>Key absent, or end not passed and no activity (<a data-s="SC#L282">L282</a>)</td><td>Timers cancelled, fields reset, <code>.sessionEnded</code> reevaluate</td><td>Not ended by this call</td></tr>
+  </table></div>
+  <p class="reads"><b>reads:</b> <code>activeSessionState</code> (timerEndDate, currentTaskID, startedAt), <code>isSessionActive</code>, <code>sessionEnd</code>, <code>Activity&lt;TaskActivityAttributes&gt;.activities</code>, the <code>NudgeTask</code> row through <code>fetchTask</code>. Callers: <a data-s="CV#L153">ContentView L153</a> (launch) and <a data-s="CV#L181">L181</a> (scene-active).</p>
+</section>
+
+<section id="sec-widget">
+  <h2>Widget extension <span class="src">session-lifecycle-widget.mmd</span></h2>
+  <p class="intro">What the <code>NudgeWidgetExtension</code> process reads and writes. It shares the key and ActivityKit with the app and has no access to the coordinator.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: the NudgeWidgetExtension process. It reads and removes the activeSessionState key, renders the Live Activity, and can end it from Dismiss. The last two boxes are in the app, reached by URL or on the next foreground. Arrows into the key are removals; the cases are a table on the page.
+flowchart TB
+  K_STATE[("activeSessionState<br/>SessionCoordinator.swift")]
+  P_FETCH["NudgeWidget.swift<br/>fetchTimelineState"]
+  P_ENTRY["NudgeWidget.swift<br/>NudgeTaskEntry"]
+  V_ROW["NudgeWidget.swift<br/>WidgetTaskRow"]
+  V_FOOT["NudgeWidget.swift<br/>sessionButtonRow"]
+  I_COMPLETE["CompleteTaskIntent.swift<br/>perform"]
+  AK_CTX["ActivityKit<br/>ActivityViewContext"]
+  V_LA["TaskLiveActivityView.swift<br/>displayState"]
+  I_STOP["NudgeWidget/FocusSessionIntents.swift<br/>EndFocusSessionIntent.perform"]
+  AK_STOP["ActivityKit<br/>Activity.end"]
+  W_RELOAD["WidgetKit<br/>WidgetCenter.reloadTimelines"]
+  A_URL["ContentView.swift<br/>onOpenURL"]
+  A_SYNC["SessionCoordinator.swift<br/>syncIfActivityDismissed"]
+
+  K_STATE --> P_FETCH
+  P_FETCH --> K_STATE
+  P_FETCH --> P_ENTRY
+  P_ENTRY --> V_ROW
+  P_ENTRY --> V_FOOT
+  V_ROW -- "checkbox" --> I_COMPLETE
+  I_COMPLETE --> K_STATE
+  I_COMPLETE --> W_RELOAD
+  V_FOOT --> A_URL
+  AK_CTX --> V_LA
+  V_LA -- "Dismiss" --> I_STOP
+  V_LA --> A_URL
+  I_STOP --> AK_STOP
+  I_STOP --> K_STATE
+  I_STOP --> W_RELOAD
+  W_RELOAD --> P_FETCH
+  K_STATE --> A_SYNC
+
+  classDef ender stroke-width:3px
+  class I_STOP ender
+
+  click K_STATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L485" "App Group group.com.deblaser.nudge, key activeSessionState. Written only by the app (publishSessionState). The widget extension reads it and can only remove it." _blank
+  click P_FETCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L583" "NudgeTaskProvider.fetchTimelineState(), run by getTimeline and getSnapshot. Reads isActive, isPaused, pausedTimeRemaining, timerEndDate, currentTaskID. When isActive is true, not paused, and timerEndDate has passed, it removes the key and treats the session as inactive (L598). While a session is active the next timeline refresh is set to the end instant (L674)." _blank
+  click P_ENTRY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L650" "NudgeTaskEntry: isSessionActive, isSessionPaused, sessionTimerEndDate, sessionPausedRemaining, activeTaskID." _blank
+  click V_ROW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L1079" "WidgetTaskRow. The row whose task is the session's shows a bolt and a countdown to sessionTimerEndDate. Its checkbox is Button(intent: CompleteTaskIntent(taskID:))." _blank
+  click V_FOOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L975" "sessionButtonRow. Active: a countdown plus a pause capsule and a stop capsule. Inactive: Start Session. All three are plain Links to nudge://focus-session, so none of them starts, pauses or ends anything." _blank
+  click I_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "CompleteTaskIntent.perform(). Marks the task complete in SwiftData. If activeSessionState names this task it removes the key (L82). It does not touch ActivityKit. Also cancels the task's pending nudges, sets nudge.arb.widgetMutated, reloads the timeline and posts the unobserved Darwin notification." _blank
+  click AK_CTX href "https://developer.apple.com/documentation/widgetkit/activityviewcontext" "context.state (taskName, sessionState, timerEnd, nextTaskName), context.attributes (userName, totalTasksToday, currentTaskIndex) and context.isStale, which turns true at the staleDate the app set." _blank
+  click V_LA href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/TaskLiveActivityView.swift#L352" "TaskLiveActivityView, the only Live Activity in NudgeWidgetBundle. displayState maps a stale .active or .stayFocusedAlert to .timeUp. A tap anywhere opens nudge://focus-session (widgetURL). Dismiss is drawn only in .timeUp." _blank
+  click I_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/FocusSessionIntents.swift#L35" "EndFocusSessionIntent.perform(), widget target. Ends every activity with no final content and .immediate dismissal, removes the key, reloads the timeline, posts the unobserved Darwin notification." _blank
+  click AK_STOP href "https://developer.apple.com/documentation/activitykit/activity" "activity.end(nil, dismissalPolicy: .immediate) at NudgeWidget/FocusSessionIntents.swift L38." _blank
+  click W_RELOAD href "https://developer.apple.com/documentation/widgetkit/widgetcenter" "WidgetCenter.shared.reloadTimelines(ofKind: NudgeTaskWidget). WidgetKit then calls NudgeTaskProvider.getTimeline. The app calls the same thing from publishSessionState." _blank
+  click A_URL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L68" "onOpenURL. nudge://focus-session parses to DeepLink.focusSession and only sets deepLinkTab = .tasks. Opening the app makes the scene active, which runs syncIfActivityDismissed." _blank
+  click A_SYNC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L233" "The app learns what the widget did only here, by reading the key and Activity.activities on its next launch or scene-active." _blank
+    </script>
+    <figcaption>The widget can remove the key from three places and end the activity from one. The app finds out on its next foreground.</figcaption>
+  </figure>
+
+  <h3>Who removes the key</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Where</th><th class="k">Process</th><th>When</th><th>Ends the Live Activity</th></tr>
+    <tr><td class="k"><a data-s="SC#L487">publishSessionState(isActive: false)</a></td><td class="k">app</td><td>finishSession, cancelSession, the teardown branch of syncIfActivityDismissed</td><td>finishSession and cancelSession do; the teardown does not</td></tr>
+    <tr><td class="k"><a data-s="SC#L261">syncIfActivityDismissed</a></td><td class="k">app</td><td>No session in memory and nothing to restore</td><td>Yes</td></tr>
+    <tr><td class="k"><a data-s="NW#L598">fetchTimelineState</a></td><td class="k">widget</td><td>A timeline build after the stored end has passed</td><td>No</td></tr>
+    <tr><td class="k"><a data-s="CTI#L84">CompleteTaskIntent.perform</a></td><td class="k">widget</td><td>The widget checkbox on the session's task</td><td>No</td></tr>
+    <tr><td class="k"><a data-s="WFI#L41">EndFocusSessionIntent.perform</a></td><td class="k">widget</td><td>Dismiss on a stale activity</td><td>Yes</td></tr>
+  </table></div>
+  <p class="reads"><b>opens the app:</b> the widget footer's three links (<a data-s="NW#L998">L998</a>, <a data-s="NW#L1008">L1008</a>, <a data-s="NW#L1025">L1025</a>) and the Live Activity's <code>widgetURL</code> (<a data-s="TLV#L81">L81</a>, <a data-s="TLV#L153">L153</a>) all use <code>nudge://focus-session</code>, which <a data-s="CV#L92">onOpenURL</a> turns into the Tasks tab and nothing else.</p>
+</section>
+
+<section id="sec-stores">
+  <h2>Where the session state lives</h2>
+  <p class="intro">Four stores. Only the first is lost with the process.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Store</th><th>Holds</th><th>Written by</th><th>Read by</th><th class="k">Survives the process</th></tr>
+    <tr><td class="k"><a data-s="SC#L26">SessionCoordinator fields</a></td><td><code>sessionState</code>, <code>isSessionActive</code>, <code>currentTask</code>, <code>sessionEnd</code>, <code>sessionStartedAt</code>, <code>sessionCountByTaskID</code>, three <code>DispatchWorkItem</code>s</td><td>startSession, restoreSession, finishSession, cancelSession, syncIfActivityDismissed</td><td>The session card and guards in <a data-s="TTV#L1782">TasksTabView</a>; <a data-s="NNS#L370">NudgeNotificationService</a>; <a data-s="CV#L74">ContentView</a>; <a data-s="ARB#L2824">NudgeArbiter.firesDuringActiveSession</a></td><td class="k">No</td></tr>
+    <tr><td class="k"><a data-s="SC#L485">activeSessionState</a></td><td><code>isActive</code>, <code>isPaused</code> (always false), <code>timerEndDate</code>, <code>currentTaskID</code>, <code>startedAt</code></td><td>publishSessionState; removed from the five places above</td><td><a data-s="SC#L235">syncIfActivityDismissed</a>, <a data-s="NW#L583">fetchTimelineState</a>, <a data-s="CTI#L82">CompleteTaskIntent</a></td><td class="k">Yes</td></tr>
+    <tr><td class="k"><a data-s="TAA#L12">Activity&lt;TaskActivityAttributes&gt;</a></td><td>Attributes <code>userName</code>, <code>totalTasksToday</code>, <code>currentTaskIndex</code>; state <code>taskName</code>, <code>sessionState</code>, <code>timerEnd</code>, <code>nextTaskName</code>; the stale date</td><td><a data-s="LAM#L51">LiveActivityManager</a> (request, two updates, end); the widget's <a data-s="WFI#L38">EndFocusSessionIntent</a> (end)</td><td><a data-s="TLV#L77">TaskLiveActivityView</a>; <a data-s="SC#L259">syncIfActivityDismissed</a> (<code>activities.isEmpty</code>)</td><td class="k">Yes</td></tr>
+    <tr><td class="k"><a data-s="NS#L51">nudge.lastFocusSessionStartedAt</a></td><td>The last start time</td><td><a data-s="SC#L82">startSession</a></td><td>The arbiter's cooldown gate and idle builder, NudgeOutcomeClassifier, DistractionMonitor</td><td class="k">Yes</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-targets">
+  <h2>Targets searched</h2>
+  <p class="intro">From <code>Nudge.xcodeproj/project.pbxproj</code>: four native targets. Two touch the session or the Live Activity.</p>
+  <ul class="note">
+    <li><strong>Nudge</strong> (app): SessionCoordinator, LiveActivityManager, the two attribute types, every start and end caller, a second set of session intents. Build setting <a data-s="PBX#L810">INFOPLIST_KEY_NSSupportsLiveActivities = YES</a>. Entitlements: app group <code>group.com.deblaser.nudge</code>.</li>
+    <li><strong>NudgeWidgetExtension</strong>: <a data-s="WB#L12">NudgeWidgetBundle</a> registers NudgeTaskWidget, NudgeCompanionWidget and TaskLiveActivityView. Also EndFocusSessionIntent, CompleteTaskIntent and the timeline provider. Compiles <a data-s="PBX#L125">Models/TaskActivityAttributes.swift</a> and <a data-s="PBX#L115">Models/FocusSessionAttributes.swift</a> from the app folder. <a data-s="WIP#L5">NudgeWidget/Info.plist</a> sets NSSupportsLiveActivities. Entitlements: the same app group.</li>
+    <li><strong>NudgeActivityMonitor</strong> and <strong>NudgeActivityReport</strong>: no ActivityKit import, no read of <code>activeSessionState</code>, no use of SessionCoordinator.</li>
+  </ul>
+</section>
+
+<section id="sec-dead">
+  <h2>Exists but has no effect</h2>
+  <p class="intro">None of these sits on a main path, so none is drawn.</p>
+  <ol class="dead">
+    <li><a data-s="WLA#L29">NudgeWidgetLiveActivity</a> is a complete Live Activity view for <a data-s="FSA#L12">FocusSessionAttributes</a> (with paused states and a progress bar). It is not in NudgeWidgetBundle, and nothing requests an activity of that type.</li>
+    <li>The Darwin notification <a data-s="WFI#L19">com.nudge.sessionStateChanged</a> is posted by the widget's EndFocusSessionIntent, PauseFocusSessionIntent and <a data-s="CTI#L102">CompleteTaskIntent</a>. No target adds an observer for it.</li>
+    <li><a data-s="WFI#L22">PauseFocusSessionIntent</a> exists in both targets with an empty body and no view references it. <code>isPaused</code> is always written false and <code>pausedTimeRemaining</code> is never written, so the widget's paused branches (<a data-s="NW#L584">L584</a>, <a data-s="NW#L989">L989</a>, <a data-s="NW#L1154">L1154</a>) never run.</li>
+    <li>The pause and stop capsules in the widget footer (<a data-s="NW#L998">L998</a>, <a data-s="NW#L1008">L1008</a>) are links to <code>nudge://focus-session</code>. They open the Tasks tab and end nothing.</li>
+    <li>The app target's <a data-s="AFI#L34">EndFocusSessionIntent</a> calls <code>cancelSession</code>, and <a data-s="AFI#L12">StartFocusSessionIntent</a> only reloads the widget timeline. No view in either target references them; the Dismiss button compiles against the widget target's own type of the same name.</li>
+    <li><a data-s="APP#L330">nudge://start-session</a> is parsed and <a data-s="CV#L71">handled</a> (it would start a session on the top open task), but no code builds a URL with that host.</li>
+    <li><a data-s="TAA#L29">SessionState.breakTime, .getReady, .finalWarning</a> are rendered by TaskLiveActivityView and never written. <code>nextTaskName</code> is always nil, and <code>totalTasksToday</code> and <code>currentTaskIndex</code> are always 1, so the activity always reads Session 1 of 1.</li>
+    <li><a data-s="WC#L12">NudgeWidgetControl</a> and StartTimerIntent are the Xcode template control: not in the bundle, and <code>perform</code> does nothing.</li>
+  </ol>
+  <p class="note">Not dead but worth knowing, all read from the code above: the teardown branch of <code>syncIfActivityDismissed</code> leaves a Live Activity up; a session started with Live Activities disabled has no activity, so the next scene-active tears it down through the <code>activities.isEmpty</code> check; the Start anyway alert is attached inside the active-session branch of the view while the picker that sets it opens only when no session is active; and the timer path plays the alarm twice.</p>
+</section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var REPO = 'https://github.com/deblaseroman/nudge-app/blob/ede6774/';
+  var FILES = {
+    SC: 'Nudge/Services/SessionCoordinator.swift',
+    LAM: 'Nudge/Services/LiveActivityManager.swift',
+    TAA: 'Nudge/Models/TaskActivityAttributes.swift',
+    FSA: 'Nudge/Models/FocusSessionAttributes.swift',
+    AFI: 'Nudge/Services/FocusSessionIntents.swift',
+    NNS: 'Nudge/Services/NudgeNotificationService.swift',
+    ARB: 'Nudge/Services/NudgeArbiter.swift',
+    NS: 'Nudge/Services/NotificationScheduler.swift',
+    TR: 'Nudge/Services/TimelineReflow.swift',
+    NG: 'Nudge/Models/NudgeGoal.swift',
+    CV: 'Nudge/ContentView.swift',
+    APP: 'Nudge/NudgeApp.swift',
+    TTV: 'Nudge/Views/Tabs/TasksTabView.swift',
+    TLV: 'NudgeWidget/TaskLiveActivityView.swift',
+    WLA: 'NudgeWidget/NudgeWidgetLiveActivity.swift',
+    WFI: 'NudgeWidget/FocusSessionIntents.swift',
+    CTI: 'NudgeWidget/CompleteTaskIntent.swift',
+    NW: 'NudgeWidget/NudgeWidget.swift',
+    WB: 'NudgeWidget/NudgeWidgetBundle.swift',
+    WC: 'NudgeWidget/NudgeWidgetControl.swift',
+    WIP: 'NudgeWidget/Info.plist',
+    PBX: 'Nudge.xcodeproj/project.pbxproj'
+  };
+  document.querySelectorAll('a[data-s]').forEach(function (a) {
+    var parts = a.getAttribute('data-s').split('#');
+    var file = FILES[parts[0]];
+    if (!file) return;
+    a.setAttribute('href', REPO + file + (parts[1] ? '#' + parts[1] : ''));
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener');
+    a.setAttribute('title', file + (parts[1] ? ' ' + parts[1] : ''));
+  });
+
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function isDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function themeVars() {
+    return {
+      fontFamily: cssVar('--font-body') || 'sans-serif',
+      fontSize: '13px',
+      primaryColor: cssVar('--node'),
+      primaryTextColor: cssVar('--fg'),
+      primaryBorderColor: cssVar('--node-border'),
+      secondaryColor: cssVar('--node'),
+      tertiaryColor: cssVar('--cluster'),
+      lineColor: cssVar('--edge'),
+      textColor: cssVar('--fg'),
+      nodeTextColor: cssVar('--fg'),
+      clusterBkg: cssVar('--cluster'),
+      clusterBorder: cssVar('--cluster-border'),
+      titleColor: cssVar('--fg'),
+      edgeLabelBackground: cssVar('--edge-label'),
+      nodeBorder: cssVar('--node-border'),
+      mainBkg: cssVar('--node')
+    };
+  }
+
+  var figures = Array.prototype.slice.call(document.querySelectorAll('figure'));
+
+  function hrefOf(a) { return a.getAttribute('href') || a.getAttribute('xlink:href') || ''; }
+
+  function wireLinks(stage) {
+    stage.querySelectorAll('a').forEach(function (a) {
+      var h = hrefOf(a);
+      if (h.charAt(0) === '#') {
+        a.removeAttribute('target');
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          var target = document.getElementById(h.slice(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener');
+      }
+    });
+  }
+
+  async function renderOne(fig, index) {
+    var src = fig.querySelector('.mmd-src').textContent.trim();
+    var stage = fig.querySelector('.stage');
+    var status = fig.querySelector('.status');
+    var canvas = fig.querySelector('.canvas');
+    try {
+      var out = await mermaid.render('nudge-session-' + index + '-' + Date.now(), src);
+      stage.innerHTML = out.svg;
+      if (out.bindFunctions) out.bindFunctions(stage);
+      stage.hidden = false;
+      status.hidden = true;
+      wireLinks(stage);
+    } catch (e) {
+      status.textContent = 'Mermaid could not render this figure: ' + (e && e.message ? e.message : e);
+      status.className = 'status error';
+      status.hidden = false;
+      if (!canvas.querySelector('pre.fallback')) {
+        var pre = document.createElement('pre');
+        pre.className = 'fallback';
+        pre.textContent = src;
+        canvas.appendChild(pre);
+      }
+    }
+  }
+
+  async function renderAll() {
+    if (!window.mermaid) {
+      figures.forEach(function (fig) {
+        var status = fig.querySelector('.status');
+        status.textContent = 'The Mermaid library did not load. Source shown below.';
+        status.className = 'status error';
+        if (!fig.querySelector('pre.fallback')) {
+          var pre = document.createElement('pre');
+          pre.className = 'fallback';
+          pre.textContent = fig.querySelector('.mmd-src').textContent.trim();
+          fig.querySelector('.canvas').appendChild(pre);
+        }
+      });
+      return;
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'base',
+      themeVariables: themeVars(),
+      maxTextSize: 400000,
+      maxEdges: 2000,
+      flowchart: { htmlLabels: true, useMaxWidth: false, curve: 'basis', nodeSpacing: 24, rankSpacing: 44, padding: 8 }
+    });
+    for (var i = 0; i < figures.length; i++) {
+      await renderOne(figures[i], i);
+    }
+  }
+
+  var lastDark = isDark();
+  function onThemeChange() {
+    var now = isDark();
+    if (now !== lastDark) { lastDark = now; renderAll(); }
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', onThemeChange); else if (mq.addListener) mq.addListener(onThemeChange);
+  }
+  new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  renderAll();
+})();
+</script>

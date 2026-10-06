@@ -1,0 +1,25 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: the widget — completing a task from the home screen removes its pending nudges and asks the app to reevaluate.
+flowchart TB
+  W_INTENT["CompleteTaskIntent.swift<br/>perform"]
+  W_CANCEL["CompleteTaskIntent.swift<br/>cancelPendingNudges"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  K_IDS["App Group<br/>nudge.arb.scheduledIDs"]
+  K_WIDGET["App Group<br/>nudge.arb.widgetMutated"]
+  T_CV_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+
+  W_INTENT --> W_CANCEL
+  W_CANCEL -- "remove task's requests" --> UNC
+  W_CANCEL -- "trim" --> K_IDS
+  W_CANCEL -- "set" --> K_WIDGET
+  K_WIDGET --> T_CV_SCENE
+  T_CV_SCENE -- "taskCompleted" --> R_REEVAL
+
+  click W_INTENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "perform() in the NudgeWidgetExtension target (entitlement: app group). Marks the task complete in the shared store, records goal activity and a CompletedTaskRecord, clears activeSessionState when a session runs on that task, cancels its nudges, reloads the widget timeline, posts the Darwin notification com.nudge.sessionStateChanged, fires a haptic." _blank
+  click W_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L128" "cancelPendingNudges(for:defaults:). pendingNotificationRequests, then removePendingNotificationRequests for ids with prefix nudge.arb. that contain the task UUID (prep, floater, placementLead, placementMissed); trims those ids from nudge.arb.scheduledIDs; sets nudge.arb.widgetMutated. The widget cannot run the arbiter, so kinds that only name the task (the morning prompt) wait for the app." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "removePendingNotificationRequests(withIdentifiers:)" _blank
+  click K_IDS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L180" "Kept honest so the arbiter's cancelAll does not try to remove ids the widget already removed." _blank
+  click K_WIDGET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L139" "ContentView reads it on the next scene-active, clears it, and passes the undebounced .taskCompleted reason." _blank
+  click T_CV_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L210" "widgetMutated ? .taskCompleted : .sceneActive" _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L345" "See the arbiter close-up." _blank

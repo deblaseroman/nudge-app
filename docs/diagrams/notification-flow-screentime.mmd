@@ -1,0 +1,69 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · close-up: the Screen Time extension — arming in the app, deciding and posting in the NudgeActivityMonitor process.
+flowchart TB
+  UI_SETTINGS["SettingsTabView.swift<br/>saveDistractions"]
+  T_CV_TASK["ContentView.swift<br/>.task(id: notificationToken)"]
+  K_DSET["App Group<br/>nudge.distractions.settings"]
+  D_MON["DistractionMonitor.swift<br/>apply"]
+  IOS_DA["DeviceActivity<br/>DeviceActivityCenter"]
+  R_REEVAL["NudgeArbiter.swift<br/>reevaluate"]
+  D_SNAP["DistractionMonitor.swift<br/>writeSnapshot"]
+  K_DSNAP["App Group<br/>nudge.distractions.snapshot"]
+  X_THRESH["DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold"]
+  X_CRUMB["DeviceActivityMonitorExtension.swift<br/>crumb"]
+  K_CRUMB["App Group<br/>nudge.distractions.breadcrumbs"]
+  X_GUARD{"DistractionSettings.swift<br/>DistractionSettings"}
+  K_RUNG["App Group<br/>nudge.distractions.lastRungAt"]
+  X_DECIDE["DistractionSettings.swift<br/>LimitDecider.decide"]
+  X_SILENT{"DistractionSettings.swift<br/>LimitDecision"}
+  X_COPY["DistractionSettings.swift<br/>LimitDecision.placeholderBody"]
+  X_POST["DeviceActivityMonitorExtension.swift<br/>post"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+
+  UI_SETTINGS --> K_DSET
+  UI_SETTINGS -- "apply(force: true)" --> D_MON
+  T_CV_TASK --> D_MON
+  K_DSET --> D_MON
+  D_MON -- "startMonitoring" --> IOS_DA
+  R_REEVAL --> D_SNAP
+  D_SNAP --> K_DSNAP
+  IOS_DA -- "threshold crossed" --> X_THRESH
+  X_THRESH --> X_CRUMB
+  X_CRUMB --> K_CRUMB
+  K_DSET --> X_THRESH
+  X_THRESH --> X_GUARD
+  X_GUARD -- "off: return" --> X_THRESH
+  X_GUARD -- "mirror" --> K_RUNG
+  X_GUARD -- "mirror" --> X_POST
+  X_GUARD -- "ladder" --> X_DECIDE
+  K_DSNAP --> X_DECIDE
+  K_RUNG --> X_DECIDE
+  X_THRESH -- "even when silent" --> K_RUNG
+  X_DECIDE --> X_SILENT
+  X_SILENT -- "silent: return" --> X_THRESH
+  X_SILENT --> X_COPY
+  X_COPY --> X_POST
+  X_POST -- "add" --> UNC
+  X_POST --> X_CRUMB
+
+  classDef add stroke-width:3px
+  class X_POST add
+
+  click UI_SETTINGS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L526" "saveDistractions encodes the FamilyActivitySelection, stamps authorized from DistractionMonitor.isAuthorized, saves DistractionSettings, then apply(profile:force: true). authorizeDistractions calls DistractionMonitor.requestAuthorization (AuthorizationCenter.requestAuthorization(for: .individual)) and saves authorized." _blank
+  click T_CV_TASK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L164" "apply(profile:) after the launch reevaluate, not forced." _blank
+  click K_DSET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L20" "DistractionSettings: selectionData, dailyLimitMinutes 30, limitLadderEnabled, mirrorEnabled, authorized. Also read by StatsTabView." _blank
+  click D_MON href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L62" "apply(profile:force:). Reads profile wake and bedtime as the day window and the saved settings. Re-asks authorization once per launch when a selection exists and status is notDetermined. Skips when nudge.distractions.registeredSignature (wake, bed, limit, toggles, authorized, selection) is unchanged, unless forced. stopMonitoring both schedules, then: daily schedule wake → bed repeating, events nudge.limit.100 / 150 / 175 at limit, 1.5 × limit, 1.75 × limit minutes; weekly schedule Monday 00:00 → Sunday 23:59, event nudge.mirror at 7 × limit × 1.25. Stops monitoring when not authorized, no selection, or both kinds off." _blank
+  click IOS_DA href "https://developer.apple.com/documentation/deviceactivity" "Family Controls entitlement on Nudge and NudgeActivityMonitor; NudgeActivityMonitor/Info.plist declares com.apple.deviceactivity.monitor-extension. iOS runs the extension process when a threshold is crossed." _blank
+  click R_REEVAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L482" "The arbiter calls writeSnapshot after every pass, so the snapshot is as fresh as the schedule." _blank
+  click D_SNAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L219" "writeSnapshot(profile:modelContext:now:). Reads DayWindow.resolve(wake, bedtime), NudgeTask.dayLens for today (title, minutes, planned start and end), today's informational events with their duration, the latest CompletedTaskRecord and nudge.lastFocusSessionStartedAt. Writes writtenAt, dayStart, dayEnd, bedtime, items, lastWorkAt." _blank
+  click K_DSNAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L53" "DistractionSnapshot as ISO 8601 JSON. The extension cannot open the SwiftData store." _blank
+  click X_THRESH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L50" "eventDidReachThreshold(_:activity:) in the NudgeActivityMonitor process. Reads only App Group defaults. Rung from the event name: nudge.limit.100 → 1, 150 → 2, 175 → 3. Writes lastRungAt and lastRungDay before deciding, so a silent decision still advances them." _blank
+  click X_CRUMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L32" "crumb(_:) appends a timestamped line, capped at 40. intervalDidStart and intervalDidEnd also leave crumbs; post leaves posted or post FAILED." _blank
+  click K_CRUMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L30" "The only evidence the app has that iOS called the extension. Read by DistractionMonitor.debugDump in DEBUG." _blank
+  click X_GUARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L58" "nudge.mirror requires mirrorEnabled; the limit events require limitLadderEnabled. A mirror firing stamps nudge.distractions.mirrorLastFiredAt and posts the fixed MIRROR line: Hey, got a sec? I want to show you something." _blank
+  click K_RUNG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L24" "nudge.distractions.lastRungAt, lastRungDay, mirrorLastFiredAt. lastRungAt is used only when lastRungDay is today's stamp." _blank
+  click X_DECIDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L127" "LimitDecider.decide(snapshot:now:rung:lastRungAt:). No snapshot or from another day → random; inside an event → silent; before dayStart or after bedtime → random; within 60 min of bedtime → bedtimeTask (smallest task that fits) or windDown; rung outside 1...3 → random; else rung(n, calm when lastWorkAt is after lastRungAt)." _blank
+  click X_SILENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L90" "Only .silent stops the post. Every other decision, random included, posts." _blank
+  click X_COPY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L100" "placeholderTitle: LIMIT 1 / 2 / 3, LIMIT BEDTIME, LIMIT WINDDOWN, RANDOM LIMIT. placeholderBody: the reason, the task that fits before bed, It's almost bedtime. Wind down., or Rung n with or without you worked since the last one. No AI copy." _blank
+  click X_POST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98" "post(id:title:body:category:userInfo:). UNMutableNotificationContent with categoryIdentifier category.limit or category.mirror (registered by the app), userInfo nudgeKind and rung, interruptionLevel timeSensitive, trigger nil (immediate). Ids nudge.ext.limit.yyyyMMdd.rung and nudge.ext.mirror.yyyyMMdd." _blank
+  click UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "A tap on a mirror notification routes to the Stats tab; limit taps route to Tasks." _blank

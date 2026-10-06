@@ -1,0 +1,45 @@
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: every path that ends the Live Activity. Thick border = Activity.end is called here. The app-side paths run in the Nudge process; displayState and EndFocusSessionIntent.perform run in NudgeWidgetExtension. Arrows are unlabeled where several enter one box; the cases are a table on the page.
+flowchart TB
+  E_CARD["TasksTabView.swift<br/>startSessionButton"]
+  E_TOGGLE["TasksTabView.swift<br/>toggleCompletion"]
+  E_TIMER["SessionCoordinator.swift<br/>handleTimerExpired"]
+  E_SYNC["SessionCoordinator.swift<br/>syncIfActivityDismissed"]
+  E_START["SessionCoordinator.swift<br/>startSession"]
+  E_COMPLETE["SessionCoordinator.swift<br/>completeCurrentTask"]
+  E_FINISH["SessionCoordinator.swift<br/>finishSession"]
+  E_CANCEL["SessionCoordinator.swift<br/>cancelSession"]
+  E_STOP["LiveActivityManager.swift<br/>endActivity"]
+  W_VIEW["TaskLiveActivityView.swift<br/>displayState"]
+  W_STOP["NudgeWidget/FocusSessionIntents.swift<br/>EndFocusSessionIntent.perform"]
+  AK_STOP["ActivityKit<br/>Activity.end"]
+
+  E_CARD --> E_COMPLETE
+  E_CARD --> E_CANCEL
+  E_TOGGLE --> E_COMPLETE
+  E_COMPLETE --> E_FINISH
+  E_TIMER --> E_FINISH
+  E_SYNC --> E_FINISH
+  E_SYNC --> E_STOP
+  E_START --> E_CANCEL
+  E_FINISH --> E_STOP
+  E_CANCEL --> E_STOP
+  E_STOP --> AK_STOP
+  W_VIEW -- "Dismiss" --> W_STOP
+  W_STOP --> AK_STOP
+
+  classDef ender stroke-width:3px
+  class E_STOP,W_STOP ender
+
+  click E_CARD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1780" "The session card in the Tasks tab. Checkmark (only while sessionState is .active) calls completeCurrentTask. Stop opens the Cancel Session alert; its Cancel session button calls cancelSession and reloads the widget timeline." _blank
+  click E_TOGGLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1891" "toggleCompletion(for:). Calls completeCurrentTask only when a session is active, the task was just checked, and it is the session's task. Completing any other task leaves the session running." _blank
+  click E_TIMER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L371" "handleTimerExpired(). Run by sessionEndTimer at sessionEnd, scheduled by startSession or restoreSession. Plays the alarm, then finishSession. Only fires while the app process is alive and not suspended." _blank
+  click E_SYNC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L233" "syncIfActivityDismissed(). Called at launch and on every scene-active. With a session in memory, the end passed and the key still present it calls finishSession. With no session in memory and a key or an activity left over that cannot be restored, it removes the key and calls endActivity directly, with no alarm." _blank
+  click E_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L72" "startSession begins with cancelSession(), which ends the running session's activity before a new one is requested. cancelSession returns at once when no session is active in memory." _blank
+  click E_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L170" "completeCurrentTask(). Returns when no session is active. Calls finishSession, then records the elapsed minutes in DurationModel, stamps actualMinutes and sessionCount on the task's newest NudgeOutcome, and reevaluates with .taskCompleted." _blank
+  click E_FINISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L376" "finishSession(). cancelAllTimers, sessionState = .complete, alarm sound 1005, endActivity, sessionStartedAt = nil, publishSessionState(isActive: false). Three seconds later: isSessionActive = false, currentTask = nil, sessionState = .active, reevaluateAfterSessionEnd." _blank
+  click E_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L328" "cancelSession(). Returns when no session is active. cancelAllTimers, endActivity, reset of every field, publishSessionState(isActive: false), reevaluateAfterSessionEnd. No alarm." _blank
+  click E_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L88" "endActivity(). For every activity of TaskActivityAttributes: end with final state taskName All done plus the user name, sessionState .complete, timerEnd now, staleDate now, dismissalPolicy .immediate. Does nothing when there is none." _blank
+  click W_VIEW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/TaskLiveActivityView.swift#L352" "displayState(context). Returns .timeUp when the activity is stale and its stored state is .active or .stayFocusedAlert. Only that state draws the Dismiss button, on the lock screen (L246) and in the expanded island (L322)." _blank
+  click W_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/FocusSessionIntents.swift#L35" "EndFocusSessionIntent.perform(), widget target. activity.end(nil, dismissalPolicy: .immediate) for every activity, removes activeSessionState, reloads the NudgeTaskWidget timeline, posts the Darwin notification com.nudge.sessionStateChanged, which nothing observes." _blank
+  click AK_STOP href "https://developer.apple.com/documentation/activitykit/activity" "Activity.end(_:dismissalPolicy:). Called from two places only: LiveActivityManager.endActivity (L99) and the widget target's EndFocusSessionIntent.perform (L38)." _blank

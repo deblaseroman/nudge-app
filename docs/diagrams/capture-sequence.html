@@ -1,0 +1,1140 @@
+<meta charset="utf-8">
+<title>Nudge Capture Sequence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the send-site table first, then the main path as an overview and numbered stages, each a top-to-bottom sequence figure with its boxes and steps in tables underneath. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #1c2029;
+  --muted: #5d6471;
+  --line: #d3d7df;
+  --accent: #0e6f6f;
+  --accent-soft: #d9ecec;
+  --dead: #8a8f98;
+  --node: #ffffff;
+  --node-border: #3c4654;
+  --cluster: #eceef2;
+  --cluster-border: #b9bfca;
+  --edge: #4b5563;
+  --edge-label: #f4f5f7;
+  --k-app: rgba(14,111,111,0.10);
+  --k-os: rgba(93,100,113,0.16);
+  --k-ext: rgba(179,64,31,0.14);
+  --warn: #b3401f;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+    --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+    --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+    --edge: #b6bdc8; --edge-label: #14171c;
+    --k-app: rgba(94,194,194,0.14); --k-os: rgba(154,162,174,0.16); --k-ext: rgba(232,128,96,0.18);
+    --warn: #e88060;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+  --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+  --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+  --edge: #b6bdc8; --edge-label: #14171c;
+  --k-app: rgba(94,194,194,0.14); --k-os: rgba(154,162,174,0.16); --k-ext: rgba(232,128,96,0.18);
+  --warn: #e88060;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; margin: 0; }
+.wrap { padding-inline: 16px; padding-block: 20px 48px; max-width: 1480px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 12px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.stamp { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.stamp code { background: var(--accent-soft); color: var(--fg); padding: 1px 6px; border-radius: 3px; }
+p.lede { max-width: 72ch; margin: 0 0 14px; color: var(--muted); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin-bottom: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); align-items: center; margin-bottom: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 26px; height: 14px; border: 1.5px solid var(--node-border); border-radius: 2px; background: var(--node); }
+.sw.app { background: var(--k-app); }
+.sw.os { background: var(--k-os); }
+.sw.ext { background: var(--k-ext); }
+.sw.ret { border: 0; border-top: 1.5px dashed var(--edge); height: 0; background: transparent; border-radius: 0; }
+figure { margin: 0; }
+figure + figure { margin-top: 22px; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
+.stage { display: inline-block; padding: 16px; min-width: 100%; }
+.stage svg { display: block; max-width: none !important; height: auto; }
+.stage a { cursor: pointer; }
+.stage svg text:not(.sequenceNumber) { fill: var(--fg) !important; }
+.stage a:hover rect.actor { stroke: var(--accent) !important; stroke-width: 2.5px; }
+.status { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); padding: 10px 14px; }
+.status.error { color: var(--warn); }
+pre.fallback { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; padding: 14px; margin: 0; }
+figcaption { font-size: 13px; color: var(--muted); margin: 8px 2px 0; max-width: 90ch; }
+section { margin-top: 40px; scroll-margin-top: 12px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+h2 .src, h3 .src { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 10px; }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; }
+.intro { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+.reads { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; max-width: 100ch; }
+.reads b { color: var(--fg); font-weight: 500; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; border-top: 0; position: sticky; top: 0; background: var(--bg); }
+td.k, th.k { white-space: nowrap; }
+td.n, th.n { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
+td code, li code, p code { font-family: var(--font-mono); font-size: 12.5px; }
+td a[data-f], li a[data-f] { font-family: var(--font-mono); font-size: 12.5px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.tablewrap table th { background: var(--surface); }
+.kind { display: inline-block; padding: 0 7px; border-radius: 3px; font-size: 12px; white-space: nowrap; }
+.kind.app { background: var(--k-app); }
+.kind.os { background: var(--k-os); }
+.kind.ext { background: var(--k-ext); }
+tr.main td { background: var(--accent-soft); }
+ol.dead { padding-left: 22px; margin: 0; max-width: 100ch; }
+ol.dead li { margin: 0 0 10px; }
+ul.note { padding-left: 20px; margin: 8px 0 0; }
+ul.note li { margin: 0 0 6px; }
+a { color: var(--accent); }
+.note { font-size: 13.5px; color: var(--muted); max-width: 100ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 480px) { h1 { font-size: 20px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Nudge Capture Sequence</h1>
+  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-06 · reference: <code>docs/diagrams/capture-sequence.mmd</code> · page: <code>docs/diagrams/capture-sequence.html</code></div>
+</header>
+<p class="lede">Every place text the user typed leaves the device, then the main one traced end to end: the Home chat's brain-dump message, from the tap that sends it to the last thing that runs because rows changed. Each picture has at most six boxes. Every box names a file and a function, clicks through to that file at this commit, and is described in the table under its picture. Arrows are numbered and labeled with the call or what they carry; the steps table under each picture says what each one passes, reads or writes.</p>
+
+<nav class="toc">
+  <a href="#sec-sites">Send sites</a>
+  <a href="#sec-overview">Overview</a>
+  <a href="#sec-1">1 Tap to send</a>
+  <a href="#sec-2">2 Request and response</a>
+  <a href="#sec-3">3 Task rows</a>
+  <a href="#sec-4">4 Session and save</a>
+  <a href="#sec-after">After the save</a>
+  <a href="#sec-5">5 Widget</a>
+  <a href="#sec-6">6 Task signals</a>
+  <a href="#sec-7">7 Commitments</a>
+  <a href="#sec-8">8 Notification copy</a>
+  <a href="#sec-9">9 Plan proposals</a>
+  <a href="#sec-10">10 Plan consent</a>
+  <a href="#sec-11">11 Arbiter</a>
+  <a href="#sec-dead">No effect</a>
+  <a href="#sec-scope">Scope</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw app"></i> app code (a storage box names what is stored first, its file second)</span>
+  <span><i class="sw os"></i> OS framework</span>
+  <span><i class="sw ext"></i> external service</span>
+  <span><i class="sw ret"></i> dashed arrow: the value a call returns</span>
+  <span>click a box to open its file · hover for detail</span>
+</div>
+
+<section id="sec-sites">
+  <h2>Where typed text leaves the device</h2>
+  <p class="intro">Two files make every outbound request in the project: <code>ClaudeService.swift</code> (eight <code>URLSession.shared.data(for:)</code> calls, all to <code>https://api.anthropic.com/v1/messages</code>) and <code>CalendarService.swift</code> (one <code>URLSession.shared.data(from:)</code> to whatever host a pasted calendar link names). The highlighted row is the main one and is traced below.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th>Typed text that is sent</th><th>Where it is typed</th><th>Path to the request</th><th>Request</th><th>When</th></tr>
+    <tr class="main"><td class="n">1</td><td>The brain-dump message, verbatim. With it: up to 12 earlier messages from today's chat, the title of every open task, every active goal title, and the titles of sized commitments.</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L250">HomeTabView.swift · TextEditor</a></td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L299">sendMessage</a> → <a data-f="Nudge/Services/ClaudeService.swift#L364">ClaudeService.sendChat</a> → <a data-f="Nudge/Services/ClaudeService.swift#L1493">makeRequest</a></td><td>POST api.anthropic.com/v1/messages · <code>claude-sonnet-5</code></td><td>Every send that is not small talk and not a plan-my-day phrase</td></tr>
+    <tr><td class="n">2</td><td>The "Add your own" line in the session picker, verbatim, plus open task titles and active goal titles. No chat history.</td><td><a data-f="Nudge/Views/Tabs/TasksTabView.swift#L3901">TasksTabView.swift · TextField</a></td><td><a data-f="Nudge/Views/Tabs/TasksTabView.swift#L3940">createAndStart</a> → <a data-f="Nudge/Views/Tabs/TasksTabView.swift#L2373">createSessionItem</a> → <a data-f="Nudge/Services/ClaudeService.swift#L364">sendChat</a></td><td>Same request as row 1</td><td>Tapping create in the session picker</td></tr>
+    <tr><td class="n">3</td><td>One task's title, with its category and due date.</td><td>Any task title: captured, typed in the <a data-f="Nudge/Views/Tabs/TasksTabView.swift#L3234">task editor</a>, or imported</td><td><a data-f="Nudge/Services/NudgeIntelligence.swift#L81">NudgeIntelligence.refreshSoon</a> → <a data-f="Nudge/Services/NudgeIntelligence.swift#L94">refreshIfNeeded</a> → <a data-f="Nudge/Services/ClaudeService.swift#L645">analyzeTask</a></td><td>POST api.anthropic.com/v1/messages · <code>claude-haiku-4-5-20251001</code></td><td>Task created or edited, when no fresh cached row matches the same title, category and due line. Called from HomeTabView:581, CalendarTabView:111, TasksTabView:149, 846, 864, 2394, 3771.</td></tr>
+    <tr><td class="n">4</td><td>Titles of today's events and of up to 8 open, unplaced tasks. The chat message that triggers it is not sent.</td><td>Task and event titles</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L765">handlePlanIntent</a> → <a data-f="Nudge/Services/DayPlanRefiner.swift#L49">DayPlanRefiner.refine</a> → <a data-f="Nudge/Services/ClaudeService.swift#L690">refineDayPlan</a></td><td>POST api.anthropic.com/v1/messages · <code>claude-haiku-4-5-20251001</code></td><td>A Home chat message containing a phrase from <a data-f="Nudge/Views/Tabs/HomeTabView.swift#L751">isPlanIntent</a> ("plan my day", "reorganize", …)</td></tr>
+    <tr><td class="n">5</td><td>Titles of up to 5 due-dated tasks or exam events, with category, stakes and estimate.</td><td>Task and event titles</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L308">PlanProposalSweep.runIfNeeded</a> or <a data-f="Nudge/Services/PlanProposalSweep.swift#L395">requestPlan</a> → <a data-f="Nudge/Services/ClaudeService.swift#L1396">proposePlans</a></td><td>POST api.anthropic.com/v1/messages · <code>claude-opus-5</code></td><td>Launch, every foreground, after a capture, after an iCal import; at most 2 sweep calls a day; none while the Tasks message box is off. requestPlan runs when the user says yes to a study plan in chat.</td></tr>
+    <tr><td class="n">6</td><td>Titles of open tasks and upcoming events with their due phrases, the user's first name, and the last generated lines.</td><td>Task titles; the name from <a data-f="Nudge/Views/Onboarding/WelcomeStepView.swift#L26">onboarding</a> or <a data-f="Nudge/Views/Tabs/AccountTabView.swift#L144">Account</a></td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L246">NudgeCopyGenerator.generateIfNeeded</a> → <a data-f="Nudge/Services/ClaudeService.swift#L947">generateNudgeCopy</a></td><td>POST api.anthropic.com/v1/messages · <code>claude-sonnet-5</code></td><td>First foreground of a day, a calendar import, or generated work; at least 15 minutes apart, at most 6 a day</td></tr>
+    <tr><td class="n">7</td><td>The user's name, open task titles, today's and tomorrow's event titles, and active goal titles.</td><td>Names and titles</td><td><a data-f="Nudge/Views/Tabs/TasksTabView.swift#L283">TasksTabView.fetchTasksMemoIfNeeded</a> → <a data-f="Nudge/Views/Components/TasksMessageBox.swift#L184">TasksMemoContextBuilder.build</a> → <a data-f="Nudge/Services/ClaudeService.swift#L1239">generateTasksMemo</a></td><td>POST api.anthropic.com/v1/messages · <code>claude-opus-5</code></td><td>Tasks tab appears, returns to the foreground, or its facts change; at most 4 a day; none while the message box is off</td></tr>
+    <tr><td class="n">8</td><td>One goal's title and up to 5 open task titles.</td><td><a data-f="Nudge/Views/Tabs/GoalsTabView.swift#L209">Goal titles</a>; task titles</td><td><a data-f="Nudge/Views/Tabs/TasksTabView.swift#L176">TasksTabView.fetchGoalLapseHookIfNeeded</a> → <a data-f="Nudge/Services/ClaudeService.swift#L1127">generateGoalLapseHook</a></td><td>POST api.anthropic.com/v1/messages · <code>claude-haiku-4-5-20251001</code></td><td>Tasks tab opened from a goal-lapse notification tap, once per goal while cached; none while the message box is off</td></tr>
+    <tr><td class="n">9</td><td>The pasted calendar link itself. The request goes to that address, so any secret token inside the link goes with it.</td><td><a data-f="Nudge/Views/Tabs/CalendarTabView.swift#L653">CalendarTabView.swift · TextField</a>; <a data-f="Nudge/Views/Onboarding/CalendarImportStepView.swift#L51">CalendarImportStepView.swift · TextField</a></td><td><a data-f="Nudge/Services/CalendarService.swift#L376">checkICalFeed</a>, <a data-f="Nudge/Services/CalendarService.swift#L397">importCanvasICal</a> or <a data-f="Nudge/Services/CalendarService.swift#L215">refreshICalFeedIfNeeded</a> → <a data-f="Nudge/Services/CalendarService.swift#L341">fetchICalEvents</a></td><td>GET to the host in the link (webcal:// rewritten to https://)</td><td>Check link, Import, and once a day on foreground while the link is the connected calendar (<a data-f="Nudge/ContentView.swift#L248">ContentView.swift:248</a>)</td></tr>
+  </table></div>
+  <ul class="note">
+    <li>All eight Anthropic requests are sent directly from the device with the key read from the bundled <code>Secrets.plist</code> (<a data-f="Nudge/Services/ClaudeService.swift#L19">ClaudeService.apiKey</a>) in the <code>x-api-key</code> header.</li>
+    <li>Leaves the device but is not typed: the screenshot import sends the picked image and its on-device OCR transcript (<a data-f="Nudge/Services/ScreenshotCalendarImporter.swift#L78">ScreenshotCalendarImporter.swift:78</a> → <a data-f="Nudge/Services/ClaudeService.swift#L761">parseScheduleScreenshot</a>).</li>
+    <li>DEBUG builds only: Settings can hand <code>CaptureLog.jsonl</code> (every typed capture message and the reply) to the system share sheet (<a data-f="Nudge/Views/Tabs/SettingsTabView.swift#L230">SettingsTabView.swift:230</a>); where it goes is the user's pick. <a data-f="Nudge/Services/EvalHarness.swift#L620">EvalHarness</a> calls sendChat with messages from a cases file under a launch argument.</li>
+    <li>Stays on the device: notification text handed to UNUserNotificationCenter, the widget, the Live Activity (<code>pushType: nil</code>, <a data-f="Nudge/Services/LiveActivityManager.swift#L54">LiveActivityManager.swift:54</a>), App Group defaults, and the SwiftData store. EventKit is read only. The email field in Account appears in no request.</li>
+  </ul>
+</section>
+
+<section id="sec-overview">
+  <h2>Overview <span class="src">capture-sequence.mmd</span></h2>
+  <p class="intro">The main path at the level of types: the view sends the message, the service posts it, the reply is parsed and becomes rows. Stages 1 to 4 draw the same path function by function. What runs after the save is listed in <a href="#sec-after">After the save</a> and drawn in pictures 5 to 11.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · overview of the brain-dump capture path at type level. Stages 1 to 4 draw it function by function. Arrows are numbered, labeled with the call or what they carry, and explained in the steps table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant HV as HomeTabView.swift<br/>HomeTabView
+    participant CS as ClaudeService.swift<br/>ClaudeService
+    participant CW as CaptureWriter.swift<br/>CaptureWriter
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  HV->>CS: sendChat
+  CS->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>CS: returns data, response
+  CS-->>HV: returns ClaudeResponse
+  HV->>TASKS: apply task_updates
+  HV->>CW: apply
+  CW->>TASKS: insert rows
+  HV->>TASKS: save
+    </script>
+    <script type="application/json" class="mmd-links">{
+"HV": ["Nudge/Views/Tabs/HomeTabView.swift#L13", "The Home tab chat. sendMessage (line 299) owns the whole turn: route, call, apply updates, write rows, save, then the after-save calls."],
+"CS": ["Nudge/Services/ClaudeService.swift#L17", "Every AI call goes through here. For capture: sendChat builds the body, makeRequest posts it, parseResponse decodes the reply."],
+"CW": ["Nudge/Services/CaptureWriter.swift#L22", "The capture write site: turns the reply's new_tasks into NudgeTask rows. Does not save."],
+"TASKS": ["Nudge/Models/NudgeTask.swift#L373", "SwiftData model in Nudge.store inside the App Group container, shared with the widget."],
+"URLS": ["https://developer.apple.com/documentation/foundation/urlsession", "URLSession.shared.data(for:) with a URLRequest."],
+"API": ["Nudge/Services/ClaudeService.swift#L75", "baseURL = https://api.anthropic.com/v1/messages. The only Anthropic endpoint the app calls."]
+}</script>
+    <figcaption>One request per send. Rows are written only after the reply parses, so a failed call writes no task rows.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Call, read or write</th><th>Stage</th></tr>
+    <tr><td class="n">1</td><td class="k">HomeTabView → ClaudeService</td><td><code>sendChat(conversationHistory:userMessage:existingTasks:knownCommitmentSizes:activeGoals:)</code></td><td><a href="#sec-1">1</a>, <a href="#sec-2">2</a></td></tr>
+    <tr><td class="n">2</td><td class="k">ClaudeService → URLSession</td><td><code>URLSession.shared.data(for: req)</code> inside makeRequest</td><td><a href="#sec-2">2</a></td></tr>
+    <tr><td class="n">3</td><td class="k">URLSession → api.anthropic.com</td><td>HTTPS POST with the JSON body</td><td><a href="#sec-2">2</a></td></tr>
+    <tr><td class="n">4, 5</td><td class="k">api.anthropic.com → URLSession → ClaudeService</td><td>returns <code>(Data, URLResponse)</code></td><td><a href="#sec-2">2</a></td></tr>
+    <tr><td class="n">6</td><td class="k">ClaudeService → HomeTabView</td><td>returns <code>ClaudeResponse</code></td><td><a href="#sec-2">2</a></td></tr>
+    <tr><td class="n">7</td><td class="k">HomeTabView → NudgeTask rows</td><td>applies <code>task_updates</code> to existing rows</td><td><a href="#sec-3">3</a></td></tr>
+    <tr><td class="n">8</td><td class="k">HomeTabView → CaptureWriter</td><td><code>CaptureWriter.apply(response:allTasks:goalContexts:modelContext:userMessage:)</code></td><td><a href="#sec-3">3</a></td></tr>
+    <tr><td class="n">9</td><td class="k">CaptureWriter → NudgeTask rows</td><td>inserts one row per new item; may delete a replaced duplicate</td><td><a href="#sec-3">3</a></td></tr>
+    <tr><td class="n">10</td><td class="k">HomeTabView → NudgeTask rows</td><td><code>modelContext.save()</code> persists the rows</td><td><a href="#sec-4">4</a></td></tr>
+  </table></div>
+</section>
+
+<section id="sec-1">
+  <h2>1 · Tap to send <span class="src">capture-sequence-1-send.mmd</span></h2>
+  <p class="intro">The composer is a <code>TextEditor</code> bound to <code>composerText</code> (<a data-f="Nudge/Views/Tabs/HomeTabView.swift#L250">HomeTabView.swift:250</a>). The send button is not in the view: it is the floating tab-bar button, which reads a closure the view registered.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 1 of the capture path: from the tab-bar tap to the point where sendMessage has everything it passes to ClaudeService.sendChat. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant TAB as AppTabBar.swift<br/>handleFloatingTap
+    participant STORE as ChatComposerStore.swift<br/>sendAction
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant ROUTER as ChatRouter.swift<br/>isSmallTalk
+    participant ROWS as Nudge.store rows<br/>SharedModelContainer.swift
+    participant PQ as Plan question keys<br/>PlanProposalSweep.swift
+  end
+  TAB->>STORE: read sendAction
+  STORE->>SEND: sendMessage
+  SEND->>ROWS: read allTasks
+  SEND->>PQ: read outstandingParentID
+  SEND->>ROUTER: isSmallTalk
+  SEND->>ROWS: read tasks, goals, commitments
+    </script>
+    <script type="application/json" class="mmd-links">{
+"TAB": ["Nudge/Views/Components/AppTabBar.swift#L90", "The floating tab-bar button's action. In send mode (on the Home tab with text typed) it calls the registered closure, otherwise it switches to the Home tab."],
+"STORE": ["Nudge/Services/ChatComposerStore.swift#L37", "sendAction: the closure HomeTabView registers in onAppear (HomeTabView.swift:69) as { sendMessage() } and clears in onDisappear."],
+"SEND": ["Nudge/Views/Tabs/HomeTabView.swift#L299", "Trims composerText, appends the user bubble to messages, clears the composer, sets isWaitingForAI, then runs the rest in a Task."],
+"ROUTER": ["Nudge/Services/ChatRouter.swift#L58", "isSmallTalk(text): true only when there is no digit and every word is in a closed chitchat vocabulary. True answers from a template with no request."],
+"ROWS": ["Nudge/Services/SharedModelContainer.swift#L34", "Read through the view's @Query properties: allTasks (NudgeTask), allGoals (NudgeGoal), commitments (NudgeCommitment)."],
+"PQ": ["Nudge/Services/PlanProposalSweep.swift#L130", "PlanQuestionStore: App Group keys nudge.planQuestion.parentID and nudge.planQuestion.day. Set while a study-plan question from the model is unanswered today."]
+}</script>
+    <figcaption>After step 6 the view calls <code>ClaudeService.sendChat</code>: stage 2.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">handleFloatingTap → sendAction</td><td><a data-f="Nudge/Views/Components/AppTabBar.swift#L92">AppTabBar.swift:92</a></td><td>Reads <code>composer.sendAction</code> when <code>inSendMode</code>.</td></tr>
+    <tr><td class="n">2</td><td class="k">sendAction → sendMessage</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L69">HomeTabView.swift:69</a></td><td>The stored closure calls <code>sendMessage()</code>. No arguments: the text is read from <code>composerText</code>, trimmed of whitespace and newlines.</td></tr>
+    <tr><td class="n">3</td><td class="k">sendMessage → Nudge.store rows</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L730">hasOutstandingModelQuestion</a></td><td>Reads <code>allTasks</code> for any row with <code>commitmentStartAskedAt</code> set.</td></tr>
+    <tr><td class="n">4</td><td class="k">sendMessage → Plan question keys</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L140">PlanQuestionStore.outstandingParentID</a></td><td>Reads the parent id if the question was asked today. Either read being true skips the small-talk lane.</td></tr>
+    <tr><td class="n">5</td><td class="k">sendMessage → isSmallTalk</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L332">HomeTabView.swift:332</a></td><td>Passes the message text. False continues to capture.</td></tr>
+    <tr><td class="n">6</td><td class="k">sendMessage → Nudge.store rows</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L342">HomeTabView.swift:342–375</a>, <a data-f="Nudge/Views/Tabs/HomeTabView.swift#L710">knownCommitmentSizes</a></td><td>Builds the call's arguments. <code>history</code>: every earlier bubble in <code>messages</code> as <code>ChatMessage(role, content)</code>. <code>existingContext</code>: each incomplete task's id, title, priority, category, estimatedMinutes, dueDate. <code>goalContexts</code>: active goals as refs G1, G2, … with id and title. <code>knownCommitmentSizes</code>: one line per sized split-work commitment, e.g. <code>"Module 4" ≈ 8 hours</code>.</td></tr>
+  </table></div>
+  <h3>Ways out before the request</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Check</th><th>Code</th><th>What happens instead</th></tr>
+    <tr><td class="k">Empty text</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L300">HomeTabView.swift:300</a></td><td>Error haptic, return. Nothing sent, nothing stored.</td></tr>
+    <tr><td class="k">Plan phrase</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L321">HomeTabView.swift:321</a></td><td><code>handlePlanIntent</code> → <code>DayPlanRefiner.refine(force: true)</code> → <code>ClaudeService.refineDayPlan</code> (send site 4). The typed message is not sent; the reply bubble is the refiner's rationale; <code>persistSession</code> runs.</td></tr>
+    <tr><td class="k">Small talk</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L332">HomeTabView.swift:332</a></td><td>Template reply from <code>ChatRouter.smallTalkReply</code>, <code>persistSession</code>, no request.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-2">
+  <h2>2 · Request and response <span class="src">capture-sequence-2-request.mmd</span></h2>
+  <p class="intro">The request that is built, the one network call, and how the reply becomes a <code>ClaudeResponse</code>.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 2 of the capture path: the request ClaudeService builds, the single POST, and how the reply is parsed into ClaudeResponse. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant CHAT as ClaudeService.swift<br/>sendChat
+    participant REQ as ClaudeService.swift<br/>makeRequest
+    participant PARSE as ClaudeService.swift<br/>parseResponse
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  SEND->>CHAT: sendChat
+  CHAT->>REQ: makeRequest(body)
+  REQ->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>REQ: returns data, response
+  REQ->>PARSE: parseResponse(text)
+  PARSE-->>REQ: returns ClaudeResponse
+  REQ-->>CHAT: returns ClaudeResponse
+  CHAT-->>SEND: returns ClaudeResponse
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SEND": ["Nudge/Views/Tabs/HomeTabView.swift#L377", "Awaits sendChat inside do/catch. Any throw lands in the catch at line 600: one assistant bubble with the error text, persistSession, no task rows."],
+"CHAT": ["Nudge/Services/ClaudeService.swift#L364", "Builds the date strings, the 28-day weekday table, the three system blocks and the messages array, then the body dictionary."],
+"REQ": ["Nudge/Services/ClaudeService.swift#L1493", "Private. Throws missingAPIKey if the key is empty, builds the URLRequest, sends, validates the status, decodes the envelope, picks the first text block."],
+"PARSE": ["Nudge/Services/ClaudeService.swift#L1567", "Private. normalizedJSONPayload (stripCodeFences, then extractJSONObject for the first balanced {…}), then JSONDecoder into ClaudeResponse."],
+"URLS": ["https://developer.apple.com/documentation/foundation/urlsession", "URLSession.shared.data(for: req). No custom session, no retry."],
+"API": ["Nudge/Services/ClaudeService.swift#L75", "https://api.anthropic.com/v1/messages"]
+}</script>
+    <figcaption>The typed message is the last entry of <code>messages</code>; everything else the user typed earlier rides in the history and in the third system block.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <p class="reads"><b>reads:</b> <code>Secrets.plist</code> ANTHROPIC_API_KEY, then Info.plist, then the environment (<a data-f="Nudge/Services/ClaudeService.swift#L19">apiKey</a>); <code>NudgeConfig.chatHistoryMaxMessages</code> 12; <code>captureModel</code> "claude-sonnet-5" (a DEBUG launch argument can override it); the device clock for every date string.</p>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">sendMessage → sendChat</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L377">HomeTabView.swift:377</a></td><td><code>conversationHistory</code>, <code>userMessage</code> (the typed text), <code>existingTasks</code>, <code>knownCommitmentSizes</code>, <code>activeGoals</code>.</td></tr>
+    <tr><td class="n">2</td><td class="k">sendChat → makeRequest</td><td><a data-f="Nudge/Services/ClaudeService.swift#L617">ClaudeService.swift:617–632</a></td><td>The body dictionary (table below).</td></tr>
+    <tr><td class="n">3</td><td class="k">makeRequest → URLSession</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1510">ClaudeService.swift:1510</a></td><td>The URLRequest: POST, four headers, <code>httpBody</code> from <code>JSONSerialization.data(withJSONObject: body)</code>.</td></tr>
+    <tr><td class="n">4</td><td class="k">URLSession → api.anthropic.com</td><td></td><td>HTTPS POST to <code>/v1/messages</code>.</td></tr>
+    <tr><td class="n">5, 6</td><td class="k">api.anthropic.com → URLSession → makeRequest</td><td></td><td>Returns <code>(Data, URLResponse)</code>.</td></tr>
+    <tr><td class="n">7</td><td class="k">makeRequest → parseResponse</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1539">ClaudeService.swift:1539</a></td><td>The text of the first content block whose type is nil or "text".</td></tr>
+    <tr><td class="n">8</td><td class="k">parseResponse → makeRequest</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1572">ClaudeService.swift:1572</a></td><td>Returns the decoded <code>ClaudeResponse</code>.</td></tr>
+    <tr><td class="n">9, 10</td><td class="k">makeRequest → sendChat → sendMessage</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1540">ClaudeService.swift:1540</a></td><td>Returns the response with <code>usage</code> copied on from the envelope.</td></tr>
+  </table></div>
+  <h3>The request</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Part</th><th>Value</th><th>Holds typed text</th></tr>
+    <tr><td class="k">URL, method</td><td><code>https://api.anthropic.com/v1/messages</code>, POST</td><td></td></tr>
+    <tr><td class="k">Headers</td><td><code>Content-Type: application/json</code> · <code>x-api-key</code>: the key · <code>anthropic-version: 2023-06-01</code> · <code>anthropic-beta: server-side-fallback-2026-07-01</code> (added because the body has <code>fallbacks</code>)</td><td></td></tr>
+    <tr><td class="k">model, limits</td><td><code>model</code> claude-sonnet-5 · <code>max_tokens</code> 8000 · <code>fallbacks</code> "default" · <code>output_config</code> {effort: "low"}</td><td></td></tr>
+    <tr><td class="k">system[0]</td><td><a data-f="Nudge/Services/ClaudeService.swift#L92">chatSystemPrompt</a>: the fixed rulebook. <code>cache_control</code> ephemeral.</td><td>no</td></tr>
+    <tr><td class="k">system[1]</td><td><a data-f="Nudge/Services/ClaudeService.swift#L442">dateBlock</a>: today, tomorrow, the date rules and a 28-day weekday → ISO date table. <code>cache_control</code> ephemeral.</td><td>no</td></tr>
+    <tr><td class="k">system[2]</td><td><a data-f="Nudge/Services/ClaudeService.swift#L531">perCallBlock</a>: the clock line; then, when non-empty, the current task list (id, title, priority, estimatedMinutes, category, dueDate), the known commitment sizes, and the goals as <code>G1: title</code>.</td><td>yes: task, commitment and goal titles</td></tr>
+    <tr><td class="k">messages</td><td>The last 12 entries of the history as <code>{role, content}</code>, then <code>{role: "user", content: userMessage}</code> (<a data-f="Nudge/Services/ClaudeService.swift#L599">ClaudeService.swift:599–604</a>).</td><td>yes: the message and today's earlier ones</td></tr>
+  </table></div>
+  <h3>How the reply is parsed</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Step</th><th>Code</th><th>Rule</th><th>Throws</th></tr>
+    <tr><td class="k">Status</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1544">validateResponse</a></td><td>Must be an HTTPURLResponse with status 200–299. Otherwise the body is decoded as <code>AnthropicErrorResponse</code> for its message.</td><td>invalidResponse · authenticationFailed (401) · rateLimitExceeded (429) · apiError</td></tr>
+    <tr><td class="k">Envelope</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1661">AnthropicResponse</a></td><td><code>JSONDecoder</code>: <code>content[]</code> of {type, text}, <code>model</code>, <code>usage</code> (input, output, cache read, cache creation tokens).</td><td>DecodingError</td></tr>
+    <tr><td class="k">Text block</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1526">ClaudeService.swift:1526</a></td><td>First block whose type is nil or "text", non-empty. Thinking blocks are skipped; later text blocks are discarded.</td><td>emptyResponse</td></tr>
+    <tr><td class="k">Clean</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1592">normalizedJSONPayload</a></td><td><a data-f="Nudge/Services/ClaudeService.swift#L1584">stripCodeFences</a> drops a leading <code>```json</code> or <code>```</code> and a trailing <code>```</code>; <a data-f="Nudge/Services/ClaudeService.swift#L1616">extractJSONObject</a> keeps the first balanced <code>{…}</code>, string-aware.</td><td></td></tr>
+    <tr><td class="k">Decode</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1734">ClaudeResponse</a></td><td><code>message</code> (required) · <code>new_tasks</code> → [<a data-f="Nudge/Services/ClaudeService.swift#L1820">TaskData</a>] · <code>task_updates</code> → [<a data-f="Nudge/Services/ClaudeService.swift#L1863">TaskUpdate</a>] · <code>plan_question</code> {title} · <code>plan_consent</code> [{title, wants}] · <code>settings_updates</code>.</td><td>parseError · DecodingError</td></tr>
+  </table></div>
+  <p class="note">Any throw is caught in <a data-f="Nudge/Views/Tabs/HomeTabView.swift#L600">sendMessage's catch</a>: it appends one assistant bubble (a fixed line per error case), calls <code>persistSession</code>, and writes no task rows.</p>
+</section>
+
+<section id="sec-3">
+  <h2>3 · Task rows <span class="src">capture-sequence-3-rows.mmd</span></h2>
+  <p class="intro">What the reply changes in the store's context, in the order the code does it: updates to existing rows first, then new rows, then the commitment start-day decision. Nothing is saved yet.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 3 of the capture path: every change the reply makes to task and goal rows before the save. Steps and the fields written are in the tables on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant WRITER as CaptureWriter.swift<br/>apply
+    participant FOLLOW as HomeTabView.swift<br/>commitmentStartDayFollowUp
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant GOALS as NudgeGoal rows<br/>NudgeGoal.swift
+    participant LOG as Capture log file<br/>CaptureHistoryExporter.swift
+  end
+  SEND->>TASKS: apply task_updates
+  SEND->>GOALS: recordActivity
+  SEND->>WRITER: apply
+  WRITER->>TASKS: clear sequenceIndex
+  WRITER->>TASKS: delete replaced duplicate
+  WRITER->>TASKS: insert rows
+  WRITER->>LOG: append line (DEBUG)
+  WRITER-->>SEND: returns CaptureWriteResult
+  SEND->>FOLLOW: created rows
+  FOLLOW->>TASKS: write start-day fields
+  FOLLOW-->>SEND: returns sentence or nil
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SEND": ["Nudge/Views/Tabs/HomeTabView.swift#L398", "Lines 398–520: the task_updates loop, the CaptureWriter call, and the start-day follow-up."],
+"WRITER": ["Nudge/Services/CaptureWriter.swift#L34", "apply(response:allTasks:goalContexts:modelContext:userMessage:writeLog:) → CaptureWriteResult(created, dropped). Inserts into the context; does not save."],
+"FOLLOW": ["Nudge/Views/Tabs/HomeTabView.swift#L660", "For each unexpanded commitment with its numbers known, ExamPrepSweep.startDayDecision picks tomorrowOnly, todayForced or choice. Returns at most one sentence to append to the reply."],
+"TASKS": ["Nudge/Models/NudgeTask.swift#L373", "SwiftData model. New rows carry source 'capture'."],
+"GOALS": ["Nudge/Models/NudgeGoal.swift#L48", "Written through NudgeGoal.recordActivity(goalID:in:): lastActivityAt moves forward only."],
+"LOG": ["Nudge/Services/CaptureHistoryExporter.swift#L68", "CaptureLog.record appends one JSON line to Documents/CaptureLog.jsonl: the typed message, the reply, the model's items, the rows written, the drops. The type exists only in DEBUG builds."]
+}</script>
+    <figcaption>Steps 1 and 2 run once per entry in <code>task_updates</code>; steps 4 to 6 once per entry in <code>new_tasks</code>.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <p class="reads"><b>reads:</b> <code>allTasks</code> (match by id, dedupe by title and day), <code>goalContexts</code> (ref → goal id), <code>NudgeConfig.defaultTimedIntentMinutes</code> 60, the user profile's day window in startDayDecision.</p>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">sendMessage → NudgeTask rows</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L398">HomeTabView.swift:398–492</a></td><td>For each update whose <code>id</code> matches a row: <code>estimatedMinutes</code>, <code>priority</code> (urgent folded to high), <code>title</code>, <code>category</code>, <code>isComplete</code> with <code>completedAt</code>, <code>commitmentDailyCount</code> (max 99), <code>commitmentStartDate</code> from "today" or "tomorrow". A changed date or time re-resolves <code>dueDate</code>, <code>dueTime</code>, <code>specificTime</code>; with <code>dueKind</code> "start" on a task those three are cleared and <code>setPlanDay</code> / <code>setPlanStart(auto: false)</code> are written instead.</td></tr>
+    <tr><td class="n">2</td><td class="k">sendMessage → NudgeGoal rows</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L415">HomeTabView.swift:415</a></td><td>Only when an update sets <code>isComplete</code> true on a task linked to a goal: <code>lastActivityAt</code> = now.</td></tr>
+    <tr><td class="n">3</td><td class="k">sendMessage → apply</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L497">HomeTabView.swift:497</a></td><td><code>response</code>, <code>allTasks</code>, <code>goalContexts</code>, <code>modelContext</code>, <code>userMessage</code>.</td></tr>
+    <tr><td class="n">4</td><td class="k">apply → NudgeTask rows</td><td><a data-f="Nudge/Services/CaptureWriter.swift#L47">CaptureWriter.swift:47</a></td><td>If any new item has a <code>sequenceIndex</code>, sets <code>sequenceIndex</code> to nil on every existing row that has one (one plan at a time).</td></tr>
+    <tr><td class="n">5</td><td class="k">apply → NudgeTask rows</td><td><a data-f="Nudge/Services/CaptureWriter.swift#L72">CaptureWriter.swift:72–106</a></td><td>Dedupe: an incomplete row whose title equals or contains the new title (or the reverse), on the same day when both have dates. If that row is overdue or has slipped it is deleted and replaced; otherwise the new item is dropped and recorded in <code>dropped</code>.</td></tr>
+    <tr><td class="n">6</td><td class="k">apply → NudgeTask rows</td><td><a data-f="Nudge/Services/CaptureWriter.swift#L149">CaptureWriter.swift:149–238</a></td><td><code>modelContext.insert</code> of one row per surviving item (fields below).</td></tr>
+    <tr><td class="n">7</td><td class="k">apply → Capture log file</td><td><a data-f="Nudge/Services/CaptureWriter.swift#L254">CaptureWriter.swift:254</a></td><td>DEBUG builds only: appends the message, reply, items, rows and drops.</td></tr>
+    <tr><td class="n">8</td><td class="k">apply → sendMessage</td><td><a data-f="Nudge/Services/CaptureWriter.swift#L251">CaptureWriter.swift:251</a></td><td>Returns <code>CaptureWriteResult(created:dropped:)</code>.</td></tr>
+    <tr><td class="n">9</td><td class="k">sendMessage → commitmentStartDayFollowUp</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L517">HomeTabView.swift:517</a></td><td>The newly created rows.</td></tr>
+    <tr><td class="n">10</td><td class="k">commitmentStartDayFollowUp → NudgeTask rows</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L687">HomeTabView.swift:687–700</a></td><td>tomorrowOnly: <code>commitmentStartDate</code> = tomorrow. choice (first one only): <code>commitmentStartAskedAt</code> = now. todayForced writes nothing.</td></tr>
+    <tr><td class="n">11</td><td class="k">commitmentStartDayFollowUp → sendMessage</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L702">HomeTabView.swift:702</a></td><td>Returns a sentence or nil; the sentence is appended to the reply text.</td></tr>
+  </table></div>
+  <h3>Fields on an inserted NudgeTask</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Field</th><th>Value</th></tr>
+    <tr><td class="k">title, category, estimatedMinutes, recurrence</td><td>As returned. <code>estimatedMinutes</code> becomes 60 when a start time was stated and no length was.</td></tr>
+    <tr><td class="k">source</td><td>"capture"</td></tr>
+    <tr><td class="k">isInformationalEvent</td><td><code>isEvent ?? false</code></td></tr>
+    <tr><td class="k">dueDate, dueTime, specificTime</td><td>Only for events and for tasks with <code>dueKind</code> "deadline". A bare date resolves to 23:59 of that day (<a data-f="Nudge/Services/CaptureWriter.swift#L262">parseDateString</a>); a clock string is combined with the day (<a data-f="Nudge/Services/CaptureWriter.swift#L298">parseSpecificTime</a>).</td></tr>
+    <tr><td class="k">plan day, plan start</td><td>Tasks only. A stated start time → <code>setPlanStart(auto: false)</code>; a stated day → <code>setPlanDay</code>; a deadline falling today → planned today; an ordered-plan item with no day → today.</td></tr>
+    <tr><td class="k">priority</td><td>As returned (default medium, urgent → high). A floater (task, no date, no time, not <code>dayPending</code>) is forced to low unless the model said high.</td></tr>
+    <tr><td class="k">sequenceIndex</td><td>Tasks only, from the stated order.</td></tr>
+    <tr><td class="k">stakes</td><td><code>setStakesFromAutomation(TaskStakes.parse(…))</code></td></tr>
+    <tr><td class="k">timeWindow, commitmentShape, commitmentDailyCount, commitmentSessionTitle</td><td>Tasks only. Unknown strings parse to nil; the count is capped at 99; the session title is kept only with a shape.</td></tr>
+    <tr><td class="k">goalID</td><td>Tasks only: the goal whose ref matches <code>goalRef</code>, else nil.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-4">
+  <h2>4 · Reply, session and save <span class="src">capture-sequence-4-session.mmd</span></h2>
+  <p class="intro">The reply bubble is appended to the view's <code>messages</code> state (<a data-f="Nudge/Views/Tabs/HomeTabView.swift#L521">HomeTabView.swift:521</a>): the model's <code>message</code>, or a fixed line when <code>ChatRouter.isEmptyCapture</code> finds no work in the reply. Then the study-plan keys, the chat transcript, and the save.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · stage 4 of the capture path: the study-plan question keys, the chat transcript row, and the save that persists everything from stage 3. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SEND as HomeTabView.swift<br/>sendMessage
+    participant PLAN as PlanProposalSweep.swift<br/>requestPlan
+    participant PERSIST as HomeTabView.swift<br/>persistSession
+    participant PQ as Plan question keys<br/>PlanProposalSweep.swift
+    participant SESS as DailySession rows<br/>DailySession.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant CTX as SwiftData<br/>ModelContext
+  end
+  SEND->>PQ: markAsked
+  SEND->>PLAN: requestPlan
+  SEND->>PQ: clear
+  SEND->>PERSIST: persistSession
+  PERSIST->>SESS: update or insert
+  SEND->>CTX: save
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SEND": ["Nudge/Views/Tabs/HomeTabView.swift#L529", "Lines 529–574: plan question and consent, persistSession, modelContext.save()."],
+"PLAN": ["Nudge/Services/PlanProposalSweep.swift#L395", "requestPlan(parentID:modelContext:onWritten:): the user said yes to a study plan, so build and write it at once. Drawn in picture 10."],
+"PERSIST": ["Nudge/Views/Tabs/HomeTabView.swift#L784", "Writes the whole chat of today into one DailySession row."],
+"PQ": ["Nudge/Services/PlanProposalSweep.swift#L130", "PlanQuestionStore: App Group keys nudge.planQuestion.parentID and nudge.planQuestion.day."],
+"SESS": ["Nudge/Models/DailySession.swift#L13", "SwiftData model. One row per day of chat: sessionText, chatTranscript, startedAt, taskCount, targetBedtime, targetWakeTime."],
+"CTX": ["https://developer.apple.com/documentation/swiftdata/modelcontext", "The view's environment modelContext, on the shared container whose store file is Nudge.store in the App Group container (SharedModelContainer.swift:78)."]
+}</script>
+    <figcaption>Step 6 is the first point at which stage 3's rows are on disk. If it throws, the user is told to send it again and the transcript is rewritten.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>When</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">sendMessage → Plan question keys</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L531">PlanQuestionStore.markAsked</a></td><td>The reply has <code>plan_question</code> and its title matches a task</td><td>Writes the parent task's id and today's day stamp.</td></tr>
+    <tr><td class="n">2</td><td class="k">sendMessage → requestPlan</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L537">HomeTabView.swift:537</a></td><td>The reply has <code>plan_consent</code> with <code>wants</code> true</td><td>The parent id, the context, and a closure that reloads the widget and reevaluates the arbiter once rows are written. With <code>wants</code> false: <code>PlanProposalSweep.decline</code> stores a declined decision instead.</td></tr>
+    <tr><td class="n">3</td><td class="k">sendMessage → Plan question keys</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L552">PlanQuestionStore.clear</a></td><td>The reply has <code>plan_consent</code></td><td>Removes both keys.</td></tr>
+    <tr><td class="n">4</td><td class="k">sendMessage → persistSession</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L555">HomeTabView.swift:555</a></td><td>Always</td><td>No arguments; reads <code>messages</code>.</td></tr>
+    <tr><td class="n">5</td><td class="k">persistSession → DailySession rows</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L789">HomeTabView.swift:789–806</a></td><td>Always</td><td>If the newest session started today, updates it; otherwise inserts a new row. <code>sessionText</code>: every user message joined by newlines. <code>chatTranscript</code>: all bubbles as JSON (id, role, text). <code>taskCount</code>: the number of user messages. A new row also gets <code>startedAt</code>, <code>targetBedtime</code>, <code>targetWakeTime</code>.</td></tr>
+    <tr><td class="n">6</td><td class="k">sendMessage → ModelContext</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L564">HomeTabView.swift:564</a></td><td>Always</td><td><code>try modelContext.save()</code>. On a throw: one more assistant bubble ("I couldn't save that just now…") and <code>persistSession</code> again.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-after">
+  <h2>After the save</h2>
+  <p class="intro"><code>sendMessage</code> makes five calls when the reply carried any new task or any update (<a data-f="Nudge/Views/Tabs/HomeTabView.swift#L576">HomeTabView.swift:576–599</a>). One caller feeding five things is a table, not arrows; each call's own picture follows and starts at the function called.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="n">Order</th><th class="k">sendMessage calls</th><th>Code</th><th>What it starts</th><th>Picture</th></tr>
+    <tr><td class="n">1</td><td class="k">WidgetCenter.shared.reloadTimelines(ofKind: "NudgeTaskWidget")</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L577">:577</a></td><td>The widget extension rebuilds its timeline from the store.</td><td><a href="#sec-5">5</a></td></tr>
+    <tr><td class="n">2</td><td class="k">NudgeIntelligence.shared.refreshSoon(for:)</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L581">:581</a></td><td>Once per new row: a second request to Anthropic with that row's title, and a TaskIntelligence row.</td><td><a href="#sec-6">6</a></td></tr>
+    <tr><td class="n">3</td><td class="k">ExamPrepSweep.shared.run(modelContext:)</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L589">:589</a></td><td>Expands a commitment whose numbers are known into a NudgeCommitment row and daily tasks; may trigger new notification copy.</td><td><a href="#sec-7">7</a>, <a href="#sec-8">8</a></td></tr>
+    <tr><td class="n">4</td><td class="k">PlanProposalSweep.shared.runIfNeeded(modelContext:)</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L592">:592</a></td><td>May send due-dated titles to Anthropic and store plan proposals.</td><td><a href="#sec-9">9</a></td></tr>
+    <tr><td class="n">5</td><td class="k">NudgeArbiter.shared.reevaluate(reason: .taskCreatedOrEdited, …)</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L594">:594</a></td><td>Cancels and reschedules every arbiter notification; writes outcome rows and the Screen Time snapshot.</td><td><a href="#sec-11">11</a></td></tr>
+  </table></div>
+  <ul class="note">
+    <li>Then <code>isWaitingForAI = false</code> (<a data-f="Nudge/Views/Tabs/HomeTabView.swift#L641">:641</a>), which removes the Thinking bubble and re-enables the send button through <code>ChatComposerStore</code>.</li>
+    <li>SwiftUI re-reads every <code>@Query</code> over the changed models in views that are on screen. On the Home tab that is HomeTabView's own queries; <code>MainTabView</code> shows one tab at a time (<a data-f="Nudge/Views/Tabs/MainTabView.swift#L26">MainTabView.swift:26</a>).</li>
+    <li>The Tasks tab's memo is keyed on a fingerprint of the task list. When that tab is next on screen the changed fingerprint is a cache miss and <a data-f="Nudge/Views/Tabs/TasksTabView.swift#L283">fetchTasksMemoIfNeeded</a> may send send-site 7 (<a data-f="Nudge/Views/Tabs/TasksTabView.swift#L782">onChange(of: memoFingerprint)</a>, and on appear at <a data-f="Nudge/Views/Tabs/TasksTabView.swift#L774">:774</a>).</li>
+    <li>The session picker's "Add your own" (send site 2) runs the same five calls from <a data-f="Nudge/Views/Tabs/TasksTabView.swift#L2392">createSessionItem</a>, unconditionally, and has no chat transcript.</li>
+  </ul>
+</section>
+
+<section id="sec-5">
+  <h2>5 · Widget reload <span class="src">capture-sequence-5-widget.mmd</span></h2>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 1: the widget extension rebuilds its timeline from the shared store. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant PROV as NudgeWidget.swift<br/>getTimeline
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant WK as WidgetKit<br/>WidgetCenter
+  end
+  WK->>PROV: getTimeline
+  PROV->>TASKS: fetch rows
+    </script>
+    <script type="application/json" class="mmd-links">{
+"PROV": ["NudgeWidget/NudgeWidget.swift#L351", "NudgeTaskProvider.getTimeline in the NudgeWidgetExtension target. Calls fetchTimelineState (line 359) and returns one entry with a next-update time."],
+"TASKS": ["Nudge/Models/NudgeTask.swift#L373", "Read through ModelContext(widgetModelContainer), which opens the same Nudge.store in the App Group container (NudgeWidget.swift:292)."],
+"WK": ["https://developer.apple.com/documentation/widgetkit/widgetcenter", "reloadTimelines(ofKind: 'NudgeTaskWidget') was called by sendMessage. The kind string matches the widget at NudgeWidget.swift:1426."]
+}</script>
+    <figcaption>The widget reads only: open tasks (limit 200), recent completions, and today's events.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">WidgetCenter → getTimeline</td><td><a data-f="NudgeWidget/NudgeWidget.swift#L1426">NudgeWidget.swift:1426</a></td><td>WidgetKit asks the provider registered for kind "NudgeTaskWidget" for a new timeline, in the extension process.</td></tr>
+    <tr><td class="n">2</td><td class="k">getTimeline → NudgeTask rows</td><td><a data-f="NudgeWidget/NudgeWidget.swift#L359">fetchTimelineState</a></td><td>Scoped fetches of open, recently completed and today's event rows. Writes nothing.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-6">
+  <h2>6 · Per-task signals <span class="src">capture-sequence-6-signals.mmd</span></h2>
+  <p class="intro">Runs once for each row stage 3 created. This is a second place the typed words leave the device: the row's title is the condensed form of what was typed.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 2: one request per new task for its two signals, cached in a TaskIntelligence row. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SOON as NudgeIntelligence.swift<br/>refreshSoon
+    participant NEED as NudgeIntelligence.swift<br/>refreshIfNeeded
+    participant ANALYZE as ClaudeService.swift<br/>analyzeTask
+    participant INTEL as TaskIntelligence rows<br/>TaskIntelligence.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  SOON->>NEED: refreshIfNeeded
+  NEED->>INTEL: read cached row
+  NEED->>ANALYZE: analyzeTask(userMessage)
+  ANALYZE->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>ANALYZE: returns data, response
+  ANALYZE-->>NEED: returns TaskSignals or nil
+  NEED->>INTEL: upsert and save
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SOON": ["Nudge/Services/NudgeIntelligence.swift#L81", "refreshSoon(for:in:). Single-flight per task id: a second call while one is in flight returns at once. Spawns a main-actor Task."],
+"NEED": ["Nudge/Services/NudgeIntelligence.swift#L94", "refreshIfNeeded(task:in:) → Bool. Builds Inputs (the prompt line and its SHA-256), skips the call on a fresh row with the same hash, otherwise calls and upserts."],
+"ANALYZE": ["Nudge/Services/ClaudeService.swift#L645", "analyzeTask(userMessage:) → TaskSignals {statedUrgency, suggestedFirstStep}. Builds its own URLRequest; no beta header."],
+"INTEL": ["Nudge/Models/TaskIntelligence.swift#L30", "SwiftData model keyed by taskID: statedUrgencyRaw, suggestedFirstStep, analyzedAt, inputHash."],
+"URLS": ["https://developer.apple.com/documentation/foundation/urlsession", "URLSession.shared.data(for: req) at ClaudeService.swift:667."],
+"API": ["Nudge/Services/ClaudeService.swift#L75", "https://api.anthropic.com/v1/messages"]
+}</script>
+    <figcaption>A failed call still writes a row: the keyword fallback, with the same hash, so the next refresh does not retry until the inputs change or 7 days pass.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">refreshSoon → refreshIfNeeded</td><td><a data-f="Nudge/Services/NudgeIntelligence.swift#L86">NudgeIntelligence.swift:86</a></td><td>The task and the shared container.</td></tr>
+    <tr><td class="n">2</td><td class="k">refreshIfNeeded → TaskIntelligence rows</td><td><a data-f="Nudge/Services/NudgeIntelligence.swift#L99">fetchCached</a></td><td>Reads the row for this task id. Fresh (<code>intelligenceCacheDays</code> 7) with a matching <code>inputHash</code> → return false, no call.</td></tr>
+    <tr><td class="n">3</td><td class="k">refreshIfNeeded → analyzeTask</td><td><a data-f="Nudge/Services/NudgeIntelligence.swift#L107">NudgeIntelligence.swift:107</a></td><td><code>userMessage</code>: <code>Task title: "…"</code>, <code>Category: …</code>, <code>Due: ISO 8601 or none</code> (<a data-f="Nudge/Services/NudgeIntelligence.swift#L132">Inputs</a>).</td></tr>
+    <tr><td class="n">4, 5</td><td class="k">analyzeTask → URLSession → api.anthropic.com</td><td><a data-f="Nudge/Services/ClaudeService.swift#L653">ClaudeService.swift:653–667</a></td><td>POST. Body: <code>model</code> claude-haiku-4-5-20251001, <code>max_tokens</code> 200, <code>system</code> (the two-signal instruction), <code>messages</code> [{user, userMessage}]. Headers: Content-Type, x-api-key, anthropic-version.</td></tr>
+    <tr><td class="n">6, 7</td><td class="k">api.anthropic.com → URLSession → analyzeTask</td><td><a data-f="Nudge/Services/ClaudeService.swift#L668">ClaudeService.swift:668–680</a></td><td>validateResponse, decode the envelope, first text block, stripCodeFences, extractJSONObject, decode <code>TaskSignals</code>.</td></tr>
+    <tr><td class="n">8</td><td class="k">analyzeTask → refreshIfNeeded</td><td><a data-f="Nudge/Services/NudgeIntelligence.swift#L107">try?</a></td><td>Returns the signals, or nil on any throw.</td></tr>
+    <tr><td class="n">9</td><td class="k">refreshIfNeeded → TaskIntelligence rows</td><td><a data-f="Nudge/Services/NudgeIntelligence.swift#L197">upsert</a></td><td>Updates or inserts the row (<code>statedUrgencyRaw</code>, <code>suggestedFirstStep</code>, <code>analyzedAt</code>, <code>inputHash</code>) on a new <code>ModelContext(container)</code> and saves it.</td></tr>
+  </table></div>
+  <p class="reads"><b>read later by:</b> <code>NudgeIntelligence.cachedIntelligence</code> in the arbiter's candidate builders, DayPlanEngine, DayPlanRefiner, and the task editor (TasksTabView.swift:3222).</p>
+</section>
+
+<section id="sec-7">
+  <h2>7 · Commitment sweep <span class="src">capture-sequence-7-commitments.mmd</span></h2>
+  <p class="intro">Does something only when a captured task carries a commitment shape ("an hour a day until Friday") and its numbers are known. Then the captured row is replaced by a commitment and one task per day.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 3: a captured commitment whose numbers are known becomes a NudgeCommitment row and daily tasks. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant RUN as ExamPrepSweep.swift<br/>run
+    participant PHASE as ExamPrepSweep.swift<br/>commitmentPhase
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant COMMIT as NudgeCommitment rows<br/>NudgeCommitment.swift
+    participant ANN as Commitment announcement<br/>ExamPrepSweep.swift
+    participant SHIFT as NudgeCopyService.swift<br/>noteShift
+  end
+  RUN->>PHASE: commitmentPhase
+  PHASE->>TASKS: read commitment parents
+  PHASE->>COMMIT: insert commitment
+  PHASE->>TASKS: delete parent row
+  PHASE->>TASKS: insert daily rows
+  PHASE->>ANN: write announcement keys
+  PHASE->>COMMIT: dailyMinutes, carryUnits
+  PHASE->>TASKS: quantity carry
+  PHASE-->>RUN: returns created count
+  RUN->>SHIFT: noteShift(.generatedWork)
+    </script>
+    <script type="application/json" class="mmd-links">{
+"RUN": ["Nudge/Services/ExamPrepSweep.swift#L350", "run(modelContext:now:) → Int. Also called at launch and on every foreground (ContentView.swift:126, 198). Saves when anything was created."],
+"PHASE": ["Nudge/Services/ExamPrepSweep.swift#L389", "Private. Step 1 expands ready parents, step 2 generates missing daily tasks, step 3 (applyQuantityCarry, line 659) rolls missed quantity units forward."],
+"TASKS": ["Nudge/Models/NudgeTask.swift#L373", "The captured parent row is deleted; daily rows carry source 'commitment' and linkedEventId = the commitment's id."],
+"COMMIT": ["Nudge/Models/NudgeCommitment.swift#L67", "SwiftData model: title, sessionTitle, shape, endDate, startDate, totalMinutes, dailyMinutes, dailyCount, stakesRaw, category, timeWindowRaw, createdAt, sourceTaskId, carryUnits."],
+"ANN": ["Nudge/Services/ExamPrepSweep.swift#L835", "App Group keys nudge.commitmentAnnouncement.* (title, shape, daysUntilEnd, dailyMinutes, dailyCount, startsTomorrow, createdAt). The Tasks message box reads them."],
+"SHIFT": ["Nudge/Services/NudgeCopyService.swift#L338", "NudgeCopyGenerator.noteShift(.generatedWork, modelContext:). Drawn in picture 8."]
+}</script>
+    <figcaption>A commitment still waiting on the start-today-or-tomorrow answer from stage 3 is skipped until the answer arrives.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <p class="reads"><b>reads:</b> PrepTombstone rows (days the user deleted are never recreated), UserProfile (day window for the start-day default), <code>NudgeConfig.commitmentHorizonDays</code>, <code>commitmentCarryCapDays</code>.</p>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">run → commitmentPhase</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L360">ExamPrepSweep.swift:360</a></td><td>The context, the tombstones, today, now.</td></tr>
+    <tr><td class="n">2</td><td class="k">commitmentPhase → NudgeTask rows</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L398">ExamPrepSweep.swift:398</a></td><td>Reads open non-event rows with a <code>commitmentShapeRaw</code>.</td></tr>
+    <tr><td class="n">3</td><td class="k">commitmentPhase → NudgeCommitment rows</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L461">ExamPrepSweep.swift:461–476</a></td><td>Inserts one commitment per ready parent, copying its title, session title, shape, end day, start day, minutes or count, stakes, category and time window.</td></tr>
+    <tr><td class="n">4</td><td class="k">commitmentPhase → NudgeTask rows</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L477">ExamPrepSweep.swift:477</a></td><td>Deletes the captured parent row.</td></tr>
+    <tr><td class="n">5</td><td class="k">commitmentPhase → NudgeTask rows</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L586">ExamPrepSweep.swift:586–609</a></td><td>Inserts one row per missing day: title = the session title, <code>dueDate</code> 23:59 of its day, priority medium, source "commitment", <code>estimatedMinutes</code> = daily minutes, <code>linkedEventId</code>, stakes and time window from the commitment, <code>targetCount</code> for a quantity.</td></tr>
+    <tr><td class="n">6</td><td class="k">commitmentPhase → Commitment announcement</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L620">writeCommitmentAnnouncement</a></td><td>Writes the keys once per run, for the soonest-ending commitment that got tasks.</td></tr>
+    <tr><td class="n">7</td><td class="k">commitmentPhase → NudgeCommitment rows</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L551">:551</a>, <a data-f="Nudge/Services/ExamPrepSweep.swift#L685">:685</a></td><td><code>dailyMinutes</code> from the split-work plan; <code>carryUnits</code> in the quantity carry.</td></tr>
+    <tr><td class="n">8</td><td class="k">commitmentPhase → NudgeTask rows</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L659">applyQuantityCarry</a></td><td>Deletes past daily rows of a quantity commitment after counting them; stamps <code>carriedCount</code> on today's row; saves if anything changed.</td></tr>
+    <tr><td class="n">9</td><td class="k">commitmentPhase → run</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L639">ExamPrepSweep.swift:639</a></td><td>Returns the number of rows created.</td></tr>
+    <tr><td class="n">10</td><td class="k">run → noteShift</td><td><a data-f="Nudge/Services/ExamPrepSweep.swift#L373">ExamPrepSweep.swift:373</a></td><td>Only when rows were created, after <code>modelContext.save()</code>: trigger <code>.generatedWork</code>.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-8">
+  <h2>8 · Notification copy <span class="src">capture-sequence-8-copy.mmd</span></h2>
+  <p class="intro">Reached from picture 7 (and picture 10) when generated work was written. Sends task titles to Anthropic again, this time to have notification lines written ahead of time.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · reached from the commitment sweep: one batched request that writes notification lines ahead of time into the App Group copy cache. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SHIFT as NudgeCopyService.swift<br/>noteShift
+    participant GEN as NudgeCopyService.swift<br/>generateIfNeeded
+    participant COPY as ClaudeService.swift<br/>generateNudgeCopy
+    participant CACHE as Copy cache keys<br/>NudgeCopyService.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  SHIFT->>GEN: generateIfNeeded
+  GEN->>CACHE: check throttles, stamp attempt
+  GEN->>COPY: generateNudgeCopy
+  COPY->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>COPY: returns data, response
+  COPY-->>GEN: returns bodies by index
+  GEN->>CACHE: save copy, history
+  GEN-->>SHIFT: returns true
+    </script>
+    <script type="application/json" class="mmd-links">{
+"SHIFT": ["Nudge/Services/NudgeCopyService.swift#L338", "noteShift(_:modelContext:). Fire-and-forget Task. When generateIfNeeded returns true it calls NudgeArbiter.reevaluate(.taskCreatedOrEdited) at line 344: picture 11."],
+"GEN": ["Nudge/Services/NudgeCopyService.swift#L246", "generateIfNeeded(trigger:modelContext:now:) → Bool. Throttles: at least copyGenMinMinutesBetween 15 since the last attempt, at most copyGenMaxPerDay 6 a day. buildRequests (line 373) picks the tasks."],
+"COPY": ["Nudge/Services/ClaudeService.swift#L947", "generateNudgeCopy(requests:userName:recentBodies:) → [Int: String]. One request for every notification kind."],
+"CACHE": ["Nudge/Services/NudgeCopyService.swift#L67", "App Group keys: nudge.copy.cache, nudge.copy.generatedAt, nudge.copy.history, nudge.copy.countDay, nudge.copy.count, nudge.copyGen.lastRunDay, nudge.copyGen.lastAttempt."],
+"URLS": ["https://developer.apple.com/documentation/foundation/urlsession", "URLSession.shared.data(for: req) at ClaudeService.swift:1034."],
+"API": ["Nudge/Services/ClaudeService.swift#L75", "https://api.anthropic.com/v1/messages"]
+}</script>
+    <figcaption>The arbiter reads this cache when it schedules; any miss falls back to the builder's fixed template.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <p class="reads"><b>reads:</b> up to 80 open NudgeTask rows (<a data-f="Nudge/Services/NudgeCopyService.swift#L373">buildRequests</a>), UserProfile.name (first word only), <code>NudgeConfig.copyGenTasksPerKind</code>, <code>copyCacheDays</code> 3, <code>copyHistoryLimit</code>.</p>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">noteShift → generateIfNeeded</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L340">NudgeCopyService.swift:340</a></td><td>The trigger (<code>.generatedWork</code>) and the context.</td></tr>
+    <tr><td class="n">2</td><td class="k">generateIfNeeded → Copy cache keys</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L263">:263–296</a></td><td>Reads lastRunDay, lastAttempt and today's count; returns false when throttled. Writes lastAttempt = now before the call. Reads the history for the prompt.</td></tr>
+    <tr><td class="n">3</td><td class="k">generateIfNeeded → generateNudgeCopy</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L300">NudgeCopyService.swift:300</a></td><td><code>requests</code>: per item an index, a kind, the task title, a due phrase and the placeholders it may use. <code>userName</code>: the first name. <code>recentBodies</code>: the history.</td></tr>
+    <tr><td class="n">4, 5</td><td class="k">generateNudgeCopy → URLSession → api.anthropic.com</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1019">ClaudeService.swift:1019–1034</a></td><td>POST. Body: <code>model</code> claude-sonnet-5, <code>max_tokens</code> 3000, <code>output_config</code> {effort: "low"}, <code>system</code>, <code>messages</code> [{user, prompt}]. The prompt lists each item as <code>index. kind=… | subject: "title" | context: due phrase | placeholders available: …</code>.</td></tr>
+    <tr><td class="n">6, 7</td><td class="k">api.anthropic.com → URLSession → generateNudgeCopy</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1053">decodeGeneratedCopy</a></td><td>validateResponse, envelope, first text block, strip fences, take <code>[ … ]</code>, then row by row: keep a row with an in-range <code>index</code> and a <code>body</code> of 12 or more characters that is not "placeholder". No usable row → parseError.</td></tr>
+    <tr><td class="n">8</td><td class="k">generateNudgeCopy → generateIfNeeded</td><td></td><td>Returns <code>[index: body]</code>.</td></tr>
+    <tr><td class="n">9</td><td class="k">generateIfNeeded → Copy cache keys</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L315">:315–318</a></td><td><code>NudgeCopyStore.save</code> (entries: kind, task id, task title, due at generation, body · generatedAt), <code>recordGeneration</code>, <code>appendHistory</code>, lastRunDay = today.</td></tr>
+    <tr><td class="n">10</td><td class="k">generateIfNeeded → noteShift</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L341">NudgeCopyService.swift:341</a></td><td>Returns true when new copy was cached. noteShift then calls the arbiter (picture 11).</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-9">
+  <h2>9 · Plan proposals <span class="src">capture-sequence-9-plans.mmd</span></h2>
+  <p class="intro">Asks whether any due-dated item within 21 days deserves a study or preparation plan. Proposes only: the decisions are stored and the Tasks message box asks Yes or No later.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 4: due-dated items are judged for a preparation plan and the verdicts stored in App Group defaults. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant RUNP as PlanProposalSweep.swift<br/>runIfNeeded
+    participant PROPOSE as ClaudeService.swift<br/>proposePlans
+    participant DEC as Plan decisions<br/>PlanProposalSweep.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant URLS as Foundation<br/>URLSession
+    participant NC as Foundation<br/>NotificationCenter
+  end
+  box rgba(179,64,31,0.14) External service
+    participant API as api.anthropic.com<br/>POST /v1/messages
+  end
+  RUNP->>DEC: read decisions, call count
+  RUNP->>DEC: noteCall
+  RUNP->>PROPOSE: proposePlans(candidates)
+  PROPOSE->>URLS: send URLRequest
+  URLS->>API: POST JSON body
+  API-->>URLS: HTTP response
+  URLS-->>PROPOSE: returns data, response
+  PROPOSE-->>RUNP: returns results or nil
+  RUNP->>DEC: write decisions
+  RUNP->>NC: post nudgePlanProposalsChanged
+    </script>
+    <script type="application/json" class="mmd-links">{
+"RUNP": ["Nudge/Services/PlanProposalSweep.swift#L308", "runIfNeeded(modelContext:now:). Returns at once; the call runs in a Task. First runs applyUserPlanOverrides (line 216), which deletes app-made prep rows when one of the user's own tasks reads as their plan."],
+"PROPOSE": ["Nudge/Services/ClaudeService.swift#L1396", "proposePlans(candidates:) → [PlanProposalResult {id, worth_plan, reason, sessions[{title, dayOffset, minutes}]}]. Results whose id was not asked about are dropped."],
+"DEC": ["Nudge/Services/PlanProposalSweep.swift#L68", "PlanProposalStore: App Group keys nudge.planProposals (JSON of decisions per parent id), nudge.planProposals.callsDay, nudge.planProposals.callsCount."],
+"URLS": ["https://developer.apple.com/documentation/foundation/urlsession", "URLSession.shared.data(for: req) at ClaudeService.swift:1455."],
+"NC": ["https://developer.apple.com/documentation/foundation/notificationcenter", "NotificationCenter.default.post(name: .nudgePlanProposalsChanged). Observed by TasksTabView.swift:777, which re-reads currentProposal."],
+"API": ["Nudge/Services/ClaudeService.swift#L75", "https://api.anthropic.com/v1/messages"]
+}</script>
+    <figcaption>No request is made when the message box is off, a call is in flight, two calls were already made today, or no candidate is left.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <p class="reads"><b>reads:</b> UserProfile.tasksMessageBoxEnabled, up to 300 open NudgeTask rows, the plan question keys, <code>NudgeConfig.planProposalCallsPerDay</code> 2, <code>planProposalBatchSize</code> 5, <code>planProposalHorizonDays</code> 21.</p>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L317">:317</a>, <a data-f="Nudge/Services/PlanProposalSweep.swift#L263">candidates</a></td><td>Reads today's call count and the stored decisions (an item already decided for the same anchor day is not a candidate).</td></tr>
+    <tr><td class="n">2</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L357">PlanProposalStore.noteCall</a></td><td>Writes the day stamp and the incremented count, before the call.</td></tr>
+    <tr><td class="n">3</td><td class="k">runIfNeeded → proposePlans</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L360">PlanProposalSweep.swift:360</a></td><td>Up to 5 candidates: id, title, kind (task or event), anchor line ("in 18 days (…)"), days until, category, stakes, estimate.</td></tr>
+    <tr><td class="n">4, 5</td><td class="k">proposePlans → URLSession → api.anthropic.com</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1438">ClaudeService.swift:1438–1455</a></td><td>POST. Body: <code>model</code> claude-opus-5, <code>max_tokens</code> 4000, <code>fallbacks</code> "default", <code>output_config</code> {effort: "low"}, <code>system</code>, <code>messages</code> [{user, prompt}]. Adds the <code>anthropic-beta</code> fallback header.</td></tr>
+    <tr><td class="n">6, 7</td><td class="k">api.anthropic.com → URLSession → proposePlans</td><td><a data-f="Nudge/Services/ClaudeService.swift#L1456">ClaudeService.swift:1456–1488</a></td><td>validateResponse, envelope, first text block, strip fences, take <code>[ … ]</code>, decode <code>[PlanProposalResult]</code>.</td></tr>
+    <tr><td class="n">8</td><td class="k">proposePlans → runIfNeeded</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L360">try?</a></td><td>Returns the results, or nil on any throw (then nothing is stored).</td></tr>
+    <tr><td class="n">9</td><td class="k">runIfNeeded → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L372">:372–384</a></td><td>One decision per result: status proposed or notWorth, anchor stamp, parent title, reason, the sessions after <a data-f="Nudge/Services/PlanProposalSweep.swift#L461">validSessions</a> clamps them.</td></tr>
+    <tr><td class="n">10</td><td class="k">runIfNeeded → NotificationCenter</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L385">PlanProposalSweep.swift:385</a></td><td>Posts <code>.nudgePlanProposalsChanged</code>. A Yes in the message box later calls <a data-f="Nudge/Services/PlanProposalSweep.swift#L527">accept</a>, which writes the rows shown in picture 10.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-10">
+  <h2>10 · Plan consent <span class="src">capture-sequence-10-consent.mmd</span></h2>
+  <p class="intro">Reached from stage 4, step 2: the user typed yes to "Want me to build a study plan for …?" and the reply carried <code>plan_consent</code>. The request leg from <code>proposePlans</code> to Anthropic is the same as steps 4 to 7 of picture 9 and is not redrawn.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · reached from stage 4 when the user said yes to a study plan: the plan is built and its session rows written at once. The network leg of proposePlans is drawn in picture 9. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant PLAN as PlanProposalSweep.swift<br/>requestPlan
+    participant PROPOSE as ClaudeService.swift<br/>proposePlans
+    participant ACCEPT as PlanProposalSweep.swift<br/>accept
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant DEC as Plan decisions<br/>PlanProposalSweep.swift
+    participant ANNP as Prep announcement<br/>ExamPrepSweep.swift
+  end
+  PLAN->>DEC: noteCall
+  PLAN->>PROPOSE: proposePlans(consented)
+  PROPOSE-->>PLAN: returns results
+  PLAN->>DEC: set proposed or notWorth
+  PLAN->>ACCEPT: accept(proposal)
+  ACCEPT->>TASKS: insert prep rows, save
+  ACCEPT->>DEC: set accepted
+  ACCEPT-->>PLAN: returns rows written
+  PLAN->>ANNP: writeAnnouncement
+    </script>
+    <script type="application/json" class="mmd-links">{
+"PLAN": ["Nudge/Services/PlanProposalSweep.swift#L395", "requestPlan(parentID:modelContext:now:onWritten:). Fetches the parent row; returns if it is complete, cannot be prepared for, or is due today."],
+"PROPOSE": ["Nudge/Services/ClaudeService.swift#L1396", "Same function as picture 9, with one candidate marked consented: true, which adds 'THE USER ALREADY ASKED FOR THIS PLAN' to its line."],
+"ACCEPT": ["Nudge/Services/PlanProposalSweep.swift#L527", "accept(_:modelContext:now:) → Int. One NudgeTask per session, skipping tombstoned days and sessions that already exist."],
+"TASKS": ["Nudge/Models/NudgeTask.swift#L373", "Session rows carry source 'prep' and linkedEventId = the parent's id. Scheduled on a day, never due."],
+"DEC": ["Nudge/Services/PlanProposalSweep.swift#L68", "PlanProposalStore: App Group key nudge.planProposals and the per-day call counter."],
+"ANNP": ["Nudge/Services/ExamPrepSweep.swift#L779", "App Group keys nudge.prepAnnouncement.examTitle, daysUntil, createdAt (shownAt removed). The Tasks message box announces the added study time."]
+}</script>
+    <figcaption>After step 9 the closure from stage 4 runs: widget reload and an arbiter reevaluate, when at least one row was written.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <p class="reads"><b>reads:</b> the parent NudgeTask row (title, due date, category, stakes, estimate), PrepTombstone rows, existing rows linked to the parent.</p>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">requestPlan → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L429">PlanProposalStore.noteCall</a></td><td>Increments today's call count.</td></tr>
+    <tr><td class="n">2</td><td class="k">requestPlan → proposePlans</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L432">PlanProposalSweep.swift:432</a></td><td>One candidate: the parent's id, title, kind, anchor line, days until, category, stakes, estimate, <code>consented: true</code>.</td></tr>
+    <tr><td class="n">3</td><td class="k">proposePlans → requestPlan</td><td></td><td>Returns the results; the first is used. Nil ends here with nothing written.</td></tr>
+    <tr><td class="n">4</td><td class="k">requestPlan → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L437">:437</a>, <a data-f="Nudge/Services/PlanProposalSweep.swift#L444">:444</a></td><td>No valid session → status notWorth and stop. Otherwise status proposed with the sessions.</td></tr>
+    <tr><td class="n">5</td><td class="k">requestPlan → accept</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L448">PlanProposalSweep.swift:448</a></td><td>The proposal: parent id, title, reason, sessions.</td></tr>
+    <tr><td class="n">6</td><td class="k">accept → NudgeTask rows</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L554">:554–568</a></td><td>Inserts one row per session: title, the parent's priority and category, source "prep", <code>estimatedMinutes</code>, <code>linkedEventId</code>, <code>setPlanDay(day)</code>, the parent's stakes. Then <code>modelContext.save()</code> and <code>NudgeCopyGenerator.noteShift(.generatedWork)</code> (picture 8).</td></tr>
+    <tr><td class="n">7</td><td class="k">accept → Plan decisions</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L576">:576–579</a></td><td>Status accepted; then posts <code>.nudgePlanProposalsChanged</code>.</td></tr>
+    <tr><td class="n">8</td><td class="k">accept → requestPlan</td><td></td><td>Returns the number of rows written.</td></tr>
+    <tr><td class="n">9</td><td class="k">requestPlan → Prep announcement</td><td><a data-f="Nudge/Services/PlanProposalSweep.swift#L452">ExamPrepSweep.writeAnnouncement</a></td><td>When rows were written: the exam title and days until. Then <code>onWritten(written)</code> (<a data-f="Nudge/Views/Tabs/HomeTabView.swift#L537">HomeTabView.swift:537–545</a>).</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-11">
+  <h2>11 · Arbiter run <span class="src">capture-sequence-11-arbiter.mmd</span></h2>
+  <p class="intro">Every notification decision is rebuilt from the changed rows. Shown here as one box with what it writes; the gates and builders inside it are drawn on the Nudge Notification Flow page (<code>docs/diagrams/notification-flow.html</code>).</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · after the save, call 5: the arbiter cancels and reschedules its notifications from the changed rows, then writes the Screen Time snapshot. Callers and steps are in the tables on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant REEVAL as NudgeArbiter.swift<br/>reevaluate
+    participant SNAP as DistractionMonitor.swift<br/>writeSnapshot
+    participant OUT as NudgeOutcome rows<br/>NudgeOutcome.swift
+    participant KEYS as Arbiter keys<br/>NudgeArbiter.swift
+    participant SNAPKEY as Screen Time snapshot<br/>DistractionSettings.swift
+  end
+  box rgba(93,100,113,0.16) OS framework
+    participant UNC as UserNotifications<br/>UNUserNotificationCenter
+  end
+  REEVAL->>UNC: remove pending requests
+  REEVAL->>KEYS: clear ids, prune
+  REEVAL->>OUT: delete future pending
+  REEVAL->>UNC: add request
+  REEVAL->>KEYS: record id, fire time
+  REEVAL->>OUT: insert pending row
+  REEVAL->>SNAP: writeSnapshot
+  SNAP->>SNAPKEY: save snapshot
+    </script>
+    <script type="application/json" class="mmd-links">{
+"REEVAL": ["Nudge/Services/NudgeArbiter.swift#L345", "reevaluate(reason:profile:modelContext:). The reason here is .taskCreatedOrEdited, which is never debounced. cancelAll, then (if notifications are enabled) ten candidate builders, passesGates, pickWinners, schedule for each winner, writeSnapshot."],
+"SNAP": ["Nudge/Services/DistractionMonitor.swift#L219", "writeSnapshot(profile:modelContext:now:). Today's day window, bedtime, the open items on today's lens and today's events with their titles, and the last moment work happened."],
+"OUT": ["Nudge/Models/NudgeOutcome.swift#L248", "SwiftData model: one row per scheduled notification (kind, notificationID, taskID, scheduledFor, estimatedMinutes), result pending."],
+"KEYS": ["Nudge/Services/NudgeArbiter.swift#L180", "App Group keys: nudge.arb.scheduledIDs and the history maps (event reminder, due soon, placement missed, goal lapse, morning prompt)."],
+"SNAPKEY": ["Nudge/Models/DistractionSettings.swift#L52", "DistractionSnapshot, JSON in App Group defaults. Read by the Screen Time extension (DeviceActivityMonitorExtension.swift:79), which cannot open the store."],
+"UNC": ["https://developer.apple.com/documentation/usernotifications/unusernotificationcenter", "removePendingNotificationRequests(withIdentifiers:) and add(_:). Local notifications; the content stays on the device."]
+}</script>
+    <figcaption>Task titles the user typed reach notification text and the Screen Time snapshot here. Both stay on the device.</figcaption>
+    <h3>Boxes</h3>
+    <div class="tablewrap boxes"></div>
+  </figure>
+  <p class="reads"><b>reads:</b> NudgeTask, UserProfile, NudgeGoal, CompletedTaskRecord and NudgeOutcome rows, TaskIntelligence rows (picture 6), the copy cache (picture 8), AppOpenLog, NudgeConfig.</p>
+  <h3>Callers on this path</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Caller</th><th>Code</th><th>When</th></tr>
+    <tr><td class="k">HomeTabView.sendMessage</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L594">HomeTabView.swift:594</a></td><td>After the save, when the reply had new tasks or updates.</td></tr>
+    <tr><td class="k">sendMessage's onWritten closure</td><td><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L540">HomeTabView.swift:540</a></td><td>After requestPlan wrote session rows (picture 10).</td></tr>
+    <tr><td class="k">NudgeCopyGenerator.noteShift</td><td><a data-f="Nudge/Services/NudgeCopyService.swift#L344">NudgeCopyService.swift:344</a></td><td>After new notification copy was cached (picture 8).</td></tr>
+    <tr><td class="k">TasksTabView.refreshNotifications</td><td><a data-f="Nudge/Views/Tabs/TasksTabView.swift#L2397">TasksTabView.swift:2397</a></td><td>The session picker's "Add your own" (send site 2).</td></tr>
+    <tr><td class="k">DayPlanRefiner.refine</td><td><a data-f="Nudge/Services/DayPlanRefiner.swift#L156">DayPlanRefiner.swift:156</a></td><td>The plan-phrase exit from stage 1, after placements are applied.</td></tr>
+  </table></div>
+  <h3>Steps</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="n">#</th><th class="k">From → to</th><th>Code</th><th>What is passed, read or written</th></tr>
+    <tr><td class="n">1</td><td class="k">reevaluate → UNUserNotificationCenter</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L538">cancelAll</a></td><td>Removes every pending request whose id is in scheduledIDs.</td></tr>
+    <tr><td class="n">2</td><td class="k">reevaluate → Arbiter keys</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L539">:539–585</a></td><td>Clears scheduledIDs; prunes the history maps.</td></tr>
+    <tr><td class="n">3</td><td class="k">reevaluate → NudgeOutcome rows</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L608">:608–617</a></td><td>Deletes pending rows scheduled in the future, saves, then prunes rows older than the 14-day window.</td></tr>
+    <tr><td class="n">4</td><td class="k">reevaluate → UNUserNotificationCenter</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4129">schedule</a></td><td><code>center.add(request)</code> per winner: styled title, body from <a data-f="Nudge/Services/NudgeArbiter.swift#L4214">resolvedBody</a> (cached copy or template), category, userInfo (kind, taskID, goalID), a calendar trigger at the fire date.</td></tr>
+    <tr><td class="n">5</td><td class="k">reevaluate → Arbiter keys</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4132">:4132–4183</a></td><td>Adds the id to scheduledIDs; records the fire time in the kind's history map.</td></tr>
+    <tr><td class="n">6</td><td class="k">reevaluate → NudgeOutcome rows</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L4189">:4189–4197</a></td><td>Inserts one pending row per scheduled request and saves.</td></tr>
+    <tr><td class="n">7</td><td class="k">reevaluate → writeSnapshot</td><td><a data-f="Nudge/Services/NudgeArbiter.swift#L482">NudgeArbiter.swift:482</a></td><td>The profile and the context.</td></tr>
+    <tr><td class="n">8</td><td class="k">writeSnapshot → Screen Time snapshot</td><td><a data-f="Nudge/Services/DistractionMonitor.swift#L251">DistractionMonitor.swift:251</a></td><td><code>DistractionSnapshot(…).save(to: defaults)</code>.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-dead">
+  <h2>Exists but has no effect</h2>
+  <p class="intro">On the capture path. None of these sits on the main path as a step, so none is drawn.</p>
+  <ol class="dead">
+    <li><a data-f="Nudge/Services/ClaudeService.swift#L1742">ClaudeResponse.settingsUpdates</a> (<code>settings_updates</code>) is decoded and never read. The prompt does not ask for it.</li>
+    <li><a data-f="Nudge/Services/ClaudeService.swift#L1832">TaskData.dependsOnTask</a> (<code>depends_on_task</code>) is decoded and never read; CaptureWriter does not resolve it.</li>
+    <li><a data-f="Nudge/Services/CaptureWriter.swift#L158">TaskData.recurrence → NudgeTask.recurrence</a> is stored on the new row and read by nothing. The prompt's item format has no recurrence field and tells the model to expand repeats into separate events.</li>
+    <li><a data-f="Nudge/Services/CaptureWriter.swift#L199">CaptureWriter.swift:199</a>: the <code>if isEvent { }</code> branch is empty; only its comment (a study-lead band) remains.</li>
+    <li><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L790">DailySession.sessionText</a> is written on every turn and read by nothing. <code>taskCount</code>, shown in Stats as "tasks captured", is the number of user messages, not of tasks.</li>
+    <li><a data-f="Nudge/Views/Tabs/HomeTabView.swift#L21">HomeTabView.incompleteTasks</a>: a <code>@Query</code> that is declared and never used; the context list is filtered from <code>allTasks</code> instead.</li>
+    <li><a data-f="Nudge/Services/ClaudeService.swift#L1891">GeneratedCopyJSON</a>: a private Codable struct nothing decodes into; <code>decodeGeneratedCopy</code> reads rows with JSONSerialization.</li>
+    <li><a data-f="Nudge/Services/CaptureHistoryExporter.swift#L28">CaptureLog</a> and <a data-f="Nudge/Services/EvalHarness.swift#L620">EvalHarness</a> are compiled in DEBUG only. In a Release build step 7 of stage 3 does not exist.</li>
+  </ol>
+</section>
+
+<section id="sec-scope">
+  <h2>Scope</h2>
+  <p class="intro">Read from source at <code>ede6774</code>: Swift, plist, entitlements and the Xcode project file. No documentation files were read.</p>
+  <ul class="note">
+    <li><strong>Targets</strong> (<code>Nudge.xcodeproj/project.pbxproj</code>): Nudge, NudgeWidgetExtension, NudgeActivityMonitor, NudgeActivityReport. Only the Nudge target contains a URLSession call. The project references no Swift packages.</li>
+    <li><strong>Entitlements</strong> (<code>Nudge/Nudge.entitlements</code>): family-controls and the App Group <code>group.com.deblaser.nudge</code>. No iCloud or CloudKit entitlement, so the SwiftData store does not sync.</li>
+    <li><strong>Info.plist</strong> (<code>Nudge/Info.plist</code>): background task id, calendar usage string, fonts, background fetch. No App Transport Security exceptions.</li>
+    <li><strong>Working tree</strong>: <code>Nudge/Views/Components/TodayTimelineView.swift</code> has uncommitted changes. It is not on this path and is not linked from this page.</li>
+  </ul>
+</section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var BASE = 'https://github.com/deblaseroman/nudge-app/blob/ede6774/';
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function fileUrl(p) { return /^https?:/.test(p) ? p : BASE + p; }
+
+  document.querySelectorAll('a[data-f]').forEach(function (a) {
+    a.setAttribute('href', fileUrl(a.getAttribute('data-f')));
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener');
+  });
+
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function isDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function themeVars() {
+    return {
+      fontFamily: cssVar('--font-body') || 'sans-serif',
+      fontSize: '13px',
+      primaryColor: cssVar('--node'),
+      primaryTextColor: cssVar('--fg'),
+      primaryBorderColor: cssVar('--node-border'),
+      secondaryColor: cssVar('--node'),
+      tertiaryColor: cssVar('--cluster'),
+      lineColor: cssVar('--edge'),
+      textColor: cssVar('--fg'),
+      mainBkg: cssVar('--node'),
+      actorBkg: cssVar('--node'),
+      actorBorder: cssVar('--node-border'),
+      actorTextColor: cssVar('--fg'),
+      actorLineColor: cssVar('--cluster-border'),
+      signalColor: cssVar('--edge'),
+      signalTextColor: cssVar('--fg'),
+      labelBoxBkgColor: cssVar('--cluster'),
+      labelBoxBorderColor: cssVar('--cluster-border'),
+      labelTextColor: cssVar('--fg'),
+      loopTextColor: cssVar('--fg'),
+      noteBkgColor: cssVar('--cluster'),
+      noteBorderColor: cssVar('--cluster-border'),
+      noteTextColor: cssVar('--fg'),
+      activationBkgColor: cssVar('--cluster'),
+      activationBorderColor: cssVar('--cluster-border'),
+      sequenceNumberColor: cssVar('--surface')
+    };
+  }
+
+  var KIND_CLASS = { 'App code': 'app', 'OS framework': 'os', 'External service': 'ext' };
+
+  // Boxes of a figure, in order, from its Mermaid source: id, the two label lines, and the kind of the box group it sits in.
+  function parseBoxes(src) {
+    var boxes = [], kind = '';
+    src.split('\n').forEach(function (line) {
+      var m;
+      if ((m = line.match(/^\s*box\s+(?:rgba?\([^)]*\)\s*)?(.*)$/))) { kind = m[1].trim(); return; }
+      if (/^\s*end\s*$/.test(line)) { kind = ''; return; }
+      if ((m = line.match(/^\s*participant\s+(\w+)\s+as\s+(.*)$/))) {
+        var parts = m[2].trim().split(/<br\s*\/?>/);
+        boxes.push({ id: m[1], line1: parts[0] || '', line2: parts[1] || '', kind: kind });
+      }
+    });
+    return boxes;
+  }
+
+  function linksOf(fig) {
+    var el = fig.querySelector('.mmd-links');
+    if (!el) return {};
+    try { return JSON.parse(el.textContent); } catch (e) { return {}; }
+  }
+
+  function buildBoxTable(fig, boxes, links) {
+    var holder = fig.querySelector('.boxes');
+    if (!holder) return;
+    var table = document.createElement('table');
+    var head = document.createElement('tr');
+    ['Box', 'Kind', 'What it stands for'].forEach(function (h, i) {
+      var th = document.createElement('th'); th.textContent = h; if (i < 2) th.className = 'k'; head.appendChild(th);
+    });
+    table.appendChild(head);
+    boxes.forEach(function (b) {
+      var info = links[b.id] || [];
+      var tr = document.createElement('tr');
+      var td1 = document.createElement('td'); td1.className = 'k';
+      var a = document.createElement('a');
+      a.textContent = b.line1 + ' · ' + b.line2;
+      if (info[0]) { a.href = fileUrl(info[0]); a.target = '_blank'; a.rel = 'noopener'; }
+      a.style.fontFamily = 'var(--font-mono)'; a.style.fontSize = '12.5px';
+      td1.appendChild(a);
+      var td2 = document.createElement('td'); td2.className = 'k';
+      var chip = document.createElement('span');
+      chip.className = 'kind ' + (KIND_CLASS[b.kind] || 'app');
+      chip.textContent = b.kind.toLowerCase();
+      td2.appendChild(chip);
+      var td3 = document.createElement('td'); td3.textContent = info[1] || '';
+      tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+      table.appendChild(tr);
+    });
+    holder.innerHTML = '';
+    holder.appendChild(table);
+  }
+
+  // Sequence diagrams have no click or tooltip syntax, so each participant box is wrapped in a link to its file and given a title after rendering.
+  function wireActors(stage, boxes, links) {
+    var byId = {};
+    boxes.forEach(function (b) { byId[b.id] = b; });
+    var rects = Array.prototype.slice.call(stage.querySelectorAll('rect.actor'));
+    rects.forEach(function (rect, i) {
+      var box = byId[rect.getAttribute('name')] || boxes[i % (boxes.length || 1)];
+      if (!box) return;
+      var info = links[box.id];
+      if (!info || !info[0]) return;
+      var g = rect.parentNode;
+      if (!g || !g.parentNode || (g.parentNode.tagName || '').toLowerCase() === 'a') return;
+      var a = document.createElementNS(SVGNS, 'a');
+      a.setAttribute('href', fileUrl(info[0]));
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener');
+      g.parentNode.insertBefore(a, g);
+      a.appendChild(g);
+      var title = document.createElementNS(SVGNS, 'title');
+      title.textContent = box.line1 + ' · ' + box.line2 + ' (' + box.kind.toLowerCase() + '). ' + (info[1] || '');
+      g.insertBefore(title, g.firstChild);
+    });
+  }
+
+  var figures = Array.prototype.slice.call(document.querySelectorAll('figure'));
+
+  async function renderOne(fig, index) {
+    var src = fig.querySelector('.mmd-src').textContent.trim();
+    var stage = fig.querySelector('.stage');
+    var status = fig.querySelector('.status');
+    var canvas = fig.querySelector('.canvas');
+    var boxes = parseBoxes(src);
+    var links = linksOf(fig);
+    buildBoxTable(fig, boxes, links);
+    var old = canvas.querySelector('pre.fallback');
+    if (old) old.remove();
+    try {
+      var out = await mermaid.render('nudge-capture-' + index + '-' + Date.now(), src);
+      stage.innerHTML = out.svg;
+      if (out.bindFunctions) out.bindFunctions(stage);
+      stage.hidden = false;
+      status.hidden = true;
+      wireActors(stage, boxes, links);
+    } catch (e) {
+      status.textContent = 'Mermaid could not render this figure: ' + (e && e.message ? e.message : e);
+      status.className = 'status error';
+      status.hidden = false;
+      var pre = document.createElement('pre');
+      pre.className = 'fallback';
+      pre.textContent = src;
+      canvas.appendChild(pre);
+    }
+  }
+
+  async function renderAll() {
+    if (!window.mermaid) {
+      figures.forEach(function (fig) {
+        var src = fig.querySelector('.mmd-src').textContent.trim();
+        buildBoxTable(fig, parseBoxes(src), linksOf(fig));
+        var status = fig.querySelector('.status');
+        status.textContent = 'The Mermaid library did not load. Source shown below.';
+        status.className = 'status error';
+        var pre = document.createElement('pre');
+        pre.className = 'fallback';
+        pre.textContent = src;
+        fig.querySelector('.canvas').appendChild(pre);
+      });
+      return;
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'base',
+      themeVariables: themeVars(),
+      maxTextSize: 400000,
+      sequence: {
+        useMaxWidth: false,
+        mirrorActors: true,
+        diagramMarginX: 12,
+        diagramMarginY: 10,
+        actorMargin: 22,
+        width: 168,
+        height: 50,
+        boxMargin: 8,
+        boxTextMargin: 4,
+        messageMargin: 26,
+        actorFontSize: 12,
+        messageFontSize: 12,
+        noteFontSize: 12,
+        wrap: false
+      }
+    });
+    for (var i = 0; i < figures.length; i++) {
+      await renderOne(figures[i], i);
+    }
+  }
+
+  var lastDark = isDark();
+  function onThemeChange() {
+    var now = isDark();
+    if (now !== lastDark) { lastDark = now; renderAll(); }
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', onThemeChange); else if (mq.addListener) mq.addListener(onThemeChange);
+  }
+  new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  renderAll();
+})();
+</script>

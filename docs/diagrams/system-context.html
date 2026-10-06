@@ -1,0 +1,704 @@
+<meta charset="utf-8">
+<title>Nudge System Context</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: an overview of targets, storage and services first, then a target-by-target table, then one close-up per channel, each a top-to-bottom figure with its cases listed in tables under it. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #1c2029;
+  --muted: #5d6471;
+  --line: #d3d7df;
+  --accent: #0e6f6f;
+  --accent-soft: #d9ecec;
+  --dead: #8a8f98;
+  --node: #ffffff;
+  --node-border: #3c4654;
+  --cluster: #eceef2;
+  --cluster-border: #b9bfca;
+  --edge: #4b5563;
+  --edge-label: #f4f5f7;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+    --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+    --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+    --edge: #b6bdc8; --edge-label: #14171c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+  --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+  --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+  --edge: #b6bdc8; --edge-label: #14171c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; margin: 0; }
+.wrap { padding-inline: 16px; padding-block: 20px 48px; max-width: 1480px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 12px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.stamp { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.stamp code { background: var(--accent-soft); color: var(--fg); padding: 1px 6px; border-radius: 3px; }
+p.lede { max-width: 72ch; margin: 0 0 14px; color: var(--muted); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin-bottom: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); align-items: center; margin-bottom: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 26px; height: 14px; border: 1.5px solid var(--node-border); border-radius: 2px; background: var(--node); }
+.sw.store { border-radius: 7px / 4px; }
+.sw.dead { border-style: dashed; border-color: var(--dead); background: transparent; }
+figure { margin: 0; }
+figure + figure { margin-top: 22px; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
+.stage { display: inline-block; padding: 16px; min-width: 100%; }
+.stage svg { display: block; max-width: none !important; height: auto; }
+.stage a { cursor: pointer; }
+.stage .node:hover rect, .stage .node:hover polygon, .stage .node:hover path { stroke: var(--accent) !important; stroke-width: 2.5px; }
+.status { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); padding: 10px 14px; }
+.status.error { color: #b3401f; }
+pre.fallback { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; padding: 14px; margin: 0; }
+figcaption { font-size: 13px; color: var(--muted); margin: 8px 2px 0; max-width: 90ch; }
+section { margin-top: 40px; scroll-margin-top: 12px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+h2 .src, h3 .src { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 10px; }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; }
+.intro { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+.reads { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; max-width: 100ch; }
+.reads b { color: var(--fg); font-weight: 500; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; border-top: 0; position: sticky; top: 0; background: var(--bg); }
+td.k, th.k { white-space: nowrap; }
+td.none { color: var(--muted); }
+td code, li code, p code { font-family: var(--font-mono); font-size: 12.5px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.tablewrap table th { background: var(--surface); }
+ol.dead { padding-left: 22px; margin: 0; max-width: 100ch; }
+ol.dead li { margin: 0 0 10px; }
+ol.dead li a { font-family: var(--font-mono); font-size: 12.5px; }
+a { color: var(--accent); }
+a[data-s] { text-decoration: underline; cursor: pointer; }
+.note { font-size: 13.5px; color: var(--muted); max-width: 90ch; }
+ul.note li { margin: 0 0 6px; }
+.mermaidTooltip { position: absolute; max-width: 420px; padding: 8px 11px; font-family: var(--font-body); font-size: 12.5px; line-height: 1.45; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.18); text-align: left; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 480px) { h1 { font-size: 20px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Nudge System Context</h1>
+  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-06 · reference: <code>docs/diagrams/system-context.mmd</code> · page: <code>docs/diagrams/system-context.html</code></div>
+</header>
+<p class="lede">Four build targets, two stores they share, two things on the network, and the iOS frameworks that carry everything else between them. The overview draws the targets with their storage and services. The app talks to too many frameworks to draw as arrows from one box, so that fan-out is the table under the overview, and each channel between targets has its own close-up. Every box names a file and a type or function, clicks through to that file at this commit, and carries its details in a hover tooltip.</p>
+
+<nav class="toc">
+  <a href="#sec-overview">Overview</a>
+  <a href="#sec-matrix">Who talks to what</a>
+  <a href="#sec-targets">Targets</a>
+  <a href="#sec-storage">Shared storage</a>
+  <a href="#sec-network">Network and imports</a>
+  <a href="#sec-widget">Widget channels</a>
+  <a href="#sec-screentime">Screen Time</a>
+  <a href="#sec-notifications">Notifications and background</a>
+  <a href="#sec-dead">No effect</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw"></i> file and type or function: click to open, hover for detail</span>
+  <span><i class="sw store"></i> storage: what is stored, then the file that defines it</span>
+  <span>arrow into storage = write · arrow out of storage = read · other arrows = calls</span>
+  <span><i class="sw dead"></i> exists, no effect (none sits on a main path; all are listed at the end)</span>
+</div>
+
+<section id="sec-overview">
+  <h2>Overview <span class="src">system-context.mmd</span></h2>
+  <p class="intro">Each target is drawn as its entry type. Arrows show storage and network only; the frameworks each target calls are the table that follows.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · system context overview: the four build targets (each drawn as its entry type), every persistent store, and the two network services. Arrow into a storage box = write, arrow out of a storage box = read. OS frameworks are a table on the page and the close-ups (-network, -widget, -screentime, -notifications), because the app feeds more than four of them.
+flowchart TB
+  ST_SECRETS[("ANTHROPIC_API_KEY<br/>Secrets.plist")]
+  X_ICAL["iCal feed host<br/>GET calendarImportURL"]
+  T_APP["NudgeApp.swift<br/>NudgeApp"]
+  X_ANTH["api.anthropic.com<br/>POST /v1/messages"]
+  ST_DOCS[("Documents files<br/>CaptureHistoryExporter.swift")]
+  ST_STORE[("Nudge.store<br/>SharedModelContainer.swift")]
+  ST_DEFAULTS[("App Group UserDefaults<br/>SharedModelContainer.swift")]
+  T_WIDGET["NudgeWidgetBundle.swift<br/>NudgeWidgetBundle"]
+  T_MON["DeviceActivityMonitorExtension.swift<br/>NudgeActivityMonitorExtension"]
+  T_REP["NudgeActivityReportExtension.swift<br/>NudgeActivityReportExtension"]
+
+  ST_SECRETS --> T_APP
+  X_ICAL --> T_APP
+  T_APP --> X_ANTH
+  X_ANTH --> T_APP
+  T_APP --> ST_DOCS
+  ST_DOCS --> T_APP
+  T_APP --> ST_STORE
+  ST_STORE --> T_APP
+  T_APP --> ST_DEFAULTS
+  ST_DEFAULTS --> T_APP
+  T_WIDGET --> ST_STORE
+  ST_STORE --> T_WIDGET
+  T_WIDGET --> ST_DEFAULTS
+  ST_DEFAULTS --> T_WIDGET
+  T_MON --> ST_DEFAULTS
+  ST_DEFAULTS --> T_MON
+
+  click T_APP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L308" "Target Nudge: application, bundle id com.deblaser.nudge, iOS 26.4. Entry is NudgeApp with NudgeAppDelegate. Embeds the three extensions. Entitlements: family-controls and the app group group.com.deblaser.nudge. The only target that touches the network, the calendar, or the Documents folder. Its framework calls are in the table under the picture." _blank
+  click T_WIDGET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidgetBundle.swift#L12" "Target NudgeWidgetExtension: app extension at com.apple.widgetkit-extension, bundle id com.deblaser.nudge.nudge.widget. NudgeWidgetBundle registers NudgeTaskWidget, NudgeCompanionWidget and TaskLiveActivityView. Opens the same Nudge.store through its own widgetModelContainer and reads, writes and removes App Group keys. Entitlement: the app group only." _blank
+  click T_MON href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L22" "Target NudgeActivityMonitor: app extension at com.apple.deviceactivity.monitor-extension, bundle id com.deblaser.nudge.NudgeActivityMonitor, iOS 26.5. Principal class NudgeActivityMonitorExtension. Reads and writes App Group defaults and posts notifications. Never opens the store. Entitlements: family-controls and the app group." _blank
+  click T_REP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityReport/NudgeActivityReportExtension.swift#L21" "Target NudgeActivityReport: ExtensionKit extension at com.apple.deviceactivityui.report-extension, bundle id com.deblaser.nudge.NudgeActivityReport, iOS 26.5. Receives Screen Time results from DeviceActivity and draws them inside the Stats tab. Opens no store, no defaults and no network, although its entitlements carry the app group." _blank
+  click ST_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L74" "SwiftData store Nudge.store in the App Group container for group.com.deblaser.nudge. 18 model types. Opened by the app as SharedModelContainer.container and by the widget extension as widgetModelContainer (NudgeWidget.swift L301), with identical schema lists." _blank
+  click ST_DEFAULTS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L27" "UserDefaults(suiteName: group.com.deblaser.nudge). The only UserDefaults domain in the project: no target uses UserDefaults.standard or AppStorage. Key families and who reads and writes them are in the Shared storage table." _blank
+  click ST_SECRETS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L23" "Secrets.plist inside the app bundle, key ANTHROPIC_API_KEY. Read once by ClaudeService.apiKey. Never written at run time." _blank
+  click ST_DOCS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureHistoryExporter.swift#L28" "DEBUG builds only, in the app's Documents folder: CaptureLog.jsonl (appended by CaptureWriter.apply, read by Settings and the exporter), cases.draft.json and cases.draft.meta.json (CaptureHistoryExporter), and DevNotes.json, DevNotes.md, DataSnapshot.json (DevNotesView.swift)." _blank
+  click X_ANTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L75" "Anthropic Messages API. Eight ClaudeService functions POST here through URLSession.shared with the headers x-api-key and anthropic-version 2023-06-01. Requests carry the user's message, tasks and context; responses are JSON text. Only the app target calls it." _blank
+  click X_ICAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L341" "The user's own iCal link, stored in UserProfile.calendarImportURL. webcal is rewritten to https, and only http or https is accepted. CalendarService.fetchICalEvents fetches it with URLSession.shared.data(from:). Nothing is sent but the URL." _blank
+    </script>
+    <figcaption>The app and the widget extension share the SwiftData store. All three of app, widget and monitor share the App Group defaults. Only the app reaches the network. The report extension has no arrows: it holds no storage.</figcaption>
+  </figure>
+</section>
+
+<section id="sec-matrix">
+  <h2>Who talks to what</h2>
+  <p class="intro">Every store, service and OS framework against every target. A cell says what that target does and links to one place it does it. An empty cell means no call was found in that target's sources.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Store, service or framework</th><th>Nudge (app)</th><th>NudgeWidgetExtension</th><th>NudgeActivityMonitor</th><th>NudgeActivityReport</th></tr>
+    <tr><td class="k">Nudge.store (SwiftData)</td><td>Reads and writes, from 38 files, through <a data-s="SMC#L55">SharedModelContainer.container</a></td><td>Reads in <a data-s="NW#L359">fetchTimelineState</a>; writes NudgeTask, CompletedTaskRecord and goal activity in <a data-s="CTI#L41">CompleteTaskIntent</a></td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">App Group UserDefaults</td><td>Reads and writes every key family through <a data-s="SMC#L27">appGroupDefaults</a></td><td>Reads <code>activeSessionState</code> and <code>scheduledIDs</code>; writes <code>scheduledIDs</code> and <code>widgetMutated</code>; removes <code>activeSessionState</code> (<a data-s="CTI#L75">CompleteTaskIntent</a>)</td><td>Reads settings and snapshot; reads and writes its rung keys and breadcrumbs (<a data-s="MON#L53">eventDidReachThreshold</a>)</td><td class="none">— (entitled, never opened)</td></tr>
+    <tr><td class="k">Documents folder</td><td>DEBUG only: reads and writes six files (<a data-s="CHE#L28">CaptureLog</a>, <a data-s="DNV#L76">DevNotesStore</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">Secrets.plist (bundle)</td><td>Reads <code>ANTHROPIC_API_KEY</code> (<a data-s="CS#L23">ClaudeService.apiKey</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">api.anthropic.com</td><td>POST <code>/v1/messages</code> from eight functions (<a data-s="CS#L75">ClaudeService</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">iCal feed host</td><td>GET the user's link (<a data-s="CAL#L353">fetchICalEvents</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">UserNotifications</td><td>Sets the delegate and categories, asks permission, adds and removes requests, reads pending (<a data-s="ARB#L4129">NudgeArbiter</a>, <a data-s="NNS#L104">NudgeNotificationService</a>)</td><td>Reads pending requests and removes a task's (<a data-s="CTI#L128">cancelPendingNudges</a>)</td><td>Adds requests (<a data-s="MON#L98">post</a>)</td><td class="none">—</td></tr>
+    <tr><td class="k">ActivityKit</td><td>Requests, updates and ends the Live Activity (<a data-s="LAM#L51">LiveActivityManager</a>); reads <code>activities</code> (<a data-s="SC#L259">SessionCoordinator</a>)</td><td>Renders it (<a data-s="TLV#L77">TaskLiveActivityView</a>); ends it (<a data-s="WFI#L38">EndFocusSessionIntent</a>)</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">WidgetKit</td><td>Calls <code>reloadTimelines</code> from 10 files (<a data-s="SC#L491">publishSessionState</a> and others)</td><td>Provides timelines (<a data-s="NW#L331">NudgeTaskProvider</a>, <a data-s="NCW#L20">NudgeCompanionProvider</a>); calls <code>reloadTimelines</code> from its intents</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">DeviceActivity</td><td>Starts and stops monitoring (<a data-s="DM#L143">DistractionMonitor.apply</a>); hosts the report view (<a data-s="STAT#L104">StatsTabView</a>)</td><td class="none">—</td><td>Receives interval and threshold callbacks (<a data-s="MON#L50">NudgeActivityMonitorExtension</a>)</td><td>Receives the week's activity data (<a data-s="REP#L53">makeConfiguration</a>)</td></tr>
+    <tr><td class="k">FamilyControls</td><td>Asks for Screen Time access (<a data-s="DM#L45">requestAuthorization</a>); shows the app picker (<a data-s="STV#L471">SettingsTabView</a>); decodes the selection</td><td class="none">—</td><td class="none">— (entitled, not imported)</td><td class="none">— (entitled, not imported)</td></tr>
+    <tr><td class="k">EventKit</td><td>Asks for full access, lists calendars, reads events (<a data-s="CAL#L270">importAppleCalendar</a>). Never writes to the calendar.</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">BackgroundTasks</td><td>Registers and submits <code>com.deblaser.nudge.dailyRecalc</code> (<a data-s="APP#L43">NudgeAppDelegate</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">Vision</td><td>Text recognition on a picked screenshot (<a data-s="SCI#L158">recognizeText</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">PhotosUI</td><td>System photo picker (<a data-s="CTV#L738">CalendarTabView</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">AppIntents</td><td>Three session intents (<a data-s="AFI#L12">Services/FocusSessionIntents.swift</a>)</td><td><a data-s="CTI#L16">CompleteTaskIntent</a>, <a data-s="WFI#L32">EndFocusSessionIntent</a></td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">UIKit</td><td>Opens the system Settings page (<a data-s="STV#L361">SettingsTabView</a>, <a data-s="HTV#L127">HomeTabView</a>); haptics</td><td>Haptic on completion (<a data-s="CTI#L142">CompleteTaskIntent</a>)</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">AudioToolbox</td><td>System sound 1005 at session end (<a data-s="SC#L443">playAlarmSound</a>)</td><td class="none">—</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">Darwin notify center</td><td class="none">— (no observer)</td><td>Posts <code>com.nudge.sessionStateChanged</code> (<a data-s="WFI#L17">notifyApp</a>)</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k">nudge:// URLs</td><td>Receives them (<a data-s="CV#L68">onOpenURL</a>)</td><td>Sends <code>focus-session</code> and <code>open</code> (<a data-s="NW#L998">NudgeWidget.swift</a>, <a data-s="NCW#L50">NudgeCompanionWidget</a>)</td><td class="none">—</td><td class="none">—</td></tr>
+  </table></div>
+  <p class="note">In-process only, so not listed: SwiftUI, SwiftData's API, Foundation, Combine, Observation, CryptoKit, ExtensionKit.</p>
+</section>
+
+<section id="sec-targets">
+  <h2>Targets</h2>
+  <p class="intro">From <code>Nudge.xcodeproj/project.pbxproj</code>, the four Info.plists and the four entitlements files. The project has no package dependencies.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Target</th><th>Product, bundle id, iOS</th><th>Entry</th><th>Info.plist and build settings</th><th>Entitlements</th><th>Sources</th></tr>
+    <tr><td class="k"><a data-s="PBX#L338">Nudge</a></td><td>Application · <code>com.deblaser.nudge</code> · 26.4</td><td><a data-s="APP#L308">NudgeApp</a>, <a data-s="APP#L20">NudgeAppDelegate</a></td><td><a data-s="AIP#L5">BGTaskSchedulerPermittedIdentifiers</a>, NSCalendarsFullAccessUsageDescription, UIAppFonts (five Lexend files), UIBackgroundModes fetch. Build settings add <a data-s="PBX#L809">NSCalendarsUsageDescription</a> and <a data-s="PBX#L810">NSSupportsLiveActivities</a>.</td><td><a data-s="AENT#L5">family-controls, app group</a></td><td>The <code>Nudge/</code> folder. Embeds the three extensions (<a data-s="PBX#L45">L45</a>, <a data-s="PBX#L57">L57</a>).</td></tr>
+    <tr><td class="k"><a data-s="PBX#L272">NudgeWidgetExtension</a></td><td>App extension · <code>com.deblaser.nudge.nudge.widget</code> · 26.4</td><td><a data-s="WB#L12">NudgeWidgetBundle</a></td><td><a data-s="WIP#L5">NSSupportsLiveActivities</a>, extension point <code>com.apple.widgetkit-extension</code></td><td><a data-s="WENT#L5">app group</a></td><td>The <code>NudgeWidget/</code> folder plus 28 files from <code>Nudge/</code>: 26 in Models, NudgeTheme.swift and Services/SharedModelContainer.swift (<a data-s="PBX#L103">L103</a>)</td></tr>
+    <tr><td class="k"><a data-s="PBX#L294">NudgeActivityMonitor</a></td><td>App extension · <code>com.deblaser.nudge.NudgeActivityMonitor</code> · 26.5</td><td><a data-s="MON#L22">NudgeActivityMonitorExtension</a></td><td><a data-s="MIP#L7">Extension point</a> <code>com.apple.deviceactivity.monitor-extension</code></td><td><a data-s="MENT#L5">family-controls, app group</a></td><td>One file, plus Models/DistractionSettings.swift from <code>Nudge/</code> (<a data-s="PBX#L151">L151</a>)</td></tr>
+    <tr><td class="k"><a data-s="PBX#L316">NudgeActivityReport</a></td><td>ExtensionKit extension · <code>com.deblaser.nudge.NudgeActivityReport</code> · 26.5</td><td><a data-s="REP#L21">NudgeActivityReportExtension</a></td><td><a data-s="RIP#L7">Extension point</a> <code>com.apple.deviceactivityui.report-extension</code></td><td><a data-s="RENT#L5">family-controls, app group</a></td><td>One file, plus Models/DistractionSettings.swift from <code>Nudge/</code> (<a data-s="PBX#L144">L144</a>)</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-storage">
+  <h2>Shared storage</h2>
+  <p class="intro">Two things in the App Group container <code>group.com.deblaser.nudge</code>. The cases for the arrows into each storage box in the overview are these tables.</p>
+
+  <h3>Nudge.store</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Opened by</th><th>How</th><th>Reads</th><th>Writes</th></tr>
+    <tr><td class="k">Nudge (app)</td><td><a data-s="SMC#L74">makeContainer</a>: <code>Nudge.store</code> under the App Group container URL. If opening fails, <a data-s="SMC#L87">resetPersistentStore</a> deletes the store with its wal and shm files and retries, then falls back to an in-memory store.</td><td>All 18 models</td><td>All models the app uses, through <code>mainContext</code> and per-call <code>ModelContext(container)</code></td></tr>
+    <tr><td class="k">NudgeWidgetExtension</td><td><a data-s="NW#L301">widgetModelContainer</a>: the same file, from the widget's own copy of the schema list (<a data-s="NW#L268">widgetSchema</a>). Crashes with <code>fatalError</code> if it cannot open.</td><td>Tasks, events and completions for the timeline (<a data-s="NW#L359">fetchTimelineState</a>)</td><td><a data-s="CTI#L48">CompleteTaskIntent</a>: <code>NudgeTask.isComplete</code> and <code>completedAt</code>, a new <code>CompletedTaskRecord</code>, <code>NudgeGoal</code> activity</td></tr>
+    <tr><td class="k">NudgeActivityMonitor, NudgeActivityReport</td><td>Never. The app writes the monitor a snapshot in defaults instead (<a data-s="DM#L219">writeSnapshot</a>).</td><td class="none">—</td><td class="none">—</td></tr>
+  </table></div>
+  <p class="note">Models, from <a data-s="SMC#L34">SharedModelContainer.schema</a>: NudgeTask, NudgeGoal, NudgeHabit, UserProfile, DailyStats, DailySession, CheckIn, CompletedTaskRecord, TimeBlock, EngagementState, NotificationEvent, SentNotificationFlag, NudgeOutcome, TaskIntelligence, CategoryDurationStats, EventDurationStats, PrepTombstone, NudgeCommitment. A third container exists only in DEBUG: the eval harness's in-memory one (<a data-s="EH#L183">EvalHarness.swift L183</a>).</p>
+
+  <h3>App Group UserDefaults</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Key family</th><th>App</th><th>Widget extension</th><th>Monitor extension</th></tr>
+    <tr><td class="k"><a data-s="SC#L485">activeSessionState</a></td><td>Writes, reads, removes (SessionCoordinator)</td><td>Reads; removes (<a data-s="NW#L598">provider</a>, <a data-s="CTI#L84">CompleteTaskIntent</a>, <a data-s="WFI#L41">EndFocusSessionIntent</a>)</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="ARB#L180">nudge.arb.scheduledIDs</a></td><td>Writes, reads (NudgeArbiter)</td><td>Reads and trims (<a data-s="CTI#L135">cancelPendingNudges</a>)</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="CTI#L139">nudge.arb.widgetMutated</a></td><td>Reads, then removes (<a data-s="CV#L211">ContentView</a>)</td><td>Writes</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="ARB#L185">nudge.arb.* history maps, idleDismissedFor</a></td><td>Writes, reads</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="DS#L20">nudge.distractions.settings</a></td><td>Writes (<a data-s="STV#L526">Settings</a>, <a data-s="DM#L46">requestAuthorization</a>), reads</td><td class="none">—</td><td>Reads</td></tr>
+    <tr><td class="k"><a data-s="DS#L53">nudge.distractions.snapshot</a></td><td>Writes (<a data-s="DM#L251">writeSnapshot</a>)</td><td class="none">—</td><td>Reads</td></tr>
+    <tr><td class="k"><a data-s="DM#L51">nudge.distractions.registeredSignature</a></td><td>Writes, reads</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="MON#L24">nudge.distractions.lastRungAt · lastRungDay · mirrorLastFiredAt · breadcrumbs</a></td><td>Reads <code>mirrorLastFiredAt</code> (<a data-s="STAT#L133">StatsTabView</a>); the rest in a DEBUG dump</td><td class="none">—</td><td>Writes, reads</td></tr>
+    <tr><td class="k"><a data-s="NSCH#L51">nudge.lastFocusSessionStartedAt</a></td><td>Writes, reads</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="NCS#L69">nudge.copy.* · nudge.copyGen.*</a></td><td>Writes, reads (notification copy cache)</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="NNS#L51">nudge.tappedNudge* · nudge.pendingIdleTask*</a></td><td>Writes, reads</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="PPS#L87">nudge.planProposals* · planQuestion.* · planOutcome.* · dayplan.* · autoPlan.lastRunDay</a></td><td>Writes, reads (planning)</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="TMB#L133">nudge.tasksMemo.* · goalLapseHook.* · prepAnnouncement.* · commitmentAnnouncement.*</a></td><td>Writes, reads (Tasks message box)</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="CAL#L140">nudge.icalSyncedDay · calendarSyncedThrough · calendarImport.scheduleBackfilledOnce</a></td><td>Writes, reads (calendar sync cursors)</td><td class="none">—</td><td class="none">—</td></tr>
+    <tr><td class="k"><a data-s="AOL#L34">nudge.appOpenTimestamps · nudge.missedSessions · onboarding.landOnGoals · tasksMessageBox.defaultedOffOnce</a></td><td>Writes, reads</td><td class="none">—</td><td class="none">—</td></tr>
+  </table></div>
+  <p class="note">The report extension reads none of these. It shares one constant with the app, <a data-s="DS#L23">DistractionSettings.mirrorReportContext</a>, which is compiled in, not stored.</p>
+</section>
+
+<section id="sec-network">
+  <h2>Network and imports <span class="src">system-context-network.mmd</span></h2>
+  <p class="intro">The app's two network destinations and the three ways outside data becomes rows in the store. All of it is in the app target.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: the app's network calls and its import paths (iCal link, Apple Calendar, screenshot). Arrow out of a service or framework = read; arrow into Nudge.store = write. ClaudeService's eight request functions are a table on the page.
+flowchart TB
+  K_SECRETS[("ANTHROPIC_API_KEY<br/>Secrets.plist")]
+  OS_PHOTOS["PhotosUI<br/>PhotosPicker"]
+  N_PICK["CalendarTabView.swift<br/>handleScreenshotPicked"]
+  N_SHOT["ScreenshotCalendarImporter.swift<br/>importFromImage"]
+  OS_VISION["Vision<br/>VNRecognizeTextRequest"]
+  N_CLAUDE["ClaudeService.swift<br/>ClaudeService"]
+  X_ANTH["api.anthropic.com<br/>POST /v1/messages"]
+  N_ICAL["CalendarService.swift<br/>importCanvasICal"]
+  N_FETCH["CalendarService.swift<br/>fetchICalEvents"]
+  X_ICAL["iCal feed host<br/>GET calendarImportURL"]
+  N_ACCESS["CalendarService.swift<br/>requestCalendarAccess"]
+  OS_EK["EventKit<br/>EKEventStore"]
+  N_EK["CalendarService.swift<br/>importAppleCalendar"]
+  ST_STORE[("Nudge.store<br/>SharedModelContainer.swift")]
+
+  OS_PHOTOS --> N_PICK
+  N_PICK --> N_SHOT
+  N_SHOT --> OS_VISION
+  N_SHOT --> N_CLAUDE
+  K_SECRETS --> N_CLAUDE
+  N_CLAUDE --> X_ANTH
+  X_ANTH --> N_CLAUDE
+  N_ICAL --> N_FETCH
+  X_ICAL --> N_FETCH
+  N_ACCESS --> OS_EK
+  OS_EK --> N_EK
+  N_SHOT --> ST_STORE
+  N_ICAL --> ST_STORE
+  N_EK --> ST_STORE
+
+  click K_SECRETS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L23" "Bundle.main Secrets.plist, key ANTHROPIC_API_KEY, read once into ClaudeService.apiKey. Fallbacks in the same initializer: an Info.plist key of the same name, then the process environment." _blank
+  click OS_PHOTOS href "https://developer.apple.com/documentation/photosui/photospicker" "PhotosPicker(selection:matching: .images) in the Calendar tab. The picked item is loaded as Data with loadTransferable." _blank
+  click N_PICK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L780" "handleScreenshotPicked(_ item). Loads the image data and hands a UIImage to ScreenshotCalendarImporter.shared.importFromImage." _blank
+  click N_SHOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ScreenshotCalendarImporter.swift#L39" "importFromImage(_:defaultCategory:modelContext:). Step 1: recognizeText runs Vision on the device. Step 2: ClaudeService.parseScheduleScreenshot sends the JPEG and the transcript. Step 3: inserts the events as NudgeTask rows and reloads the widget timeline." _blank
+  click OS_VISION href "https://developer.apple.com/documentation/vision/vnrecognizetextrequest" "VNRecognizeTextRequest through VNImageRequestHandler(cgImage:) in recognizeText (L154). On-device text recognition; returns text fragments with their positions." _blank
+  click N_CLAUDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L17" "ClaudeService.shared. Eight functions build a JSON body and call URLSession.shared.data(for:) on the same URL. sendChat goes through makeRequest; the other seven build their own URLRequest. Functions, models and callers are in the table under the picture." _blank
+  click X_ANTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L75" "https://api.anthropic.com/v1/messages. Headers: Content-Type, x-api-key, anthropic-version 2023-06-01, and anthropic-beta server-side-fallback-2026-07-01 on the memo and plan calls. Sent straight from the device with the bundled key." _blank
+  click N_ICAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L397" "importCanvasICal(urlString:modelContext:). Calls fetchICalEvents, then writeICalEvents, which inserts NudgeTask rows with source calendar. Called from the Calendar tab and, once a day, from refreshICalFeedIfNeeded on scene-active." _blank
+  click N_FETCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L341" "fetchICalEvents(urlString:). Rewrites webcal to https, accepts only http or https, URLSession.shared.data(from:), needs a 2xx status and a body containing BEGIN:VCALENDAR, then parses it. Also used by checkICalFeed, which imports nothing." _blank
+  click X_ICAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L353" "Whatever host the user's link names: Canvas, Google, Outlook or any other .ics address. A plain GET; no credentials or app data are sent." _blank
+  click N_ACCESS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L64" "requestCalendarAccess(). eventStore.requestFullAccessToEvents(). The usage string is NSCalendarsFullAccessUsageDescription in Nudge/Info.plist." _blank
+  click OS_EK href "https://developer.apple.com/documentation/eventkit/ekeventstore" "EKEventStore: authorizationStatus(for: .event), calendars(for: .event), predicateForEvents and events(matching:). The app only reads; no EventKit save or remove call exists." _blank
+  click N_EK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L233" "importAppleCalendar(modelContext:selectedCalendarIDs:...). Reads events in the rolling window from the chosen calendars and inserts NudgeTask rows with source calendar, skipping duplicates by title and due date." _blank
+  click ST_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L74" "All three import paths insert NudgeTask rows and save the model context." _blank
+    </script>
+    <figcaption>Three import paths end in the store. Only the screenshot path uses both an on-device framework and the Anthropic API.</figcaption>
+  </figure>
+
+  <h3>Requests to api.anthropic.com</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">ClaudeService function</th><th class="k">Model</th><th class="k">max_tokens</th><th>Called from</th></tr>
+    <tr><td class="k"><a data-s="CS#L364">sendChat</a></td><td class="k">claude-sonnet-5</td><td class="k">8000</td><td><a data-s="HTV#L377">HomeTabView.sendMessage</a>, <a data-s="TTV#L2384">TasksTabView.createSessionItem</a>, the DEBUG eval harness. A DEBUG launch argument can swap the model.</td></tr>
+    <tr><td class="k"><a data-s="CS#L645">analyzeTask</a></td><td class="k">claude-haiku-4-5-20251001</td><td class="k">200</td><td><a data-s="NI#L107">NudgeIntelligence.refreshIfNeeded</a></td></tr>
+    <tr><td class="k"><a data-s="CS#L690">refineDayPlan</a></td><td class="k">claude-haiku-4-5-20251001</td><td class="k">1200</td><td><a data-s="DPR#L151">DayPlanRefiner.refine</a></td></tr>
+    <tr><td class="k"><a data-s="CS#L761">parseScheduleScreenshot</a></td><td class="k">claude-haiku-4-5-20251001</td><td class="k">2000</td><td><a data-s="SCI#L78">ScreenshotCalendarImporter.importFromImage</a></td></tr>
+    <tr><td class="k"><a data-s="CS#L947">generateNudgeCopy</a></td><td class="k">claude-sonnet-5</td><td class="k">3000</td><td><a data-s="NCS#L300">NudgeCopyService.swift generateIfNeeded</a></td></tr>
+    <tr><td class="k"><a data-s="CS#L1127">generateGoalLapseHook</a></td><td class="k">claude-haiku-4-5-20251001</td><td class="k">400</td><td><a data-s="TTV#L228">TasksTabView.fetchGoalLapseHookIfNeeded</a></td></tr>
+    <tr><td class="k"><a data-s="CS#L1239">generateTasksMemo</a></td><td class="k">claude-opus-5</td><td class="k">3000</td><td><a data-s="TTV#L324">TasksTabView.fetchTasksMemoIfNeeded</a></td></tr>
+    <tr><td class="k"><a data-s="CS#L1396">proposePlans</a></td><td class="k">claude-opus-5</td><td class="k">4000</td><td><a data-s="PPS#L360">PlanProposalSweep.runIfNeeded</a>, <a data-s="PPS#L432">requestPlan</a></td></tr>
+  </table></div>
+  <p class="reads"><b>reads:</b> every request sets <code>x-api-key</code> from <a data-s="CS#L19">ClaudeService.apiKey</a>, which is read from the bundled Secrets.plist. The key ships inside the app and requests go from the device straight to Anthropic; there is no server in between.</p>
+</section>
+
+<section id="sec-widget">
+  <h2>Widget channels <span class="src">system-context-widget.mmd</span></h2>
+  <p class="intro">How the app and the widget extension reach each other: two shared stores, WidgetKit, ActivityKit, and URLs back into the app.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: the channels between the app (boxes A_) and the widget extension (boxes W_). Arrow into storage = write, out of storage = read. Arrows are unlabeled where several enter one box; the cases are a table on the page.
+flowchart TB
+  A_PUBLISH["SessionCoordinator.swift<br/>publishSessionState"]
+  W_COMPLETE["CompleteTaskIntent.swift<br/>CompleteTaskIntent"]
+  A_LAM["LiveActivityManager.swift<br/>LiveActivityManager"]
+  W_STOP["NudgeWidget/FocusSessionIntents.swift<br/>EndFocusSessionIntent"]
+  OS_WC["WidgetKit<br/>WidgetCenter.reloadTimelines"]
+  ST_STORE[("Nudge.store<br/>SharedModelContainer.swift")]
+  ST_DEFAULTS[("App Group UserDefaults<br/>SharedModelContainer.swift")]
+  OS_UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  OS_AK["ActivityKit<br/>Activity"]
+  W_PROVIDER["NudgeWidget.swift<br/>NudgeTaskProvider"]
+  W_LA["TaskLiveActivityView.swift<br/>TaskLiveActivityView"]
+  W_FOOT["NudgeWidget.swift<br/>sessionButtonRow"]
+  W_COMP["NudgeCompanionWidget.swift<br/>NudgeCompanionView"]
+  A_URL["ContentView.swift<br/>onOpenURL"]
+
+  A_PUBLISH --> ST_DEFAULTS
+  A_PUBLISH --> OS_WC
+  W_COMPLETE --> ST_STORE
+  W_COMPLETE --> ST_DEFAULTS
+  W_COMPLETE --> OS_UNC
+  W_COMPLETE --> OS_WC
+  W_STOP --> OS_AK
+  W_STOP --> ST_DEFAULTS
+  W_STOP --> OS_WC
+  A_LAM --> OS_AK
+  OS_WC --> W_PROVIDER
+  ST_STORE --> W_PROVIDER
+  ST_DEFAULTS --> W_PROVIDER
+  W_PROVIDER --> ST_DEFAULTS
+  OS_AK --> W_LA
+  W_LA --> A_URL
+  W_FOOT --> A_URL
+  W_COMP --> A_URL
+
+  click A_PUBLISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L462" "App. publishSessionState writes or removes activeSessionState, then WidgetCenter.shared.reloadTimelines(ofKind: NudgeTaskWidget). Nine other app files call reloadTimelines after changing tasks; they are listed under the picture." _blank
+  click W_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "Widget extension. perform() fetches the task, sets isComplete and completedAt, inserts a CompletedTaskRecord, records goal activity and saves. Removes activeSessionState when it names this task. cancelPendingNudges reads pending notification requests, removes this task's, trims nudge.arb.scheduledIDs and sets nudge.arb.widgetMutated. Then reloads the timeline." _blank
+  click A_LAM href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L12" "App. Activity.request with TaskActivityAttributes, two updates for the stay-focused alert, and end with immediate dismissal. SessionCoordinator also reads Activity.activities to see whether one still exists." _blank
+  click W_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/FocusSessionIntents.swift#L35" "Widget extension. Run by the Dismiss button on a stale Live Activity. Ends every activity, removes activeSessionState, reloads the timeline." _blank
+  click OS_WC href "https://developer.apple.com/documentation/widgetkit/widgetcenter" "WidgetCenter.shared.reloadTimelines(ofKind: NudgeTaskWidget). WidgetKit then asks NudgeTaskProvider for a new timeline in the widget extension process." _blank
+  click ST_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L301" "The widget opens Nudge.store as widgetModelContainer, from the same App Group container URL the app uses." _blank
+  click ST_DEFAULTS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L27" "The widget opens the suite by name each time: UserDefaults(suiteName: group.com.deblaser.nudge)." _blank
+  click OS_UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "From the widget extension: pendingNotificationRequests() and removePendingNotificationRequests(withIdentifiers:). It never adds a request." _blank
+  click OS_AK href "https://developer.apple.com/documentation/activitykit/activity" "The Live Activity for TaskActivityAttributes. The app creates and updates it; the system hands its state to the widget extension to draw; either side can end it." _blank
+  click W_PROVIDER href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L331" "Widget extension. fetchTimelineState reads tasks, events and completions from the store and activeSessionState from defaults. When the stored session end has passed it removes the key (L598)." _blank
+  click W_LA href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/TaskLiveActivityView.swift#L75" "Widget extension. ActivityConfiguration(for: TaskActivityAttributes.self): reads context.state, context.attributes and context.isStale. widgetURL nudge://focus-session." _blank
+  click W_FOOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L975" "Widget extension. Three Link(destination:) to nudge://focus-session: Start Session, and the pause and stop capsules while a session runs." _blank
+  click W_COMP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeCompanionWidget.swift#L39" "Widget extension. The mascot widget: no data, a timeline that never refreshes, widgetURL nudge://open." _blank
+  click A_URL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L68" "App. DeepLink parses the host: focus-session switches to the Tasks tab, open does nothing more than open the app, start-session would start a session but nothing sends it." _blank
+    </script>
+    <figcaption>The widget extension never calls the app directly. It changes the shared stores and the app finds out on its next foreground.</figcaption>
+  </figure>
+
+  <h3>Cases</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Box</th><th>Arrows in</th></tr>
+    <tr><td class="k">WidgetCenter.reloadTimelines</td><td>App: <a data-s="SC#L491">SessionCoordinator.publishSessionState</a>, plus CalendarService, TasksTabView, HomeTabView, CalendarTabView, DayPlanRefiner, DayPlanEngine, TimelineReflow, ScreenshotCalendarImporter and the app target's FocusSessionIntents. Widget: <a data-s="CTI#L98">CompleteTaskIntent</a>, <a data-s="WFI#L43">EndFocusSessionIntent</a>.</td></tr>
+    <tr><td class="k">App Group UserDefaults</td><td><a data-s="SC#L485">publishSessionState</a> writes or removes <code>activeSessionState</code>. <a data-s="CTI#L84">CompleteTaskIntent</a> removes it, trims <code>scheduledIDs</code>, sets <code>widgetMutated</code>. <a data-s="WFI#L41">EndFocusSessionIntent</a> removes <code>activeSessionState</code>. <a data-s="NW#L598">NudgeTaskProvider</a> removes it once the end has passed.</td></tr>
+    <tr><td class="k">NudgeTaskProvider</td><td>Called by WidgetKit; reads the store (<a data-s="NW#L361">L361</a>) and <code>activeSessionState</code> (<a data-s="NW#L583">L583</a>).</td></tr>
+    <tr><td class="k">ActivityKit Activity</td><td><a data-s="LAM#L51">LiveActivityManager</a> requests, updates, ends. <a data-s="WFI#L38">EndFocusSessionIntent</a> ends.</td></tr>
+    <tr><td class="k">onOpenURL</td><td><code>nudge://focus-session</code> from <a data-s="TLV#L81">TaskLiveActivityView</a> and <a data-s="NW#L998">sessionButtonRow</a>; <code>nudge://open</code> from <a data-s="NCW#L50">NudgeCompanionView</a>.</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-screentime">
+  <h2>Screen Time <span class="src">system-context-screentime.mmd</span></h2>
+  <p class="intro">The app arms DeviceActivity and writes settings and a snapshot to defaults. iOS runs the monitor extension when a threshold is crossed and the report extension when the Stats tab shows the report.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: Screen Time across three targets. The app (A_) asks for access, saves the picked apps and registers schedules; iOS runs the monitor extension (M_) and the report extension (R_). Arrow into storage = write, out of storage = read.
+flowchart TB
+  A_AUTH["DistractionMonitor.swift<br/>requestAuthorization"]
+  OS_PICK["FamilyControls<br/>FamilyActivityPicker"]
+  A_SNAP["DistractionMonitor.swift<br/>writeSnapshot"]
+  OS_FC["FamilyControls<br/>AuthorizationCenter"]
+  A_SAVE["SettingsTabView.swift<br/>saveDistractions"]
+  ST_DEFAULTS[("App Group UserDefaults<br/>SharedModelContainer.swift")]
+  A_APPLY["DistractionMonitor.swift<br/>apply"]
+  OS_DAC["DeviceActivity<br/>DeviceActivityCenter"]
+  M_EXT["DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold"]
+  OS_UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  A_STATS["StatsTabView.swift<br/>distractionsReport"]
+  OS_DAR["DeviceActivity<br/>DeviceActivityReport"]
+  R_SCENE["NudgeActivityReportExtension.swift<br/>MirrorReportScene"]
+
+  A_AUTH --> OS_FC
+  A_AUTH --> ST_DEFAULTS
+  OS_PICK --> A_SAVE
+  A_SAVE --> ST_DEFAULTS
+  A_SNAP --> ST_DEFAULTS
+  ST_DEFAULTS --> A_APPLY
+  A_APPLY --> OS_DAC
+  OS_DAC --> M_EXT
+  ST_DEFAULTS --> M_EXT
+  M_EXT --> ST_DEFAULTS
+  M_EXT --> OS_UNC
+  ST_DEFAULTS --> A_STATS
+  A_STATS --> OS_DAR
+  OS_DAR --> R_SCENE
+
+  click A_AUTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L44" "App. AuthorizationCenter.shared.requestAuthorization(for: .individual), then saves settings.authorized. Called from Settings and, once per launch, from apply when apps are picked but the status is not determined." _blank
+  click OS_PICK href "https://developer.apple.com/documentation/familycontrols/familyactivitypicker" "The system picker shown by .familyActivityPicker in Settings (L471). Returns a FamilyActivitySelection of opaque tokens; the app can encode and pass them on but cannot read which apps they are." _blank
+  click A_SNAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L219" "App. Called by the arbiter after every pass. Reads open tasks, today's events and the latest completion from the store, and nudge.lastFocusSessionStartedAt, then writes nudge.distractions.snapshot: day window, bedtime, today's items, last work time." _blank
+  click OS_FC href "https://developer.apple.com/documentation/familycontrols/authorizationcenter" "AuthorizationCenter.shared: requestAuthorization and authorizationStatus. Needs the family-controls entitlement, which the app and both Screen Time extensions carry." _blank
+  click A_SAVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L526" "App. Encodes the selection into settings.selectionData, saves nudge.distractions.settings, then DistractionMonitor.apply(profile:force: true). Also runs when the limit or either toggle changes." _blank
+  click ST_DEFAULTS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L20" "Keys here: nudge.distractions.settings and .snapshot (written by the app, read by the monitor), .registeredSignature (app only), .lastRungAt, .lastRungDay, .mirrorLastFiredAt and .breadcrumbs (written by the monitor)." _blank
+  click A_APPLY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L62" "App. Loads the settings, skips when the registered signature is unchanged, otherwise stopMonitoring then startMonitoring for a daily schedule with events at 100, 150 and 175 percent of the limit and a weekly schedule with the mirror event. Called at launch and after a Settings save." _blank
+  click OS_DAC href "https://developer.apple.com/documentation/deviceactivity/deviceactivitycenter" "DeviceActivityCenter().startMonitoring(_:during:events:) and stopMonitoring. iOS counts usage of the picked apps and wakes the monitor extension at each threshold." _blank
+  click M_EXT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L50" "Monitor extension. Loads settings and the snapshot, reads its own lastRungAt for today, decides with LimitDecider, writes lastRungAt, lastRungDay or mirrorLastFiredAt and a breadcrumb, then posts a notification. intervalDidStart and intervalDidEnd only write breadcrumbs." _blank
+  click OS_UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "UNUserNotificationCenter.current().add with no trigger, so it is delivered at once. Categories category.limit and category.mirror, interruption level timeSensitive." _blank
+  click A_STATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/StatsTabView.swift#L95" "App. Reads the settings; when authorized with a selection it hosts DeviceActivityReport with the context nudge.mirror and a filter for this week, this iPhone and the picked apps. The minutes never enter the app process." _blank
+  click OS_DAR href "https://developer.apple.com/documentation/deviceactivity/deviceactivityreport" "The system view that runs the report extension in its own process and shows what it draws." _blank
+  click R_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityReport/NudgeActivityReportExtension.swift#L49" "Report extension. makeConfiguration sums totalActivityDuration over the week's segments and returns the minutes and the fraction of the week elapsed; MirrorReportView draws one number and one sentence. It writes nothing anywhere." _blank
+    </script>
+    <figcaption>The only thing the monitor extension knows about the user's day is the snapshot the app last wrote. The only thing that sees real Screen Time minutes is the report extension, and it cannot pass them on.</figcaption>
+  </figure>
+  <p class="reads"><b>reads:</b> <code>writeSnapshot</code> also reads NudgeTask and CompletedTaskRecord from Nudge.store; <code>apply</code> reads the wake time and bedtime from UserProfile; <code>distractionsReport</code> and <a data-s="STAT#L133">mirrorCard</a> read the settings and <code>mirrorLastFiredAt</code>.</p>
+</section>
+
+<section id="sec-notifications">
+  <h2>Notifications and background <span class="src">system-context-notifications.mmd</span></h2>
+  <p class="intro">Three targets share one notification center. The background task is the only way iOS starts app code without the user.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: every target's use of UNUserNotificationCenter, and the background refresh task. A_ boxes are the app, W_ the widget extension, M_ the monitor extension. Arrows are unlabeled where several enter one box; the cases are a table on the page.
+flowchart TB
+  A_DELEGATE["NudgeApp.swift<br/>NudgeAppDelegate"]
+  OS_BG["BackgroundTasks<br/>BGTaskScheduler"]
+  A_CATS["NudgeNotificationCategories.swift<br/>registerAll"]
+  A_RECALC["NudgeApp.swift<br/>handleDailyRecalc"]
+  A_ARB["NudgeArbiter.swift<br/>NudgeArbiter"]
+  A_SCHED["NotificationScheduler.swift<br/>cancelRetiredDailyNotifications"]
+  W_CANCEL["CompleteTaskIntent.swift<br/>cancelPendingNudges"]
+  M_POST["DeviceActivityMonitorExtension.swift<br/>post"]
+  OS_UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  A_NSVC["NudgeNotificationService.swift<br/>NudgeNotificationService"]
+
+  A_DELEGATE --> OS_BG
+  A_DELEGATE --> A_CATS
+  OS_BG --> A_RECALC
+  A_RECALC --> A_ARB
+  A_RECALC --> A_SCHED
+  A_CATS --> OS_UNC
+  A_ARB --> OS_UNC
+  A_SCHED --> OS_UNC
+  W_CANCEL --> OS_UNC
+  M_POST --> OS_UNC
+  OS_UNC --> A_NSVC
+  A_NSVC --> OS_UNC
+
+  click A_DELEGATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L20" "App. didFinishLaunchingWithOptions sets UNUserNotificationCenter.current().delegate to NudgeNotificationService.shared, calls NudgeNotificationCategories.registerAll, registers the task com.deblaser.nudge.dailyRecalc and submits a BGAppRefreshTaskRequest for the next 6 AM." _blank
+  click OS_BG href "https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler" "BGTaskScheduler.shared.register and submit. Allowed by BGTaskSchedulerPermittedIdentifiers and UIBackgroundModes fetch in Nudge/Info.plist. iOS chooses when to run it, at or after 6 AM." _blank
+  click A_CATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationCategories.swift#L112" "App. setNotificationCategories with every category the arbiter and the monitor extension attach to their requests." _blank
+  click A_RECALC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "App, in the background. Re-submits the next run, purges past events from the store, runs NudgeArbiter.reevaluate(reason: .backgroundTask) and removes the two retired daily requests." _blank
+  click A_ARB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4094" "App. schedule adds requests (L4129); cancelAll removes the ones it owns (L538); a DEBUG census reads pending requests (L499). Its triggers and rules are on the Notification Flow page." _blank
+  click A_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L58" "App. removePendingNotificationRequests for nudge.daily.bedtimePlanning and nudge.daily.morningKickoff, two repeating requests older builds scheduled. Also called at launch from ContentView." _blank
+  click W_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L128" "Widget extension. Reads pendingNotificationRequests, removes those whose identifier starts with nudge.arb. and contains the completed task's id." _blank
+  click M_POST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98" "Monitor extension. Adds the limit and mirror notifications with identifiers nudge.ext.limit.* and nudge.ext.mirror.*, delivered immediately." _blank
+  click OS_UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "One notification center for the app and its extensions. The app is the only target that asks for permission and the only one that receives delegate callbacks." _blank
+  click A_NSVC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L68" "App. The delegate: willPresent and didReceive come from the center. Toward the center: notificationSettings and requestAuthorization (alert, badge, sound, providesAppNotificationSettings) at L104, the test notification at L133, and the 30-minute snooze re-add at L403." _blank
+    </script>
+    <figcaption>Requests are added from two processes, the app and the monitor extension, and removed from two, the app and the widget extension.</figcaption>
+  </figure>
+
+  <h3>Cases</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Caller</th><th class="k">Target</th><th>What it does to UNUserNotificationCenter</th></tr>
+    <tr><td class="k"><a data-s="APP#L27">NudgeAppDelegate</a></td><td class="k">app</td><td>Sets the delegate at launch</td></tr>
+    <tr><td class="k"><a data-s="NNC#L295">registerAll</a></td><td class="k">app</td><td><code>setNotificationCategories</code></td></tr>
+    <tr><td class="k"><a data-s="NNS#L81">NudgeNotificationService</a></td><td class="k">app</td><td>Reads settings, requests authorization, adds the test and snoozed requests; receives every delivery and response</td></tr>
+    <tr><td class="k"><a data-s="ARB#L4129">NudgeArbiter</a></td><td class="k">app</td><td>Adds scheduled nudges, removes its own, reads pending in DEBUG</td></tr>
+    <tr><td class="k"><a data-s="NSCH#L59">cancelRetiredDailyNotifications</a></td><td class="k">app</td><td>Removes two retired identifiers</td></tr>
+    <tr><td class="k"><a data-s="CTI#L131">cancelPendingNudges</a></td><td class="k">widget</td><td>Reads pending, removes one task's</td></tr>
+    <tr><td class="k"><a data-s="MON#L106">post</a></td><td class="k">monitor</td><td>Adds limit and mirror notifications</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-dead">
+  <h2>Exists but has no effect</h2>
+  <p class="intro">None of these sits on a main path, so none is drawn.</p>
+  <ol class="dead">
+    <li><a data-s="RENT#L7">NudgeActivityReport's app group entitlement</a>: the target's one source file opens no UserDefaults suite and no container.</li>
+    <li>The <a data-s="CS#L33">Info.plist fallback for ANTHROPIC_API_KEY</a>: no such key is in Nudge/Info.plist or in the build settings, so only the Secrets.plist read and the environment fallback can supply the key.</li>
+    <li>The Darwin notification <a data-s="WFI#L19">com.nudge.sessionStateChanged</a> is posted by the widget extension's intents; no target adds an observer.</li>
+    <li><a data-s="WLA#L29">NudgeWidgetLiveActivity</a> (a Live Activity view for <code>FocusSessionAttributes</code>) and <a data-s="WC#L12">NudgeWidgetControl</a> are compiled into the widget extension but are not in NudgeWidgetBundle. Nothing requests an activity of that type.</li>
+    <li>The app target's <a data-s="AFI#L12">StartFocusSessionIntent, PauseFocusSessionIntent and EndFocusSessionIntent</a> are referenced by no view; the widget uses its own types of the same names.</li>
+    <li><a data-s="NNS#L75">NudgeNotificationService.configure()</a>, called at launch, has an empty body.</li>
+    <li><a data-s="APP#L330">nudge://start-session</a> is parsed and handled but never sent. <a data-s="CV#L94">nudge://open</a> is sent by the companion widget and handled with <code>break</code>.</li>
+    <li>Four models are in both schema lists with no fetch, query, insert or initializer call found in any target: <a data-s="SMC#L45">NotificationEvent, SentNotificationFlag</a>, <a data-s="SMC#L41">CheckIn</a> and <a data-s="SMC#L43">TimeBlock</a>.</li>
+  </ol>
+  <p class="note">Not dead but worth knowing: the app declares two calendar usage strings (NSCalendarsFullAccessUsageDescription in Info.plist, NSCalendarsUsageDescription in the build settings) and calls only <code>requestFullAccessToEvents</code>. No URL scheme is declared in Info.plist or the build settings; the only senders of <code>nudge://</code> links are the widget extension's own views. The widget extension compiles SharedModelContainer.swift yet opens the store through its own <code>widgetModelContainer</code>, so the two schema lists must be kept identical by hand.</p>
+</section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var REPO = 'https://github.com/deblaseroman/nudge-app/blob/ede6774/';
+  var FILES = {
+    APP: 'Nudge/NudgeApp.swift',
+    CV: 'Nudge/ContentView.swift',
+    SMC: 'Nudge/Services/SharedModelContainer.swift',
+    CS: 'Nudge/Services/ClaudeService.swift',
+    CAL: 'Nudge/Services/CalendarService.swift',
+    SCI: 'Nudge/Services/ScreenshotCalendarImporter.swift',
+    CTV: 'Nudge/Views/Tabs/CalendarTabView.swift',
+    STV: 'Nudge/Views/Tabs/SettingsTabView.swift',
+    STAT: 'Nudge/Views/Tabs/StatsTabView.swift',
+    HTV: 'Nudge/Views/Tabs/HomeTabView.swift',
+    TTV: 'Nudge/Views/Tabs/TasksTabView.swift',
+    TMB: 'Nudge/Views/Components/TasksMessageBox.swift',
+    DM: 'Nudge/Services/DistractionMonitor.swift',
+    DS: 'Nudge/Models/DistractionSettings.swift',
+    SC: 'Nudge/Services/SessionCoordinator.swift',
+    LAM: 'Nudge/Services/LiveActivityManager.swift',
+    ARB: 'Nudge/Services/NudgeArbiter.swift',
+    NNS: 'Nudge/Services/NudgeNotificationService.swift',
+    NNC: 'Nudge/Services/NudgeNotificationCategories.swift',
+    NSCH: 'Nudge/Services/NotificationScheduler.swift',
+    CHE: 'Nudge/Services/CaptureHistoryExporter.swift',
+    DNV: 'Nudge/Views/Settings/DevNotesView.swift',
+    NCS: 'Nudge/Services/NudgeCopyService.swift',
+    NI: 'Nudge/Services/NudgeIntelligence.swift',
+    DPR: 'Nudge/Services/DayPlanRefiner.swift',
+    PPS: 'Nudge/Services/PlanProposalSweep.swift',
+    AOL: 'Nudge/Services/AppOpenLog.swift',
+    EH: 'Nudge/Services/EvalHarness.swift',
+    AFI: 'Nudge/Services/FocusSessionIntents.swift',
+    NW: 'NudgeWidget/NudgeWidget.swift',
+    WB: 'NudgeWidget/NudgeWidgetBundle.swift',
+    CTI: 'NudgeWidget/CompleteTaskIntent.swift',
+    WFI: 'NudgeWidget/FocusSessionIntents.swift',
+    TLV: 'NudgeWidget/TaskLiveActivityView.swift',
+    NCW: 'NudgeWidget/NudgeCompanionWidget.swift',
+    WLA: 'NudgeWidget/NudgeWidgetLiveActivity.swift',
+    WC: 'NudgeWidget/NudgeWidgetControl.swift',
+    MON: 'NudgeActivityMonitor/DeviceActivityMonitorExtension.swift',
+    REP: 'NudgeActivityReport/NudgeActivityReportExtension.swift',
+    PBX: 'Nudge.xcodeproj/project.pbxproj',
+    AIP: 'Nudge/Info.plist',
+    WIP: 'NudgeWidget/Info.plist',
+    MIP: 'NudgeActivityMonitor/Info.plist',
+    RIP: 'NudgeActivityReport/Info.plist',
+    AENT: 'Nudge/Nudge.entitlements',
+    WENT: 'NudgeWidgetExtension.entitlements',
+    MENT: 'NudgeActivityMonitor/NudgeActivityMonitor.entitlements',
+    RENT: 'NudgeActivityReport/NudgeActivityReport.entitlements'
+  };
+  document.querySelectorAll('a[data-s]').forEach(function (a) {
+    var parts = a.getAttribute('data-s').split('#');
+    var file = FILES[parts[0]];
+    if (!file) return;
+    a.setAttribute('href', REPO + file + (parts[1] ? '#' + parts[1] : ''));
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener');
+    a.setAttribute('title', file + (parts[1] ? ' ' + parts[1] : ''));
+  });
+
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function isDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function themeVars() {
+    return {
+      fontFamily: cssVar('--font-body') || 'sans-serif',
+      fontSize: '13px',
+      primaryColor: cssVar('--node'),
+      primaryTextColor: cssVar('--fg'),
+      primaryBorderColor: cssVar('--node-border'),
+      secondaryColor: cssVar('--node'),
+      tertiaryColor: cssVar('--cluster'),
+      lineColor: cssVar('--edge'),
+      textColor: cssVar('--fg'),
+      nodeTextColor: cssVar('--fg'),
+      clusterBkg: cssVar('--cluster'),
+      clusterBorder: cssVar('--cluster-border'),
+      titleColor: cssVar('--fg'),
+      edgeLabelBackground: cssVar('--edge-label'),
+      nodeBorder: cssVar('--node-border'),
+      mainBkg: cssVar('--node')
+    };
+  }
+
+  var figures = Array.prototype.slice.call(document.querySelectorAll('figure'));
+
+  function hrefOf(a) { return a.getAttribute('href') || a.getAttribute('xlink:href') || ''; }
+
+  function wireLinks(stage) {
+    stage.querySelectorAll('a').forEach(function (a) {
+      var h = hrefOf(a);
+      if (h.charAt(0) === '#') {
+        a.removeAttribute('target');
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          var target = document.getElementById(h.slice(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener');
+      }
+    });
+  }
+
+  async function renderOne(fig, index) {
+    var src = fig.querySelector('.mmd-src').textContent.trim();
+    var stage = fig.querySelector('.stage');
+    var status = fig.querySelector('.status');
+    var canvas = fig.querySelector('.canvas');
+    try {
+      var out = await mermaid.render('nudge-context-' + index + '-' + Date.now(), src);
+      stage.innerHTML = out.svg;
+      if (out.bindFunctions) out.bindFunctions(stage);
+      stage.hidden = false;
+      status.hidden = true;
+      wireLinks(stage);
+    } catch (e) {
+      status.textContent = 'Mermaid could not render this figure: ' + (e && e.message ? e.message : e);
+      status.className = 'status error';
+      status.hidden = false;
+      if (!canvas.querySelector('pre.fallback')) {
+        var pre = document.createElement('pre');
+        pre.className = 'fallback';
+        pre.textContent = src;
+        canvas.appendChild(pre);
+      }
+    }
+  }
+
+  async function renderAll() {
+    if (!window.mermaid) {
+      figures.forEach(function (fig) {
+        var status = fig.querySelector('.status');
+        status.textContent = 'The Mermaid library did not load. Source shown below.';
+        status.className = 'status error';
+        if (!fig.querySelector('pre.fallback')) {
+          var pre = document.createElement('pre');
+          pre.className = 'fallback';
+          pre.textContent = fig.querySelector('.mmd-src').textContent.trim();
+          fig.querySelector('.canvas').appendChild(pre);
+        }
+      });
+      return;
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'base',
+      themeVariables: themeVars(),
+      maxTextSize: 400000,
+      maxEdges: 2000,
+      flowchart: { htmlLabels: true, useMaxWidth: false, curve: 'basis', nodeSpacing: 24, rankSpacing: 44, padding: 8 }
+    });
+    for (var i = 0; i < figures.length; i++) {
+      await renderOne(figures[i], i);
+    }
+  }
+
+  var lastDark = isDark();
+  function onThemeChange() {
+    var now = isDark();
+    if (now !== lastDark) { lastDark = now; renderAll(); }
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', onThemeChange); else if (mq.addListener) mq.addListener(onThemeChange);
+  }
+  new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  renderAll();
+})();
+</script>

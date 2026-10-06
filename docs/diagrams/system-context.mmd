@@ -1,0 +1,42 @@
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · system context overview: the four build targets (each drawn as its entry type), every persistent store, and the two network services. Arrow into a storage box = write, arrow out of a storage box = read. OS frameworks are a table on the page and the close-ups (-network, -widget, -screentime, -notifications), because the app feeds more than four of them.
+%% Close-ups: system-context-network.mmd, system-context-widget.mmd, system-context-screentime.mmd, system-context-notifications.mmd. Page: docs/diagrams/system-context.html.
+flowchart TB
+  ST_SECRETS[("ANTHROPIC_API_KEY<br/>Secrets.plist")]
+  X_ICAL["iCal feed host<br/>GET calendarImportURL"]
+  T_APP["NudgeApp.swift<br/>NudgeApp"]
+  X_ANTH["api.anthropic.com<br/>POST /v1/messages"]
+  ST_DOCS[("Documents files<br/>CaptureHistoryExporter.swift")]
+  ST_STORE[("Nudge.store<br/>SharedModelContainer.swift")]
+  ST_DEFAULTS[("App Group UserDefaults<br/>SharedModelContainer.swift")]
+  T_WIDGET["NudgeWidgetBundle.swift<br/>NudgeWidgetBundle"]
+  T_MON["DeviceActivityMonitorExtension.swift<br/>NudgeActivityMonitorExtension"]
+  T_REP["NudgeActivityReportExtension.swift<br/>NudgeActivityReportExtension"]
+
+  ST_SECRETS --> T_APP
+  X_ICAL --> T_APP
+  T_APP --> X_ANTH
+  X_ANTH --> T_APP
+  T_APP --> ST_DOCS
+  ST_DOCS --> T_APP
+  T_APP --> ST_STORE
+  ST_STORE --> T_APP
+  T_APP --> ST_DEFAULTS
+  ST_DEFAULTS --> T_APP
+  T_WIDGET --> ST_STORE
+  ST_STORE --> T_WIDGET
+  T_WIDGET --> ST_DEFAULTS
+  ST_DEFAULTS --> T_WIDGET
+  T_MON --> ST_DEFAULTS
+  ST_DEFAULTS --> T_MON
+
+  click T_APP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L308" "Target Nudge: application, bundle id com.deblaser.nudge, iOS 26.4. Entry is NudgeApp with NudgeAppDelegate. Embeds the three extensions. Entitlements: family-controls and the app group group.com.deblaser.nudge. The only target that touches the network, the calendar, or the Documents folder. Its framework calls are in the table under the picture." _blank
+  click T_WIDGET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidgetBundle.swift#L12" "Target NudgeWidgetExtension: app extension at com.apple.widgetkit-extension, bundle id com.deblaser.nudge.nudge.widget. NudgeWidgetBundle registers NudgeTaskWidget, NudgeCompanionWidget and TaskLiveActivityView. Opens the same Nudge.store through its own widgetModelContainer and reads, writes and removes App Group keys. Entitlement: the app group only." _blank
+  click T_MON href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L22" "Target NudgeActivityMonitor: app extension at com.apple.deviceactivity.monitor-extension, bundle id com.deblaser.nudge.NudgeActivityMonitor, iOS 26.5. Principal class NudgeActivityMonitorExtension. Reads and writes App Group defaults and posts notifications. Never opens the store. Entitlements: family-controls and the app group." _blank
+  click T_REP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityReport/NudgeActivityReportExtension.swift#L21" "Target NudgeActivityReport: ExtensionKit extension at com.apple.deviceactivityui.report-extension, bundle id com.deblaser.nudge.NudgeActivityReport, iOS 26.5. Receives Screen Time results from DeviceActivity and draws them inside the Stats tab. Opens no store, no defaults and no network, although its entitlements carry the app group." _blank
+  click ST_STORE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L74" "SwiftData store Nudge.store in the App Group container for group.com.deblaser.nudge. 18 model types. Opened by the app as SharedModelContainer.container and by the widget extension as widgetModelContainer (NudgeWidget.swift L301), with identical schema lists." _blank
+  click ST_DEFAULTS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SharedModelContainer.swift#L27" "UserDefaults(suiteName: group.com.deblaser.nudge). The only UserDefaults domain in the project: no target uses UserDefaults.standard or AppStorage. Key families and who reads and writes them are in the Shared storage table." _blank
+  click ST_SECRETS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L23" "Secrets.plist inside the app bundle, key ANTHROPIC_API_KEY. Read once by ClaudeService.apiKey. Never written at run time." _blank
+  click ST_DOCS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureHistoryExporter.swift#L28" "DEBUG builds only, in the app's Documents folder: CaptureLog.jsonl (appended by CaptureWriter.apply, read by Settings and the exporter), cases.draft.json and cases.draft.meta.json (CaptureHistoryExporter), and DevNotes.json, DevNotes.md, DataSnapshot.json (DevNotesView.swift)." _blank
+  click X_ANTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ClaudeService.swift#L75" "Anthropic Messages API. Eight ClaudeService functions POST here through URLSession.shared with the headers x-api-key and anthropic-version 2023-06-01. Requests carry the user's message, tasks and context; responses are JSON text. Only the app target calls it." _blank
+  click X_ICAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L341" "The user's own iCal link, stored in UserProfile.calendarImportURL. webcal is rewritten to https, and only http or https is accepted. CalendarService.fetchICalEvents fetches it with URLSession.shared.data(from:). Nothing is sent but the URL." _blank

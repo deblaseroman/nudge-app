@@ -1,0 +1,21 @@
+%% artifact: https://claude.ai/artifact/V94jwh3z6f3bumw16V9xGk
+%% commit ede6774 · reached from stage 4 when the user said yes to a study plan: the plan is built and its session rows written at once. The network leg of proposePlans is drawn in picture 9. Steps are explained in the table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant PLAN as PlanProposalSweep.swift<br/>requestPlan
+    participant PROPOSE as ClaudeService.swift<br/>proposePlans
+    participant ACCEPT as PlanProposalSweep.swift<br/>accept
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+    participant DEC as Plan decisions<br/>PlanProposalSweep.swift
+    participant ANNP as Prep announcement<br/>ExamPrepSweep.swift
+  end
+  PLAN->>DEC: noteCall
+  PLAN->>PROPOSE: proposePlans(consented)
+  PROPOSE-->>PLAN: returns results
+  PLAN->>DEC: set proposed or notWorth
+  PLAN->>ACCEPT: accept(proposal)
+  ACCEPT->>TASKS: insert prep rows, save
+  ACCEPT->>DEC: set accepted
+  ACCEPT-->>PLAN: returns rows written
+  PLAN->>ANNP: writeAnnouncement

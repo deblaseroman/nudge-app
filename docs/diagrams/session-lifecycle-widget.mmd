@@ -1,0 +1,51 @@
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: the NudgeWidgetExtension process. It reads and removes the activeSessionState key, renders the Live Activity, and can end it from Dismiss. The last two boxes are in the app, reached by URL or on the next foreground. Arrows into the key are removals; the cases are a table on the page.
+flowchart TB
+  K_STATE[("activeSessionState<br/>SessionCoordinator.swift")]
+  P_FETCH["NudgeWidget.swift<br/>fetchTimelineState"]
+  P_ENTRY["NudgeWidget.swift<br/>NudgeTaskEntry"]
+  V_ROW["NudgeWidget.swift<br/>WidgetTaskRow"]
+  V_FOOT["NudgeWidget.swift<br/>sessionButtonRow"]
+  I_COMPLETE["CompleteTaskIntent.swift<br/>perform"]
+  AK_CTX["ActivityKit<br/>ActivityViewContext"]
+  V_LA["TaskLiveActivityView.swift<br/>displayState"]
+  I_STOP["NudgeWidget/FocusSessionIntents.swift<br/>EndFocusSessionIntent.perform"]
+  AK_STOP["ActivityKit<br/>Activity.end"]
+  W_RELOAD["WidgetKit<br/>WidgetCenter.reloadTimelines"]
+  A_URL["ContentView.swift<br/>onOpenURL"]
+  A_SYNC["SessionCoordinator.swift<br/>syncIfActivityDismissed"]
+
+  K_STATE --> P_FETCH
+  P_FETCH --> K_STATE
+  P_FETCH --> P_ENTRY
+  P_ENTRY --> V_ROW
+  P_ENTRY --> V_FOOT
+  V_ROW -- "checkbox" --> I_COMPLETE
+  I_COMPLETE --> K_STATE
+  I_COMPLETE --> W_RELOAD
+  V_FOOT --> A_URL
+  AK_CTX --> V_LA
+  V_LA -- "Dismiss" --> I_STOP
+  V_LA --> A_URL
+  I_STOP --> AK_STOP
+  I_STOP --> K_STATE
+  I_STOP --> W_RELOAD
+  W_RELOAD --> P_FETCH
+  K_STATE --> A_SYNC
+
+  classDef ender stroke-width:3px
+  class I_STOP ender
+
+  click K_STATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L485" "App Group group.com.deblaser.nudge, key activeSessionState. Written only by the app (publishSessionState). The widget extension reads it and can only remove it." _blank
+  click P_FETCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L583" "NudgeTaskProvider.fetchTimelineState(), run by getTimeline and getSnapshot. Reads isActive, isPaused, pausedTimeRemaining, timerEndDate, currentTaskID. When isActive is true, not paused, and timerEndDate has passed, it removes the key and treats the session as inactive (L598). While a session is active the next timeline refresh is set to the end instant (L674)." _blank
+  click P_ENTRY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L650" "NudgeTaskEntry: isSessionActive, isSessionPaused, sessionTimerEndDate, sessionPausedRemaining, activeTaskID." _blank
+  click V_ROW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L1079" "WidgetTaskRow. The row whose task is the session's shows a bolt and a countdown to sessionTimerEndDate. Its checkbox is Button(intent: CompleteTaskIntent(taskID:))." _blank
+  click V_FOOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L975" "sessionButtonRow. Active: a countdown plus a pause capsule and a stop capsule. Inactive: Start Session. All three are plain Links to nudge://focus-session, so none of them starts, pauses or ends anything." _blank
+  click I_COMPLETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "CompleteTaskIntent.perform(). Marks the task complete in SwiftData. If activeSessionState names this task it removes the key (L82). It does not touch ActivityKit. Also cancels the task's pending nudges, sets nudge.arb.widgetMutated, reloads the timeline and posts the unobserved Darwin notification." _blank
+  click AK_CTX href "https://developer.apple.com/documentation/widgetkit/activityviewcontext" "context.state (taskName, sessionState, timerEnd, nextTaskName), context.attributes (userName, totalTasksToday, currentTaskIndex) and context.isStale, which turns true at the staleDate the app set." _blank
+  click V_LA href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/TaskLiveActivityView.swift#L352" "TaskLiveActivityView, the only Live Activity in NudgeWidgetBundle. displayState maps a stale .active or .stayFocusedAlert to .timeUp. A tap anywhere opens nudge://focus-session (widgetURL). Dismiss is drawn only in .timeUp." _blank
+  click I_STOP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/FocusSessionIntents.swift#L35" "EndFocusSessionIntent.perform(), widget target. Ends every activity with no final content and .immediate dismissal, removes the key, reloads the timeline, posts the unobserved Darwin notification." _blank
+  click AK_STOP href "https://developer.apple.com/documentation/activitykit/activity" "activity.end(nil, dismissalPolicy: .immediate) at NudgeWidget/FocusSessionIntents.swift L38." _blank
+  click W_RELOAD href "https://developer.apple.com/documentation/widgetkit/widgetcenter" "WidgetCenter.shared.reloadTimelines(ofKind: NudgeTaskWidget). WidgetKit then calls NudgeTaskProvider.getTimeline. The app calls the same thing from publishSessionState." _blank
+  click A_URL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L68" "onOpenURL. nudge://focus-session parses to DeepLink.focusSession and only sets deepLinkTab = .tasks. Opening the app makes the scene active, which runs syncIfActivityDismissed." _blank
+  click A_SYNC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L233" "The app learns what the widget did only here, by reading the key and Activity.activities on its next launch or scene-active." _blank

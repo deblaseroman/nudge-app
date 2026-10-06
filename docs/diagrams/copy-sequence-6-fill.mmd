@@ -1,0 +1,20 @@
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 6: NudgeCopyFill.fill turns the written line into the delivered one. A placeholder that cannot be filled, or one the writer invented, returns nil and the template body is used. The placeholders are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SCHED as NudgeArbiter.swift<br/>schedule
+    participant BODY as NudgeArbiter.swift<br/>resolvedBody
+    participant FILL as NudgeCopyService.swift<br/>NudgeCopyFill.fill
+    participant ROWS as Task, goal, profile rows<br/>SharedModelContainer.swift
+  end
+  BODY->>FILL: fill
+  FILL->>ROWS: fetch task, goal, name
+  FILL->>FILL: duePhrase, relativeDay, clock
+  alt a placeholder unresolved
+    FILL-->>BODY: returns nil
+    BODY-->>SCHED: returns template body
+  else every placeholder filled
+    FILL-->>BODY: returns filled line
+    BODY-->>SCHED: returns filled line
+  end

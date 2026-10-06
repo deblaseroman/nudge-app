@@ -1,0 +1,22 @@
+%% artifact: https://claude.ai/artifact/WgLAqHrYF5A5fdF1mef85X
+%% commit ede6774 · stage 5: resolvedBody asks the cache for a written line. validBody checks the cache age, finds the entry, and checks the named task and its deadline. Any miss returns the template body. The checks are a table on the page.
+sequenceDiagram
+  autonumber
+  box rgba(14,111,111,0.10) App code
+    participant SCHED as NudgeArbiter.swift<br/>schedule
+    participant BODY as NudgeArbiter.swift<br/>resolvedBody
+    participant VALID as NudgeCopyService.swift<br/>NudgeCopyStore.validBody
+    participant CACHE as Copy cache<br/>NudgeCopyService.swift
+    participant TASKS as NudgeTask rows<br/>NudgeTask.swift
+  end
+  SCHED->>BODY: resolvedBody
+  BODY->>VALID: validBody
+  VALID->>CACHE: read generatedAt
+  VALID->>CACHE: read entries
+  VALID->>TASKS: fetch named task
+  alt no valid line
+    VALID-->>BODY: returns nil
+    BODY-->>SCHED: returns template body
+  else line still valid
+    VALID-->>BODY: returns written line
+  end

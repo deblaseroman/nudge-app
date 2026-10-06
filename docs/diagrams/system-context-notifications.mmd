@@ -1,0 +1,37 @@
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: every target's use of UNUserNotificationCenter, and the background refresh task. A_ boxes are the app, W_ the widget extension, M_ the monitor extension. Arrows are unlabeled where several enter one box; the cases are a table on the page.
+flowchart TB
+  A_DELEGATE["NudgeApp.swift<br/>NudgeAppDelegate"]
+  OS_BG["BackgroundTasks<br/>BGTaskScheduler"]
+  A_CATS["NudgeNotificationCategories.swift<br/>registerAll"]
+  A_RECALC["NudgeApp.swift<br/>handleDailyRecalc"]
+  A_ARB["NudgeArbiter.swift<br/>NudgeArbiter"]
+  A_SCHED["NotificationScheduler.swift<br/>cancelRetiredDailyNotifications"]
+  W_CANCEL["CompleteTaskIntent.swift<br/>cancelPendingNudges"]
+  M_POST["DeviceActivityMonitorExtension.swift<br/>post"]
+  OS_UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  A_NSVC["NudgeNotificationService.swift<br/>NudgeNotificationService"]
+
+  A_DELEGATE --> OS_BG
+  A_DELEGATE --> A_CATS
+  OS_BG --> A_RECALC
+  A_RECALC --> A_ARB
+  A_RECALC --> A_SCHED
+  A_CATS --> OS_UNC
+  A_ARB --> OS_UNC
+  A_SCHED --> OS_UNC
+  W_CANCEL --> OS_UNC
+  M_POST --> OS_UNC
+  OS_UNC --> A_NSVC
+  A_NSVC --> OS_UNC
+
+  click A_DELEGATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L20" "App. didFinishLaunchingWithOptions sets UNUserNotificationCenter.current().delegate to NudgeNotificationService.shared, calls NudgeNotificationCategories.registerAll, registers the task com.deblaser.nudge.dailyRecalc and submits a BGAppRefreshTaskRequest for the next 6 AM." _blank
+  click OS_BG href "https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler" "BGTaskScheduler.shared.register and submit. Allowed by BGTaskSchedulerPermittedIdentifiers and UIBackgroundModes fetch in Nudge/Info.plist. iOS chooses when to run it, at or after 6 AM." _blank
+  click A_CATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationCategories.swift#L112" "App. setNotificationCategories with every category the arbiter and the monitor extension attach to their requests." _blank
+  click A_RECALC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "App, in the background. Re-submits the next run, purges past events from the store, runs NudgeArbiter.reevaluate(reason: .backgroundTask) and removes the two retired daily requests." _blank
+  click A_ARB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L4094" "App. schedule adds requests (L4129); cancelAll removes the ones it owns (L538); a DEBUG census reads pending requests (L499). Its triggers and rules are on the Notification Flow page." _blank
+  click A_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NotificationScheduler.swift#L58" "App. removePendingNotificationRequests for nudge.daily.bedtimePlanning and nudge.daily.morningKickoff, two repeating requests older builds scheduled. Also called at launch from ContentView." _blank
+  click W_CANCEL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L128" "Widget extension. Reads pendingNotificationRequests, removes those whose identifier starts with nudge.arb. and contains the completed task's id." _blank
+  click M_POST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L98" "Monitor extension. Adds the limit and mirror notifications with identifiers nudge.ext.limit.* and nudge.ext.mirror.*, delivered immediately." _blank
+  click OS_UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "One notification center for the app and its extensions. The app is the only target that asks for permission and the only one that receives delegate callbacks." _blank
+  click A_NSVC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L68" "App. The delegate: willPresent and didReceive come from the center. Toward the center: notificationSettings and requestAuthorization (alert, badge, sound, providesAppNotificationSettings) at L104, the test notification at L133, and the 30-minute snooze re-add at L403." _blank

@@ -1,0 +1,50 @@
+%% artifact: https://claude.ai/artifact/ArJ58pVpZrTcRRQHZaWFzv
+%% commit ede6774 · close-up: starting a session, requesting the Live Activity, and the in-process timers that update and end it. startSession's other calls (cancelSession, lastFocusSessionStartedAt, TimelineReflow, NudgeGoal, NudgeArbiter) are a table on the page.
+flowchart TB
+  U_PICK["TasksTabView.swift<br/>attemptStartSession"]
+  U_NOTIF["NudgeNotificationService.swift<br/>startSession(for:)"]
+  C_START["SessionCoordinator.swift<br/>startSession"]
+  C_PUBLISH["SessionCoordinator.swift<br/>publishSessionState"]
+  K_STATE[("activeSessionState<br/>SessionCoordinator.swift")]
+  L_START["LiveActivityManager.swift<br/>startActivity"]
+  AK_REQ["ActivityKit<br/>Activity.request"]
+  C_SCHED["SessionCoordinator.swift<br/>scheduleWork"]
+  C_EXPIRE["SessionCoordinator.swift<br/>handleTimerExpired"]
+  C_FINISH["SessionCoordinator.swift<br/>finishSession"]
+  C_ALERT["SessionCoordinator.swift<br/>triggerFocusAlert"]
+  L_ALERT["LiveActivityManager.swift<br/>showStayFocusedAlert"]
+  C_REVERT["SessionCoordinator.swift<br/>revertFocusAlert"]
+  L_REVERT["LiveActivityManager.swift<br/>revertToActive"]
+  AK_UPD["ActivityKit<br/>Activity.update"]
+
+  U_PICK --> C_START
+  U_NOTIF --> C_START
+  C_START --> C_PUBLISH
+  C_PUBLISH --> K_STATE
+  C_START --> L_START
+  L_START --> AK_REQ
+  C_START --> C_SCHED
+  C_SCHED -- "at sessionEnd" --> C_EXPIRE
+  C_EXPIRE --> C_FINISH
+  C_SCHED -- "after 20 min" --> C_ALERT
+  C_ALERT --> L_ALERT
+  C_ALERT -- "10 s later" --> C_REVERT
+  C_REVERT --> L_REVERT
+  L_ALERT --> AK_UPD
+  L_REVERT --> AK_UPD
+
+  click U_PICK href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2411" "attemptStartSession(_ task). Called from the session picker sheet and the idle confirmation sheet. If TimelineReflow.anchoredConflict finds an anchored item in the way it sets sessionStartConflict for the Start anyway alert instead; otherwise it calls startSession(task:userName:) with the profile name." _blank
+  click U_NOTIF href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L368" "startSession(for: taskID, context:). Runs on the Start session notification action. Returns when taskID is nil, when a session is already active, or when the task no longer exists. userName is the profile name or an empty string." _blank
+  click C_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "startSession(task:userName:). minutes = task.estimatedMinutes, 60 when nil. sessionEnd = now + minutes. Full order of its calls is in the table under the picture." _blank
+  click C_PUBLISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L462" "publishSessionState(isActive: true, currentTaskID: task.id, timerEndDate: sessionEnd). Writes the dictionary, then WidgetCenter.reloadTimelines(ofKind: NudgeTaskWidget) so the widget shows the timer at once." _blank
+  click K_STATE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L485" "App Group group.com.deblaser.nudge, key activeSessionState. isActive true, isPaused false, timerEndDate (epoch seconds), currentTaskID (UUID string), startedAt (epoch seconds, read only by the app's restore)." _blank
+  click L_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L21" "startActivity(userName:taskTitle:taskEnds:). Returns without doing anything when ActivityAuthorizationInfo().areActivitiesEnabled is false. Attributes: userName, totalTasksToday 1, currentTaskIndex 1. State: taskName, .active, timerEnd = taskEnds, nextTaskName nil. A thrown error is caught and printed by startSession." _blank
+  click AK_REQ href "https://developer.apple.com/documentation/activitykit/activity" "Activity.request(attributes:content:pushType: nil). content.staleDate = taskEnds, so the system marks the activity stale at the session's end instant even if the app is not running." _blank
+  click C_SCHED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L435" "scheduleWork(after:block:). A DispatchWorkItem on DispatchQueue.main.asyncAfter. It lives in the app process only. sessionEndTimer is scheduled for the full duration; focusAlertTimer for 20 minutes, only when the session is longer than 20 min 10 s. cancelAllTimers cancels both and the revert." _blank
+  click C_EXPIRE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L371" "handleTimerExpired(). playAlarmSound (system sound 1005), then finishSession, which plays it again." _blank
+  click C_FINISH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L376" "finishSession(). Ends the Live Activity; see Ending the Live Activity." _blank
+  click C_ALERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L407" "triggerFocusAlert(). Runs only when isSessionActive, sessionState is .active and currentTask is set. Schedules focusAlertRevertTimer for focusAlertDuration, 10 s." _blank
+  click L_ALERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L60" "showStayFocusedAlert(taskTitle:taskEnds:). State .stayFocusedAlert with the same timerEnd and staleDate." _blank
+  click C_REVERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L418" "revertFocusAlert(). Runs only when isSessionActive and currentTask is set." _blank
+  click L_REVERT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/LiveActivityManager.swift#L73" "revertToActive(taskTitle:taskEnds:). State .active with the same timerEnd and staleDate." _blank
+  click AK_UPD href "https://developer.apple.com/documentation/activitykit/activity" "currentActivity?.update(ActivityContent(state:staleDate: taskEnds)). currentActivity is the first activity of this type; with none, the call does nothing." _blank

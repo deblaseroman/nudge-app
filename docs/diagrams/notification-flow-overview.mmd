@@ -1,0 +1,59 @@
+%% artifact: https://claude.ai/artifact/T4gAXbXsPBreHvLjNu5zkk
+%% commit ede6774 · overview. Labeled arrows are the main path from a trigger to a delivered notification; the rest are drawn unlabeled and explained in the close-ups. Thick border = a UNNotificationRequest is added here.
+flowchart TB
+  TRIG["ContentView.swift<br/>onChange(scenePhase)"]
+  LAUNCH["NudgeApp.swift<br/>didFinishLaunchingWithOptions"]
+  IOS_BG["BackgroundTasks<br/>BGTaskScheduler"]
+  ARB["NudgeArbiter.swift<br/>reevaluate"]
+  STORE["SharedModelContainer.swift<br/>container"]
+  GROUP["SharedModelContainer.swift<br/>appGroupDefaults"]
+  COPY["NudgeCopyService.swift<br/>NudgeCopyStore.validBody"]
+  UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  NSVC["NudgeNotificationService.swift<br/>userNotificationCenter(didReceive:)"]
+  WIDGET["CompleteTaskIntent.swift<br/>cancelPendingNudges"]
+  DMON["DistractionMonitor.swift<br/>apply"]
+  IOS_DA["DeviceActivity<br/>DeviceActivityCenter"]
+  EXT["DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold"]
+
+  TRIG -- "reevaluate" --> ARB
+  ARB -- "resolvedBody" --> COPY
+  ARB -- "add" --> UNC
+  UNC -- "deliver" --> NSVC
+  EXT -- "add" --> UNC
+
+  LAUNCH --> UNC
+  LAUNCH --> IOS_BG
+  IOS_BG --> TRIG
+  STORE --> ARB
+  ARB --> STORE
+  GROUP --> ARB
+  ARB --> GROUP
+  COPY --> GROUP
+  ARB --> DMON
+  NSVC --> UNC
+  NSVC --> STORE
+  NSVC --> GROUP
+  WIDGET --> UNC
+  WIDGET --> GROUP
+  GROUP --> TRIG
+  DMON --> IOS_DA
+  IOS_DA --> EXT
+  GROUP --> EXT
+  EXT --> GROUP
+
+  classDef add stroke-width:3px
+  class ARB,NSVC,EXT add
+
+  click TRIG href "#sec-launch" "Everything that calls reevaluate: ContentView .task(id: notificationToken) at launch and on toggle changes, scene-active (sceneActive, or taskCompleted when the widget flag is set), the reevaluates after auto-plan and new copy, NudgeApp handleDailyRecalc at 6 AM, SessionCoordinator start / complete / end, TasksTabView, HomeTabView, CalendarTabView, DayPlanRefiner, NudgeCopyGenerator.noteShift." _self
+  click LAUNCH href "#sec-launch" "Sets UNUserNotificationCenter.delegate, registers the 13 notification categories, registers and submits the com.deblaser.nudge.dailyRecalc background task." _self
+  click IOS_BG href "#sec-launch" "Wakes handleDailyRecalc at or after 6 AM; permitted by Nudge/Info.plist." _self
+  click ARB href "#sec-arbiter" "Single decision engine: debounce, cancelAll, master toggle, 10 builders, gates, pickWinners, schedule. Reads tasks, profile, outcomes and App Group histories; writes NudgeOutcome(.pending), scheduledIDs and the history maps; adds and removes requests; writes the Screen Time snapshot afterwards." _self
+  click STORE href "#sec-builders" "SwiftData store: NudgeTask, UserProfile, NudgeOutcome, NudgeGoal, CompletedTaskRecord. The builder table shows who reads what." _self
+  click GROUP href "#sec-keys" "App Group group.com.deblaser.nudge: scheduledIDs, five history maps, idleDismissed, lastFocusSessionStartedAt, widgetMutated, copy cache, tappedNudge keys, AppOpenLog, Screen Time settings, snapshot, rung keys, breadcrumbs." _self
+  click COPY href "#sec-copy" "Copy is written ahead by Claude, cached in nudge.copy.cache, validated and placeholder-filled at scheduling time; any miss uses the builder's template." _self
+  click UNC href "#sec-addsites" "The four add sites: NudgeArbiter.schedule, NudgeActivityMonitorExtension.post, rescheduleSnoozed, sendTestNotification." _self
+  click NSVC href "#sec-delivery" "willPresent shows banner and sound; didReceive writes the outcome result, starts a session, re-adds a snoozed request, writes the idleDismissed and tappedNudge keys, and posts the tab to open. The foreground sweep records outcomes." _self
+  click WIDGET href "#sec-launch" "Completing a task from the widget removes its pending arbiter requests, trims scheduledIDs and sets widgetMutated so the app reevaluates undebounced on its next foreground." _self
+  click DMON href "#sec-screentime" "App side of Screen Time: authorization, daily and weekly schedules with the limit thresholds, and the snapshot the extension reads." _self
+  click IOS_DA href "#sec-screentime" "Runs the NudgeActivityMonitor process when a threshold is crossed." _self
+  click EXT href "#sec-screentime" "Reads settings, snapshot and rung keys from the App Group; writes rung keys and breadcrumbs; posts limit-ladder and mirror notifications with placeholder copy." _self

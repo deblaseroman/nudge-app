@@ -1,0 +1,45 @@
+%% artifact: https://claude.ai/artifact/U5VN8DfMhSMj8TsjWHwg9q
+%% commit ede6774 · close-up: Screen Time across three targets. The app (A_) asks for access, saves the picked apps and registers schedules; iOS runs the monitor extension (M_) and the report extension (R_). Arrow into storage = write, out of storage = read.
+flowchart TB
+  A_AUTH["DistractionMonitor.swift<br/>requestAuthorization"]
+  OS_PICK["FamilyControls<br/>FamilyActivityPicker"]
+  A_SNAP["DistractionMonitor.swift<br/>writeSnapshot"]
+  OS_FC["FamilyControls<br/>AuthorizationCenter"]
+  A_SAVE["SettingsTabView.swift<br/>saveDistractions"]
+  ST_DEFAULTS[("App Group UserDefaults<br/>SharedModelContainer.swift")]
+  A_APPLY["DistractionMonitor.swift<br/>apply"]
+  OS_DAC["DeviceActivity<br/>DeviceActivityCenter"]
+  M_EXT["DeviceActivityMonitorExtension.swift<br/>eventDidReachThreshold"]
+  OS_UNC["UserNotifications<br/>UNUserNotificationCenter"]
+  A_STATS["StatsTabView.swift<br/>distractionsReport"]
+  OS_DAR["DeviceActivity<br/>DeviceActivityReport"]
+  R_SCENE["NudgeActivityReportExtension.swift<br/>MirrorReportScene"]
+
+  A_AUTH --> OS_FC
+  A_AUTH --> ST_DEFAULTS
+  OS_PICK --> A_SAVE
+  A_SAVE --> ST_DEFAULTS
+  A_SNAP --> ST_DEFAULTS
+  ST_DEFAULTS --> A_APPLY
+  A_APPLY --> OS_DAC
+  OS_DAC --> M_EXT
+  ST_DEFAULTS --> M_EXT
+  M_EXT --> ST_DEFAULTS
+  M_EXT --> OS_UNC
+  ST_DEFAULTS --> A_STATS
+  A_STATS --> OS_DAR
+  OS_DAR --> R_SCENE
+
+  click A_AUTH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L44" "App. AuthorizationCenter.shared.requestAuthorization(for: .individual), then saves settings.authorized. Called from Settings and, once per launch, from apply when apps are picked but the status is not determined." _blank
+  click OS_PICK href "https://developer.apple.com/documentation/familycontrols/familyactivitypicker" "The system picker shown by .familyActivityPicker in Settings (L471). Returns a FamilyActivitySelection of opaque tokens; the app can encode and pass them on but cannot read which apps they are." _blank
+  click A_SNAP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L219" "App. Called by the arbiter after every pass. Reads open tasks, today's events and the latest completion from the store, and nudge.lastFocusSessionStartedAt, then writes nudge.distractions.snapshot: day window, bedtime, today's items, last work time." _blank
+  click OS_FC href "https://developer.apple.com/documentation/familycontrols/authorizationcenter" "AuthorizationCenter.shared: requestAuthorization and authorizationStatus. Needs the family-controls entitlement, which the app and both Screen Time extensions carry." _blank
+  click A_SAVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/SettingsTabView.swift#L526" "App. Encodes the selection into settings.selectionData, saves nudge.distractions.settings, then DistractionMonitor.apply(profile:force: true). Also runs when the limit or either toggle changes." _blank
+  click ST_DEFAULTS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/DistractionSettings.swift#L20" "Keys here: nudge.distractions.settings and .snapshot (written by the app, read by the monitor), .registeredSignature (app only), .lastRungAt, .lastRungDay, .mirrorLastFiredAt and .breadcrumbs (written by the monitor)." _blank
+  click A_APPLY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L62" "App. Loads the settings, skips when the registered signature is unchanged, otherwise stopMonitoring then startMonitoring for a daily schedule with events at 100, 150 and 175 percent of the limit and a weekly schedule with the mirror event. Called at launch and after a Settings save." _blank
+  click OS_DAC href "https://developer.apple.com/documentation/deviceactivity/deviceactivitycenter" "DeviceActivityCenter().startMonitoring(_:during:events:) and stopMonitoring. iOS counts usage of the picked apps and wakes the monitor extension at each threshold." _blank
+  click M_EXT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityMonitor/DeviceActivityMonitorExtension.swift#L50" "Monitor extension. Loads settings and the snapshot, reads its own lastRungAt for today, decides with LimitDecider, writes lastRungAt, lastRungDay or mirrorLastFiredAt and a breadcrumb, then posts a notification. intervalDidStart and intervalDidEnd only write breadcrumbs." _blank
+  click OS_UNC href "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter" "UNUserNotificationCenter.current().add with no trigger, so it is delivered at once. Categories category.limit and category.mirror, interruption level timeSensitive." _blank
+  click A_STATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/StatsTabView.swift#L95" "App. Reads the settings; when authorized with a selection it hosts DeviceActivityReport with the context nudge.mirror and a filter for this week, this iPhone and the picked apps. The minutes never enter the app process." _blank
+  click OS_DAR href "https://developer.apple.com/documentation/deviceactivity/deviceactivityreport" "The system view that runs the report extension in its own process and shows what it draws." _blank
+  click R_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeActivityReport/NudgeActivityReportExtension.swift#L49" "Report extension. makeConfiguration sums totalActivityDuration over the week's segments and returns the minutes and the fraction of the week elapsed; MirrorReportView draws one number and one sentence. It writes nothing anywhere." _blank

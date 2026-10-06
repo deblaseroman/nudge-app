@@ -1,0 +1,932 @@
+<meta charset="utf-8">
+<title>Nudge Task Lifecycle</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a state-machine overview first, then one close-up per writer group, each a top-to-bottom figure with its cases in a table beneath. Same tokens and chrome as notification-flow.html. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #1c2029;
+  --muted: #5d6471;
+  --line: #d3d7df;
+  --accent: #0e6f6f;
+  --accent-soft: #d9ecec;
+  --dead: #8a8f98;
+  --node: #ffffff;
+  --node-border: #3c4654;
+  --cluster: #eceef2;
+  --cluster-border: #b9bfca;
+  --edge: #4b5563;
+  --edge-label: #f4f5f7;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+    --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+    --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+    --edge: #b6bdc8; --edge-label: #14171c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --surface: #1c2027; --fg: #e4e7ec; --muted: #9aa2ae; --line: #2d333d;
+  --accent: #5ec2c2; --accent-soft: #163535; --dead: #7a808a;
+  --node: #1c2027; --node-border: #aeb6c2; --cluster: #1a1e25; --cluster-border: #3a414c;
+  --edge: #b6bdc8; --edge-label: #14171c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; margin: 0; }
+.wrap { padding-inline: 16px; padding-block: 20px 48px; max-width: 1480px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 12px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.stamp { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.stamp code { background: var(--accent-soft); color: var(--fg); padding: 1px 6px; border-radius: 3px; }
+p.lede { max-width: 72ch; margin: 0 0 14px; color: var(--muted); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin-bottom: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); align-items: center; margin-bottom: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 26px; height: 14px; border: 1.5px solid var(--node-border); border-radius: 2px; background: var(--node); }
+.sw.state { border-radius: 7px; }
+.sw.dead { border-style: dashed; border-color: var(--dead); background: transparent; }
+figure { margin: 0; }
+figure + figure { margin-top: 22px; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
+.stage { display: inline-block; padding: 16px; min-width: 100%; }
+.stage svg { display: block; max-width: none !important; height: auto; }
+.stage a { cursor: pointer; }
+.stage .node:hover rect, .stage .node:hover polygon { stroke: var(--accent) !important; stroke-width: 2.5px; }
+.status { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); padding: 10px 14px; }
+.status.error { color: #b3401f; }
+pre.fallback { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; padding: 14px; margin: 0; }
+figcaption { font-size: 13px; color: var(--muted); margin: 8px 2px 0; max-width: 90ch; }
+section { margin-top: 40px; scroll-margin-top: 12px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+h2 .src, h3 .src { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 10px; }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; }
+.intro { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+.reads { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; max-width: 100ch; }
+.reads b { color: var(--fg); font-weight: 500; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; border-top: 0; position: sticky; top: 0; background: var(--bg); }
+td.k, th.k { white-space: nowrap; }
+td code, li code, p code { font-family: var(--font-mono); font-size: 12.5px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.tablewrap table th { background: var(--surface); }
+ol.dead { padding-left: 22px; margin: 0; max-width: 100ch; }
+ol.dead li { margin: 0 0 10px; }
+ol.dead li a { font-family: var(--font-mono); font-size: 12.5px; }
+a { color: var(--accent); }
+.note { font-size: 13.5px; color: var(--muted); max-width: 90ch; }
+.mermaidTooltip { position: absolute; max-width: 420px; padding: 8px 11px; font-family: var(--font-body); font-size: 12.5px; line-height: 1.45; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.18); text-align: left; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 480px) { h1 { font-size: 20px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Nudge Task Lifecycle</h1>
+  <div class="stamp">commit <code>ede6774</code> · main · 2026-10-05 · reference: <code>docs/diagrams/task-lifecycle.mmd</code> · page: <code>docs/diagrams/task-lifecycle.html</code></div>
+</header>
+<p class="lede">One <code>NudgeTask</code> row from capture to completion or deletion. The overview is a state machine: each stadium box is a set of field values on the row, each arrow is one transition labeled with the main function that makes it. The close-ups show the writers behind each arrow top to bottom; where several arrows enter one box they carry no label, and the cases are listed in the table under the picture. Every box names a file and a function (or what is stored and its file), clicks through to that file at this commit, and carries its parameters, values and rules in a hover tooltip. Reads that decide which list, screen or process a row lands in are tables, not arrows.</p>
+
+<nav class="toc">
+  <a href="#sec-overview">Overview</a>
+  <a href="#sec-creation">Creation</a>
+  <a href="#sec-planner">Planners</a>
+  <a href="#sec-placement">Placement and edits</a>
+  <a href="#sec-daychange">Launch and day change</a>
+  <a href="#sec-generated">Generated rows</a>
+  <a href="#sec-completion">Completion and deletion</a>
+  <a href="#sec-reads">Reads</a>
+  <a href="#sec-fields">Fields</a>
+  <a href="#sec-targets">Targets</a>
+  <a href="#sec-dead">No effect</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw state"></i> a state: the row's field values, in NudgeTask.swift</span>
+  <span><i class="sw"></i> live code or storage: click to open the file, hover for detail</span>
+  <span><i class="sw dead"></i> exists, no effect on the store (listed at the end; none sits on the main path)</span>
+</div>
+
+<section id="sec-overview">
+  <h2>Overview <span class="src">task-lifecycle-overview.mmd</span></h2>
+  <p class="intro">The model is <code>NudgeTask</code> in <code>Nudge/Models/NudgeTask.swift</code>. Two facts define a task's place in the day: the anchor (<code>dueDate</code> / <code>specificTime</code>, when it is owed) and the plan (<code>intendedDate</code> as the plan day, <code>plannedStartDate</code> / <code>plannedDurationMinutes</code> / <code>plannedIsAuto</code> as the plan time). Completion is <code>isComplete</code> / <code>completedAt</code>. The plan is written only through five helpers on the model. One arrow per transition, labeled with the main function; the other functions that make the same move are in the target state's tooltip and in the triggers table.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · overview. Stadium boxes are states of one NudgeTask row (field values on line one, NudgeTask.swift on line two). One arrow per transition, labeled with the main function; the other functions that make the same move are in the target state's tooltip and the triggers table. Completion and deletion are drawn from one state and apply to every open state (unplanned, plan day, auto, manual, overdue).
+flowchart TB
+  S_NEW(["no row yet<br/>NudgeTask.swift"])
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_AUTO(["plannedStartDate set · plannedIsAuto true<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+  S_OVERDUE(["sortDeadline before now<br/>NudgeTask.swift"])
+  S_EVENT(["isInformationalEvent · specificTime<br/>NudgeTask.swift"])
+  S_DONE(["isComplete true · completedAt<br/>NudgeTask.swift"])
+  S_GONE(["row deleted<br/>NudgeTask.swift"])
+
+  S_NEW -- "CaptureWriter.apply" --> S_UNPLANNED
+  S_NEW -- "CaptureWriter.apply" --> S_DAY
+  S_NEW -- "CaptureWriter.apply" --> S_MANUAL
+  S_NEW -- "CalendarService import" --> S_EVENT
+  S_UNPLANNED -- "setPlanDay" --> S_DAY
+  S_DAY -- "PlacementRollover.sweep" --> S_UNPLANNED
+  S_UNPLANNED -- "DayPlanEngine.plan" --> S_AUTO
+  S_DAY -- "DayPlanEngine.plan" --> S_AUTO
+  S_UNPLANNED -- "setPlanStart" --> S_MANUAL
+  S_DAY -- "setPlanStart" --> S_MANUAL
+  S_AUTO -- "releaseAutoPlan" --> S_DAY
+  S_AUTO -- "releaseAutoPlan" --> S_UNPLANNED
+  S_AUTO -- "TimelineReflow.sessionStarted" --> S_MANUAL
+  S_MANUAL -- "clearPlanTime" --> S_DAY
+  S_UNPLANNED -- "isOverdue read" --> S_OVERDUE
+  S_OVERDUE -- "TaskEditorSheet.apply" --> S_UNPLANNED
+  S_OVERDUE -- "toggleCompletion" --> S_DONE
+  S_DONE -- "toggleCompletion" --> S_OVERDUE
+  S_OVERDUE -- "deleteTask" --> S_GONE
+  S_DONE -- "deleteTask" --> S_GONE
+  S_EVENT -- "purgePastEvents" --> S_GONE
+
+  click S_NEW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L530" "NudgeTask.init(title:dueDate:dueTime:specificTime:…sequenceIndex:). Arrows out are labeled with the chat capture; the same moves are made by TaskEditorSheet create (unplanned, day, manual), acceptGoalOffer (unplanned), ExamPrepSweep.commitmentPhase (unplanned: a daily owed at 23:59), CalendarService applyImportedSchedule (day, or manual with a span), PlanProposalSweep.accept (day), ScreenshotCalendarImporter.importFromImage (event). See the two creation close-ups." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "No plan day, no plan time. Lists: Unscheduled (isUnscheduled) unless the deadline falls today, in which case belongs(to: today) puts it in Today; also Overdue once sortDeadline passes. A deadline may or may not exist; skipCount may be 1 or more after a rollover release, shown as Slipped N days. Commitment dailies live here on their own day. Arrows in: from plan day by PlacementRollover.sweep (second slip) and by clearPlan (the editor's No date); from auto by releaseAutoPlan when planDayIsAuto (Clear plan, a replan, a displacement); from overdue by TaskEditorSheet.apply and HomeTabView task_updates moving the due clock; from done by toggleCompletion (uncheck) and task_updates isComplete false." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "planDay = startOfDay(intendedDate); plannedStartDate nil. In the Today lens when the day is today, else that day's lens (Tomorrow, This week, the calendar). planDayIsAuto says whether a planner wrote the day. Invariant I3: the day is today or later. Arrows in: from unplanned by setPlanDay (TaskEditorSheet.apply day picker or due-today rent rule, HomeTabView task_updates, PlacementRollover legacy plan item, backfillImportedScheduleOnce); from auto by releaseAutoPlan when the user chose the day, and by the rollover clearing a stale time; from manual by clearPlanTime (removeFromTimeline, the editor's day-only save, TimelineReflow no room, the rollover's stale time). The rollover's first slip keeps the row here: skipCount 1, setPlanDay(today)." _blank
+  click S_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L403" "Placed by DayPlanEngine.plan on today (auto: isToday) or by DayPlanRefiner.applyPlacements. intendedDate follows the start (setPlanStart). Drawn on the timeline; movable by the reflow (a pushed row keeps its auto flag); released by Clear plan, a replan or a displacement. Only today's placements are ever auto: a future-day run marks its placements manual. Arrows in from unplanned and plan day: planMyDay, autoPlanIfNewDay, the chat's plan intent through DayPlanRefiner." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "A placement the user made, a started focus session, an imported entry with a span, or a planner run on a future day. Anchored: TimelineReflow never moves it, the planner plans around it, the arbiter's quiet-hours gate exempts placementLead and placementMissed for it. Arrows in by setPlanStart(auto: false): placeTask (timeline slot or drag), TaskEditorSheet.apply clock time, HomeTabView task_updates start time, TimelineReflow.sessionStarted (from SessionCoordinator.startSession), CalendarService import with a span, CalendarTabView.planSelectedDay on a future day. From auto the session start is drawn; placeTask and the editor make the same move." _blank
+  click S_OVERDUE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L86" "isOverdue: open and sortDeadline (specificTime, else end of the due day) before now. Not written by anyone: the clock moves a dated row here and readers compute it. It overlays the plan states: a placed or planned task that is overdue stays where it is and also sits in the Overdue list (R3 overlap). Arrows out: TaskEditorSheet.apply (due picker, or a plan day set after the due day) and HomeTabView task_updates move the due clock; toggleCompletion, CompleteTaskIntent.perform and task_updates complete it; deleteTask, the editor's onDelete and CaptureWriter.apply's replace rule (a restated title) delete it. The completion and deletion arrows are drawn here once and apply to every open state." _blank
+  click S_EVENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L391" "isInformationalEvent true. Anchor is specificTime (dueDate = its day, dueTime the label). Never carries a plan (I2). Shown on the Events tab, the timeline strip, the calendar and the widget; feeds the busy windows, the eventBlock nudge and the planner's buffers. Arrows in: CalendarService importAppleCalendar and writeICalEvents (drawn), ScreenshotCalendarImporter.importFromImage, CaptureWriter.apply with isEvent, setEventFlag on a task. setEventTime writes its time. Out: purgePastEvents once its day is over (drawn), the editor's onDelete, setEventFlag back to a task." _blank
+  click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L381" "isComplete true, completedAt the instant. Arrows in from any open state: toggleCompletion (drawn), CompleteTaskIntent.perform in the widget, HomeTabView task_updates isComplete. The first two also insert a CompletedTaskRecord; the chat path does not. Out: toggleCompletion uncheck and task_updates isComplete false reopen it; deleteTask and the editor's onDelete delete it. Read as bucket 4 of TaskSortComparator, sunk to the bottom of the day lenses, kept in the widget for 7 days, excluded from every builder, planner, sweep and proposal; the rollover clears a past plan day on it." _blank
+  click S_GONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1972" "modelContext.delete. Arrows in from any open state: deleteTask (drawn), the editor's onDelete (Tasks and Calendar), CaptureWriter.apply's replace rule, PlacementRollover.sweepMissedSessions, ExamPrepSweep (expanded parent, consumed quantity dailies), PlanProposalSweep.applyUserPlanOverrides; from events CalendarService.purgePastEvents (drawn). A generated row leaves a PrepTombstone; a CompletedTaskRecord survives." _blank
+    </script>
+    <figcaption>Nine states, one arrow per transition. Completion and deletion are drawn from the overdue state only; they apply to every open state (unplanned, plan day, auto, manual, overdue). Overdue is computed, never written: the clock moves a dated row there and it overlays whichever plan state the row is in. The rollover is one arrow (the second slip); its first slip and its stale-time clear are in the table. The ordered-plan flag (sequenceIndex) and the slip counter live in the fields table.</figcaption>
+  </figure>
+
+  <h3>What triggers each transition</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Transition</th><th>Functions (drawn one first)</th><th>Trigger</th><th>Writes</th></tr>
+    <tr><td class="k">no row → unplanned</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L149">CaptureWriter.apply</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L809">TaskEditorSheet create</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L139">acceptGoalOffer</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L586">ExamPrepSweep.commitmentPhase</a></td><td>A chat or session-picker dump with no date, or a deadline on another day; the editor with no day picked; the goal offer; a commitment daily on launch, foreground or after a capture</td><td>init fields; dueDate / dueTime / specificTime only for a deadline; a daily gets dueDate 23:59 of its day</td></tr>
+    <tr><td class="k">no row → day</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L171">CaptureWriter.apply</a>, TaskEditorSheet create, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L509">CalendarService.applyImportedSchedule</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L562">PlanProposalSweep.accept</a></td><td>A stated day (dueKind start), a deadline falling today (the rent rule), a plan item with no day; the editor's day picker; an imported zero-length or all-day task; a Yes to a study plan</td><td>setPlanDay: intendedDate, planDayIsAuto false</td></tr>
+    <tr><td class="k">no row → manual</td><td>CaptureWriter.apply, TaskEditorSheet create, CalendarService.applyImportedSchedule</td><td>A stated start time; the editor's clock time or a New task from a timeline slot; an imported task with a real span</td><td>setPlanStart(auto: false): intendedDate, plannedStartDate, plannedDurationMinutes, plannedIsAuto false; capture adds a 60-minute default length</td></tr>
+    <tr><td class="k">no row → event</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L295">importAppleCalendar</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L456">writeICalEvents</a>, CaptureWriter.apply, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ScreenshotCalendarImporter.swift#L110">ScreenshotCalendarImporter.importFromImage</a></td><td>The daily calendar refresh in the scene-active Task or a manual import; the model says isEvent; a screenshot</td><td>isInformationalEvent, dueDate = the day, specificTime = the start, dueTime</td></tr>
+    <tr><td class="k">unplanned → day</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L180">setPlanDay</a> via <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L3658">TaskEditorSheet.apply</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L475">HomeTabView.sendMessage (task_updates)</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L100">PlacementRollover.sweep</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L540">backfillImportedScheduleOnce</a></td><td>A day chosen in the editor, or a due date set to today with no day chosen; a chat date answer with dueKind start, or an owed-today answer; a legacy plan item with no day; the one-shot import backfill</td><td>setPlanDay (editor also clearPlanTime; schedule touched resets skipCount to 0)</td></tr>
+    <tr><td class="k">day → unplanned</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L130">PlacementRollover.sweep</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L3663">TaskEditorSheet.apply</a></td><td>The plan day passed again and skipCount reaches 2; the editor's No date</td><td>clearPlan: intendedDate nil, plan time cleared, planDayIsAuto false; the row shows Slipped 2 days</td></tr>
+    <tr><td class="k">unplanned / day → auto</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L489">DayPlanEngine.plan</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanRefiner.swift#L198">DayPlanRefiner.applyPlacements</a></td><td>Plan my day (replan), the first foreground of a day (autoPlanIfNewDay), the chat's plan-my-day intent; a Calendar-tab run on a future day writes manual instead</td><td>setPlanStart(start, planningMinutes, auto: true)</td></tr>
+    <tr><td class="k">unplanned / day → manual</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L194">setPlanStart</a> via <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2058">placeTask</a>, TaskEditorSheet.apply, HomeTabView task_updates, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L117">TimelineReflow.sessionStarted</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L408">CalendarTabView.planSelectedDay</a></td><td>A timeline slot or drag; a clock time in the editor or the chat; a focus session started on the task; the planner run on a future day</td><td>setPlanStart(auto: false); placeTask resets skipCount</td></tr>
+    <tr><td class="k">auto → day / unplanned</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L225">releaseAutoPlan</a> via <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2142">clearPlan</a> and <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L146">DayPlanEngine.plan</a> (replan, displacement); to day also by <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L118">PlacementRollover.sweep</a> (stale time) and <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L216">TimelineReflow.reflow</a> (no room)</td><td>The Clear plan button; a replan releasing today's auto rows; a generated session evicting a lower-stakes auto row; the day passing; a pushed row no longer fitting today</td><td>releaseAutoPlan: time cleared, the day cleared too only when planDayIsAuto; clearPlanTime for the last two</td></tr>
+    <tr><td class="k">auto → manual</td><td>TimelineReflow.sessionStarted, placeTask, TaskEditorSheet.apply</td><td>A session started on an auto-placed task; the user moving it by hand</td><td>setPlanStart(auto: false)</td></tr>
+    <tr><td class="k">manual → day</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L210">clearPlanTime</a> via <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2074">removeFromTimeline</a>, TaskEditorSheet.apply (day only), PlacementRollover.sweep (stale time)</td><td>Remove from timeline; a day-only edit; the day passing</td><td>clearPlanTime</td></tr>
+    <tr><td class="k">rollover, other moves (not drawn)</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L126">PlacementRollover.sweep</a></td><td>First slip: a plan day before today on an open row that counts slips; stale time: a plan time before today, manual included; a complete row with a past plan day; a legacy plan item with no day</td><td>First slip: skipCount 1, setPlanDay(today), the row stays in plan day; stale time: clearPlanTime, then the day rule; complete row: intendedDate nil; legacy: setPlanDay(today)</td></tr>
+    <tr><td class="k">unplanned → overdue</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L86">isOverdue</a> (a read)</td><td>The clock passes specificTime, or the end of the due day; the same overlay applies to plan day, auto and manual rows</td><td>Nothing; computed by every reader</td></tr>
+    <tr><td class="k">overdue → unplanned</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L3666">TaskEditorSheet.apply</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L445">HomeTabView task_updates</a></td><td>The due picker touched; a plan day set after the due day (the due day follows it); a chat date correction</td><td>dueDate, dueTime, specificTime</td></tr>
+    <tr><td class="k">open → done (drawn from overdue; any open state)</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1891">toggleCompletion</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L48">CompleteTaskIntent.perform</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L409">HomeTabView task_updates</a></td><td>The checkbox, a timeline long press, the session card; the widget's button; the chat saying it is done</td><td>isComplete true, completedAt now; a CompletedTaskRecord from the first two only</td></tr>
+    <tr><td class="k">done → open (drawn to overdue; the row returns to its plan state)</td><td>toggleCompletion, HomeTabView task_updates</td><td>Unchecking; the chat</td><td>isComplete false, completedAt nil; the record deleted (checkbox only)</td></tr>
+    <tr><td class="k">open / done → gone (drawn from overdue and done; any open state)</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1972">deleteTask</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L868">editor onDelete</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L118">Calendar editor onDelete</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L89">CaptureWriter.apply</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L159">sweepMissedSessions</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L477">ExamPrepSweep.commitmentPhase</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L686">applyQuantityCarry</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L235">applyUserPlanOverrides</a></td><td>Swipe or the editor; a new dump item with a matching title while the old row is overdue or slipped; a prep session whose day passed; a commitment parent expanded; a past quantity daily consumed; the user's own study task outranking app sessions</td><td>delete; generated rows leave a PrepTombstone first; the capture replace creates the fresh row</td></tr>
+    <tr><td class="k">event → gone</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L76">purgePastEvents</a>, editor onDelete</td><td>Launch, every foreground and the 6 AM background task, for events before today's start</td><td>delete, at most 200 per call</td></tr>
+    <tr><td class="k">event ↔ task (not drawn)</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2009">setEventFlag</a>, <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2023">setEventTime</a></td><td>The row's convert button; the needs-a-time chip</td><td>isInformationalEvent; specificTime, dueDate, dueTime</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-creation">
+  <h2>Creation</h2>
+  <p class="intro">Every <code>modelContext.insert</code> of a task or event, and the plan helper each creator calls right after <code>init</code>. The helpers decide the starting state. Two pictures: what the user does, and what the app does on its own.</p>
+  <figure>
+    <h3>User-driven creators <span class="src">task-lifecycle-creation.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: user-driven creators (chat, editor, goal offer) and the state the plan helpers leave the row in. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  C_HOME["HomeTabView.swift<br/>sendMessage"]
+  C_EDITOR["TasksTabView.swift<br/>TaskEditorSheet onSave"]
+  C_GOAL["TasksTabView.swift<br/>acceptGoalOffer"]
+  F_CAPTURE["CaptureWriter.swift<br/>apply"]
+  H_DAY["NudgeTask.swift<br/>setPlanDay"]
+  H_START["NudgeTask.swift<br/>setPlanStart"]
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+  S_EVENT(["isInformationalEvent · specificTime<br/>NudgeTask.swift"])
+
+  C_HOME -- "capture" --> F_CAPTURE
+  C_EDITOR --> H_DAY
+  C_EDITOR --> H_START
+  C_EDITOR --> S_UNPLANNED
+  C_GOAL --> S_UNPLANNED
+  F_CAPTURE --> S_UNPLANNED
+  F_CAPTURE --> H_DAY
+  F_CAPTURE --> H_START
+  F_CAPTURE -- "isEvent" --> S_EVENT
+  H_DAY --> S_DAY
+  H_START --> S_MANUAL
+
+  click C_HOME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L299" "sendMessage. Applies task_updates to existing rows first, then CaptureWriter.apply for the new rows, then ExamPrepSweep.run, PlanProposalSweep.runIfNeeded and the arbiter. A Yes to the study-plan question calls PlanProposalSweep.requestPlan (see the automatic creators)." _blank
+  click C_EDITOR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L808" "activeSheet .create onSave: NudgeTask(title, dueDate, dueTime, specificTime, priority, source manual, estimatedMinutes). Then setPlanStart(auto: false) when a clock time was picked, else setPlanDay for a chosen day, else setPlanDay(anchor) when owed today (the rent rule), else no plan; a New task chosen from a timeline slot lands at that slot. Followed by PlanProposalSweep.runIfNeeded and the arbiter." _blank
+  click C_GOAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L138" "acceptGoalOffer: a 20-minute task titled for the goal, source goalOffer, undated and unplanned, goalID set. Lands in Unscheduled." _blank
+  click F_CAPTURE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L34" "apply(response:allTasks:goalContexts:modelContext:). Also called by TasksTabView.createSessionItem (Add your own in the session picker). Dedupe: an open row with a matching title on the same due day suppresses the item, unless that row is overdue or slipped, in which case it is deleted and replaced. A new ordered plan clears sequenceIndex on the old plan's rows. Deadline fields are written only when dueKind is deadline (or the item is an event); a start date is an intention. Plan: stated start → setPlanStart(auto: false) and a 60-minute default length; stated day → setPlanDay; deadline today → setPlanDay(anchor); a plan item with no day → setPlanDay(today); otherwise unplanned. Events never get a plan." _blank
+  click H_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L180" "setPlanDay(day): intendedDate = startOfDay(day), planDayIsAuto = false; a placement on another day is cleared, one on the same day kept. Asserts the row is not an event." _blank
+  click H_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L194" "setPlanStart(start, durationMinutes, auto): intendedDate = the start's day, plannedStartDate = start, plannedDurationMinutes when given, plannedIsAuto = auto; planDayIsAuto = auto only when the day is new." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "Unscheduled list (or Today when owed today, Overdue when the deadline passed)." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "That day's lens; Today when the day is today." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "Anchored placement on that day's timeline." _blank
+  click S_EVENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L391" "Events tab, timeline strip, calendar, widget, busy windows." _blank
+    </script>
+    <figcaption>Capture and the editor can land a row in any of the three task states; the goal offer only ever lands in Unscheduled. The unlabeled arrows are the cases below.</figcaption>
+  </figure>
+  <h3>Cases on the unlabeled arrows</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Arrow</th><th>Case</th><th>Writes</th></tr>
+    <tr><td class="k">CaptureWriter.apply → unplanned</td><td>No date and no time (a floater, priority forced low unless high); or a deadline (dueKind deadline) on a day other than today; or a day the reply is still asking about</td><td>init; dueDate / dueTime / specificTime for a deadline; source capture</td></tr>
+    <tr><td class="k">CaptureWriter.apply → setPlanDay</td><td>A stated day with dueKind start (intention, deadline fields stay nil); a deadline falling today (the rent rule); a plan item (sequenceIndex) with no day → today</td><td>intendedDate; sequenceIndex when the dump ordered it, the old plan's numbers cleared</td></tr>
+    <tr><td class="k">CaptureWriter.apply → setPlanStart</td><td>A stated clock time with dueKind start</td><td>plannedStartDate, plannedIsAuto false, intendedDate; estimatedMinutes 60 when none was stated</td></tr>
+    <tr><td class="k">TaskEditorSheet onSave → setPlanDay</td><td>A scheduled day chosen; or no day chosen but the due date is today</td><td>intendedDate</td></tr>
+    <tr><td class="k">TaskEditorSheet onSave → setPlanStart</td><td>A scheduled clock time chosen; or New task opened from a timeline slot (lands at that slot)</td><td>plannedStartDate, plannedIsAuto false</td></tr>
+    <tr><td class="k">TaskEditorSheet onSave → unplanned</td><td>Neither a day nor a time, and not owed today</td><td>init with the due pickers' values, source manual</td></tr>
+    <tr><td class="k">acceptGoalOffer → unplanned</td><td>Always</td><td>Title "20 minutes on goal", source goalOffer, goalID, estimatedMinutes 20</td></tr>
+    <tr><td class="k">sendMessage → CaptureWriter.apply</td><td>Every chat turn with new items; the same call from TasksTabView.createSessionItem (Add your own)</td><td>See CaptureWriter's tooltip for dedupe and the replace rule</td></tr>
+  </table></div>
+
+  <figure>
+    <h3>Automatic creators <span class="src">task-lifecycle-creation-auto.mmd</span></h3>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: automatic creators (calendar import, screenshot, accepted proposals, commitment dailies). Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  C_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  C_SHOT["CalendarTabView.swift<br/>handleScreenshotPicked"]
+  C_BOX["TasksTabView.swift<br/>answerPlanProposal"]
+  G_REQUEST["PlanProposalSweep.swift<br/>requestPlan"]
+  F_IMPORT["CalendarService.swift<br/>applyImportedSchedule"]
+  F_SHOTIMP["ScreenshotCalendarImporter.swift<br/>importFromImage"]
+  F_ACCEPT["PlanProposalSweep.swift<br/>accept"]
+  F_COMMIT["ExamPrepSweep.swift<br/>commitmentPhase"]
+  H_DAY["NudgeTask.swift<br/>setPlanDay"]
+  H_START["NudgeTask.swift<br/>setPlanStart"]
+  S_UNPLANNED(["intendedDate nil · dueDate 23:59<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+  S_EVENT(["isInformationalEvent · specificTime<br/>NudgeTask.swift"])
+
+  C_SCENE -- "calendar refresh" --> F_IMPORT
+  C_SCENE -- "launch, foreground" --> F_COMMIT
+  C_SHOT --> F_SHOTIMP
+  C_BOX --> F_ACCEPT
+  G_REQUEST --> F_ACCEPT
+  F_IMPORT --> H_DAY
+  F_IMPORT -- "task with span" --> H_START
+  F_IMPORT --> S_EVENT
+  F_SHOTIMP --> S_EVENT
+  F_ACCEPT --> H_DAY
+  F_COMMIT -- "daily per day" --> S_UNPLANNED
+  H_DAY --> S_DAY
+  H_START --> S_MANUAL
+
+  click C_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L235" "The scene-active Task: CalendarService.refreshRollingWindow (Apple Calendar, once the synced edge is a day short of the 14-day target) or refreshICalFeedIfNeeded (iCal link, once per day), both of which insert rows through importAppleCalendar / writeICalEvents. ExamPrepSweep.run runs synchronously on cold launch (.task(id: notificationToken)) and on every foreground, before the arbiter; HomeTabView.sendMessage and TasksTabView.createSessionItem also run it after a capture." _blank
+  click C_SHOT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L780" "handleScreenshotPicked: the Calendar tab's photo picker hands the image to ScreenshotCalendarImporter.importFromImage, then reevaluates the arbiter." _blank
+  click C_BOX href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L256" "answerPlanProposal: the message box's Yes calls accept and reevaluates; No calls decline, which records the decision and writes no row." _blank
+  click G_REQUEST href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L395" "requestPlan, from HomeTabView.sendMessage when the chat's plan question is answered Yes: asks Claude to build the sessions for the one parent and writes them through accept at once, then announces them in the message box." _blank
+  click F_IMPORT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L509" "applyImportedSchedule(to:start:isAllDay:), called by importAppleCalendar (L295) and writeICalEvents (L456) after the row is built with dueDate = start of the day, specificTime = the start unless all-day, source calendar, estimatedMinutes from the real span. Events return as they are. A task with a real span gets setPlanStart(start, duration, auto: false); a zero-length or all-day task gets setPlanDay(start). Duplicates by title and due day are skipped." _blank
+  click F_SHOTIMP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ScreenshotCalendarImporter.swift#L110" "importFromImage: every parsed entry becomes an event (isInformationalEvent true) with dueDate = its day, dueTime specific, specificTime = the start, source screenshot. Duplicates skipped." _blank
+  click F_ACCEPT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L527" "accept(proposal). One row per session: source prep, linkedEventId = parent id, estimatedMinutes, parent's category and stakes, no deadline, setPlanDay(session day). Skips tombstoned days and existing (day, title) pairs." _blank
+  click F_COMMIT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L389" "commitmentPhase, inside ExamPrepSweep.run. A captured commitment parent whose numbers are known is expanded: a NudgeCommitment row is inserted and the parent deleted. Then one source commitment daily per missing day: dueDate = 23:59 of its own day, no intendedDate, linkedEventId = commitment id, estimatedMinutes, targetCount for quantity shapes. Split work generates once; rate and quantity top up a 7-day horizon on every run. See the generated-rows close-up." _blank
+  click H_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L180" "setPlanDay(day): intendedDate = startOfDay(day), planDayIsAuto = false; a placement on another day is cleared." _blank
+  click H_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L194" "setPlanStart(start, durationMinutes, auto: false): intendedDate = the start's day, plannedStartDate, plannedDurationMinutes, plannedIsAuto false." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "A commitment daily: owed at 23:59 of its day, no plan day, so belongs(to:) puts it in Today on that day by its anchor." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "That day's lens; an imported task with no span, or a study session." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "An imported task with a real span, anchored at its start." _blank
+  click S_EVENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L391" "Imported or screenshot events." _blank
+    </script>
+    <figcaption>Imports and proposals always give a row its day; commitment dailies are owed, never planned; a screenshot only ever makes events.</figcaption>
+  </figure>
+  <h3>Cases on the unlabeled arrows</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Arrow</th><th>Case</th><th>Writes</th></tr>
+    <tr><td class="k">applyImportedSchedule → setPlanDay</td><td>An imported task that is all-day or zero-length (Canvas deadline rows arrive with DTEND equal to DTSTART)</td><td>intendedDate = the entry's day; dueDate and specificTime already written by the importer</td></tr>
+    <tr><td class="k">applyImportedSchedule → event</td><td>The importer classified the entry as an event (shouldImportAsInformationalEvent); the helper returns without a plan</td><td>isInformationalEvent, dueDate, specificTime, dueTime specific, estimatedMinutes from the span</td></tr>
+    <tr><td class="k">importFromImage → event</td><td>Every parsed screenshot entry</td><td>isInformationalEvent true, dueDate, dueTime specific, specificTime, source screenshot</td></tr>
+    <tr><td class="k">answerPlanProposal → accept</td><td>Yes on the message box's proposal</td><td>One prep row per session (see accept)</td></tr>
+    <tr><td class="k">requestPlan → accept</td><td>Yes to the chat's study-plan question; Claude builds the sessions first</td><td>Same rows, then the message-box announcement</td></tr>
+    <tr><td class="k">accept → setPlanDay</td><td>Each session day not tombstoned and not already present as (day, title)</td><td>intendedDate = the session day, source prep, linkedEventId = parent id, estimatedMinutes, parent's category and stakes, no deadline</td></tr>
+    <tr><td class="k">onChange(scenePhase) → applyImportedSchedule</td><td>Apple Calendar: the rolling 14-day window a day short; iCal link: not yet refreshed today. Manual imports from the Calendar tab and onboarding take the same path</td><td>Rows for entries that pass isDuplicate (title and due day)</td></tr>
+    <tr><td class="k">onChange(scenePhase) → commitmentPhase</td><td>Every launch and foreground (ExamPrepSweep.run), and after every capture</td><td>Commitment dailies for missing days inside the 7-day horizon</td></tr>
+  </table></div>
+  <h3>Creators</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Creator</th><th>Source value</th><th>Anchor written</th><th>Plan written</th><th>Dedupe</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L149">CaptureWriter.apply</a></td><td>capture</td><td>dueDate, dueTime, specificTime only when dueKind is deadline or the item is an event</td><td>setPlanStart(auto: false) for a stated start; setPlanDay for a stated day, a deadline today, or a plan item; sequenceIndex from the dump</td><td>Open row, matching title, same due day: dropped; overdue or slipped: replaced</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L809">TaskEditorSheet create</a></td><td>manual</td><td>From the Due pickers</td><td>setPlanStart(auto: false) for a clock time or a timeline-slot New task; setPlanDay for a day or an owed-today anchor</td><td>None</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L139">acceptGoalOffer</a></td><td>goalOffer</td><td>None</td><td>None</td><td>None</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L295">importAppleCalendar</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L456">writeICalEvents</a></td><td>calendar</td><td>dueDate = the start's day, specificTime = the start unless all-day, dueTime specific</td><td>applyImportedSchedule: tasks get setPlanDay, or setPlanStart(auto: false) with the real span; events nothing</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L586">isDuplicate</a> by title and due day</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ScreenshotCalendarImporter.swift#L110">importFromImage</a></td><td>screenshot</td><td>dueDate, dueTime specific, specificTime; always an event</td><td>None</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ScreenshotCalendarImporter.swift#L184">isDuplicate</a></td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L554">PlanProposalSweep.accept</a></td><td>prep</td><td>None</td><td>setPlanDay(session day)</td><td>Tombstoned days and existing (day, title) pairs skipped</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L586">ExamPrepSweep.commitmentPhase</a></td><td>commitment</td><td>dueDate = 23:59 of the day</td><td>None</td><td>Existing day stamps and tombstones skipped</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-planner">
+  <h2>Planners <span class="src">task-lifecycle-planner.mmd</span></h2>
+  <p class="intro">The deterministic engine and the AI refiner both place through <code>setPlanStart</code>; every undo goes through <code>releaseAutoPlan</code>, which never touches a day the user chose.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: the planners and their undo. Only two model helpers write a planner placement: setPlanStart and releaseAutoPlan. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  P_BTN["TasksTabView.swift<br/>planMyDay"]
+  P_CAL["CalendarTabView.swift<br/>planSelectedDay"]
+  P_AUTO["DayPlanEngine.swift<br/>autoPlanIfNewDay"]
+  P_REFINE["DayPlanRefiner.swift<br/>refine"]
+  P_CLEAR["TasksTabView.swift<br/>clearPlan"]
+  P_PLAN["DayPlanEngine.swift<br/>plan"]
+  P_APPLY["DayPlanRefiner.swift<br/>applyPlacements"]
+  H_START["NudgeTask.swift<br/>setPlanStart"]
+  H_RELEASE["NudgeTask.swift<br/>releaseAutoPlan"]
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_AUTO(["plannedStartDate set · plannedIsAuto true<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+
+  P_BTN --> P_PLAN
+  P_CAL --> P_PLAN
+  P_AUTO --> P_PLAN
+  P_REFINE --> P_APPLY
+  P_CLEAR --> H_RELEASE
+  S_UNPLANNED --> P_PLAN
+  S_DAY --> P_PLAN
+  S_AUTO --> H_RELEASE
+  P_PLAN --> H_RELEASE
+  P_PLAN --> H_START
+  P_APPLY --> H_START
+  H_START -- "today" --> S_AUTO
+  H_START -- "future day" --> S_MANUAL
+  H_RELEASE -- "planDayIsAuto false" --> S_DAY
+  H_RELEASE -- "planDayIsAuto true" --> S_UNPLANNED
+
+  click P_BTN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2093" "planMyDay: DayPlanEngine.planToday(clearAutoFirst: true), a replan. Writes PlanOutcomeContext for the message box on refusals, then reevaluates the arbiter on every outcome." _blank
+  click P_CAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L408" "planSelectedDay: DayPlanEngine.plan(day: selectedDay) without clearing. Placements on a future day are written with auto: false so that day's morning run respects them." _blank
+  click P_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L549" "autoPlanIfNewDay, from the scene-active Task in ContentView after the calendar refresh, on the first foreground of a day. Once per day (nudge.autoPlan.lastRunDay); skipped when any auto placement already sits on today. planToday(clearAutoFirst: false); a placement writes PlanOutcomeContext .planned isAuto and triggers a reevaluate." _blank
+  click P_REFINE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanRefiner.swift#L49" "refine(profile:modelContext:force:), from HomeTabView.handlePlanIntent when the chat recognises a plan-my-day request. Reads today's busy intervals and the top 8 open unplaced tasks (plan tasks first, no future-intent tasks), asks Claude for placements, then applyPlacements." _blank
+  click P_CLEAR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2142" "clearPlan: releaseAutoPlan on every row with plannedIsAuto and a plannedStartDate today. Manual placements untouched. Then the arbiter." _blank
+  click P_PLAN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L99" "plan(day:profile:modelContext:clearAutoFirst:). Window from DayWindow (wake+30 to bed−60), scan from now on today. Replan (clearAutoFirst) releases today's auto rows first. Busy: event windows, every existing placement, one hour before each event. Candidates: open, non-event, unplaced; prep and commitment rows only on their own day; plan tasks whose day is this day (in sequenceIndex order), then tasks that belong(to: day), then the rest by Eisenhower score, excluding rows whose scheduledDay is a different future day. Bands (anytime, daytime, business hours) bound the gap search; a generated session may displace one strictly lower-stakes auto placement (releaseAutoPlan on it). setPlanStart(start, planningMinutes, auto: isToday), at most planMaxPlacementsPerRun per run." _blank
+  click P_APPLY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanRefiner.swift#L175" "applyPlacements: for each returned placement whose task is open, not an event, still unplaced and whose interval sits inside a free gap handed to the model, setPlanStart(start, durationMinutes, auto: true)." _blank
+  click H_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L194" "setPlanStart: intendedDate = the start's day, plannedStartDate, plannedDurationMinutes, plannedIsAuto = auto; planDayIsAuto = auto when the day is new. From DayPlanEngine.plan auto is isToday; from DayPlanRefiner.applyPlacements auto is always true." _blank
+  click H_RELEASE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L225" "releaseAutoPlan: clearPlanTime always; intendedDate cleared too only when planDayIsAuto. A day the user chose survives. Called by clearPlan (today's auto rows), by plan on a replan (today's auto rows) and on a displacement (one lower-stakes auto row)." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "Unscheduled list. A candidate for the planner on any day unless it is a generated row for another day." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "That day's lens, unplaced. A candidate for its own day's run; a future plan day keeps it out of other days' runs." _blank
+  click S_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L403" "Today's timeline, movable. Read by releaseAutoPlan's callers as today's auto rows." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "That day's timeline, anchored." _blank
+    </script>
+    <figcaption>Four entries into the engine, one into the refiner. A placement on a future day is written as manual, so that day's own morning run plans around it.</figcaption>
+  </figure>
+  <h3>Cases on the unlabeled arrows</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Arrow</th><th>Case</th><th>Effect</th></tr>
+    <tr><td class="k">planMyDay → plan</td><td>The Tasks-tab button; a replan (clearAutoFirst true)</td><td>Today's auto rows released first, then placed again</td></tr>
+    <tr><td class="k">planSelectedDay → plan</td><td>The Calendar tab's button on a selected future day; no clearing</td><td>Placements written with auto false</td></tr>
+    <tr><td class="k">autoPlanIfNewDay → plan</td><td>The first foreground of a calendar day, once per day, and only when no auto placement already sits on today</td><td>planToday(clearAutoFirst: false); the message box announces a placement</td></tr>
+    <tr><td class="k">unplanned / plan day → plan</td><td>Read as candidates: open, non-event, unplaced; generated rows only on their own day; a future plan day keeps a row out of other days' runs</td><td>Ranked: plan tasks in order, then rows belonging to the day, then by score</td></tr>
+    <tr><td class="k">clearPlan → releaseAutoPlan</td><td>The Clear plan button, for every auto row placed today</td><td>Time cleared; the day cleared when the planner wrote it</td></tr>
+    <tr><td class="k">plan → releaseAutoPlan</td><td>A replan (today's auto rows) or a displacement (one strictly lower-stakes auto row evicted for a generated session; at most one per run)</td><td>Same</td></tr>
+    <tr><td class="k">auto → releaseAutoPlan</td><td>The rows the callers above read: plannedIsAuto with a plannedStartDate on the day</td><td>Only auto rows are ever released</td></tr>
+    <tr><td class="k">plan → setPlanStart</td><td>Each candidate that fits an in-band free gap, up to the per-run cap</td><td>auto: isToday, duration = planningMinutes (estimate, category prior, or 30)</td></tr>
+    <tr><td class="k">applyPlacements → setPlanStart</td><td>Each returned placement whose task is still open, not an event, unplaced, and inside a handed-over gap</td><td>auto: true, the model's duration (at least 5 minutes)</td></tr>
+    <tr><td class="k">refine → applyPlacements</td><td>The chat's plan-my-day intent (HomeTabView.handlePlanIntent) after Claude answers</td><td>Then the arbiter and the rationale stored for the Tasks tab</td></tr>
+  </table></div>
+  <p class="reads"><b>reads:</b> UserProfile wake and bedtime (DayWindow); NudgeTask open non-event rows: plannedStartDate, plannedDurationMinutes, plannedIsAuto (busy and release), sequenceIndex, intendedDate via belongs(to:) and scheduledDay, dueDate / specificTime (score and the generated rows' own day), source, estimatedMinutes, timeWindow; events' specificTime for the one-hour buffer; BusyWindowResolver.busyWindows; NudgeConfig planMaxPlacementsPerRun, planMaxPrepPlacementsPerRun, the band hours; App Group nudge.autoPlan.lastRunDay.</p>
+</section>
+
+<section id="sec-placement">
+  <h2>Placement and edits <span class="src">task-lifecycle-placement.mmd</span></h2>
+  <p class="intro">The user's own writes to both clocks: the timeline, the editor, a chat correction, and a started focus session. A manual placement is anchored; the reflow moves only auto rows around it.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: the user's own writes to the plan clocks (timeline, editor, chat, a started session) and the reflow they trigger. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  U_PLACE["TasksTabView.swift<br/>placeTask"]
+  U_REMOVE["TasksTabView.swift<br/>removeFromTimeline"]
+  U_EDIT["TasksTabView.swift<br/>TaskEditorSheet.apply"]
+  U_CHAT["HomeTabView.swift<br/>sendMessage"]
+  U_SESSION["SessionCoordinator.swift<br/>startSession"]
+  R_STARTED["TimelineReflow.swift<br/>sessionStarted"]
+  R_DURATION["TimelineReflow.swift<br/>durationChanged"]
+  R_REFLOW["TimelineReflow.swift<br/>reflow"]
+  H_START["NudgeTask.swift<br/>setPlanStart"]
+  H_DAY["NudgeTask.swift<br/>setPlanDay"]
+  H_CLEARTIME["NudgeTask.swift<br/>clearPlanTime"]
+  H_CLEAR["NudgeTask.swift<br/>clearPlan"]
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_AUTO(["plannedStartDate set · plannedIsAuto true<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+
+  U_PLACE --> H_START
+  U_REMOVE --> H_CLEARTIME
+  U_EDIT --> H_START
+  U_EDIT --> H_DAY
+  U_EDIT -- "No date" --> H_CLEAR
+  U_EDIT -- "duration chip" --> R_DURATION
+  U_CHAT --> H_DAY
+  U_CHAT --> H_START
+  U_SESSION --> R_STARTED
+  R_STARTED --> H_START
+  R_STARTED --> R_REFLOW
+  R_DURATION --> R_REFLOW
+  R_REFLOW -- "push later" --> S_AUTO
+  R_REFLOW --> H_CLEARTIME
+  R_REFLOW --> H_START
+  H_START -- "auto false" --> S_MANUAL
+  H_DAY --> S_DAY
+  H_CLEARTIME --> S_DAY
+  H_CLEAR --> S_UNPLANNED
+
+  click U_PLACE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2058" "placeTask(task, at:): the placement sheet from a tapped timeline slot, or a drag. setPlanStart(time, auto: false), skipCount = 0. Deadline untouched. Then the arbiter." _blank
+  click U_REMOVE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2074" "removeFromTimeline: clearPlanTime only; the day stays, so the row is still on today's list unplaced. Offered in the editor when the task has a placement." _blank
+  click U_EDIT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L3639" "TaskEditorSheet.apply(draft, to:), the one edit path for the Tasks tab and the Calendar tab. Events: dueDate, dueTime, specificTime written as one clock. Tasks, only when touched: schedule → skipCount = 0, then setPlanStart(auto: false) for a clock time, setPlanDay + clearPlanTime for a day only, clearPlan for No date; due → dueDate, dueTime, specificTime, plus setPlanDay(anchor) when owed today and no day chosen. A plan day later than the due day moves the due day to it (the due clock time kept). A duration chip writes estimatedMinutes and TimelineReflow.durationChanged (or clears plannedDurationMinutes)." _blank
+  click U_CHAT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L398" "task_updates in sendMessage. A dueDate or dueTime answer re-resolves specificTime; for a task with dueKind start the owed fields are cleared and the day goes to setPlanDay, with setPlanStart(auto: false) and a 60-minute default when a time came with it; otherwise the deadline is written and an owed-today task gets setPlanDay(anchor). Also writes commitmentStartDate from a today / tomorrow answer." _blank
+  click U_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L71" "startSession(task:userName:), from the Tasks tab (attemptStartSession checks for an anchored conflict first) and the notification Start session action. Writes nudge.lastFocusSessionStartedAt, then TimelineReflow.sessionStarted before the arbiter reevaluate." _blank
+  click R_STARTED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L117" "sessionStarted(subject, at: now, minutes): setPlanStart(now floored to the minute, session minutes, auto: false), then reflow with the start pinned. Events return untouched." _blank
+  click R_DURATION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L104" "durationChanged(subject, to:): plannedDurationMinutes = minutes; reflow only when the subject is placed today." _blank
+  click R_REFLOW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L132" "reflow: anchored intervals are busy windows plus manual placements on the day. If the subject runs into one, its start moves earlier (setPlanStart with its own auto flag) unless pinned. Later auto placements that now collide are pushed later keeping their original gap, snapped to 15 minutes, hopping anchored intervals; one that no longer fits before the day window ends gets clearPlanTime. Saves and reloads the widget." _blank
+  click H_START href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L194" "setPlanStart(start, durationMinutes, auto): intendedDate = the start's day, plannedStartDate, plannedDurationMinutes, plannedIsAuto = auto. Every user entry passes auto: false; the reflow's start-earlier move keeps the row's own flag." _blank
+  click H_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L180" "setPlanDay(day): intendedDate, planDayIsAuto = false; a placement on another day is cleared. From the editor's day-only save, and from the chat's dueKind start or owed-today answer." _blank
+  click H_CLEARTIME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L210" "clearPlanTime: plannedStartDate, plannedDurationMinutes nil, plannedIsAuto false. The day stays. From removeFromTimeline and from the reflow when a pushed row no longer fits today." _blank
+  click H_CLEAR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L217" "clearPlan: clearPlanTime, then intendedDate nil and planDayIsAuto false." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "Unscheduled list." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "That day's lens, unplaced." _blank
+  click S_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L403" "Pushed rows keep plannedIsAuto true." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "Anchored placement." _blank
+    </script>
+    <figcaption>Every user placement is written with auto: false. The editor also writes the due clock (not drawn): touching the due pickers writes dueDate, dueTime and specificTime, and a plan day set after the due day drags the due day with it.</figcaption>
+  </figure>
+  <h3>Cases on the unlabeled arrows</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Arrow</th><th>Case</th><th>Writes</th></tr>
+    <tr><td class="k">placeTask → setPlanStart</td><td>A tapped empty timeline slot (placement sheet) or a drag</td><td>plannedStartDate = the slot, plannedIsAuto false, intendedDate = today; skipCount 0; deadline untouched</td></tr>
+    <tr><td class="k">TaskEditorSheet.apply → setPlanStart</td><td>Schedule touched and a clock time picked</td><td>plannedStartDate, plannedIsAuto false, intendedDate = that day; skipCount 0</td></tr>
+    <tr><td class="k">TaskEditorSheet.apply → setPlanDay</td><td>Schedule touched and a day picked without a time (then clearPlanTime); or due touched, no day chosen, and the due date is today</td><td>intendedDate; the time cleared in the first case</td></tr>
+    <tr><td class="k">sendMessage (task_updates) → setPlanDay</td><td>A date answer for a task with dueKind start (the owed fields are cleared); or a due answer that lands today with no plan day</td><td>intendedDate; dueDate / dueTime / specificTime nil in the first case</td></tr>
+    <tr><td class="k">sendMessage (task_updates) → setPlanStart</td><td>A dueKind start answer that carried a clock time</td><td>plannedStartDate, plannedIsAuto false; estimatedMinutes 60 when none</td></tr>
+    <tr><td class="k">sessionStarted → setPlanStart</td><td>Every focus session start on a task (never an event)</td><td>plannedStartDate = now floored to the minute, duration = estimatedMinutes or 60, plannedIsAuto false</td></tr>
+    <tr><td class="k">reflow → setPlanStart</td><td>The subject runs into an anchored item and its start is not pinned: the start moves earlier when room exists; pushed auto rows get their new start</td><td>plannedStartDate; the row's own auto flag kept</td></tr>
+    <tr><td class="k">reflow → clearPlanTime</td><td>A pushed auto row no longer fits before the day window ends</td><td>Time cleared; the row stays on today's list unplaced</td></tr>
+    <tr><td class="k">removeFromTimeline → clearPlanTime</td><td>Remove from timeline in the editor, any placement kind</td><td>Time cleared, day kept</td></tr>
+    <tr><td class="k">sessionStarted / durationChanged → reflow</td><td>A started session (start pinned at now); a duration chip on a task placed today</td><td>Later auto rows pushed, anchored items avoided</td></tr>
+  </table></div>
+  <p class="reads"><b>reads:</b> TaskDraft scheduleTouched, dueTouched, durationUserPicked; NudgeTask isInformationalEvent, intendedDate, dueDate, specificTime, anchorDay, planDay; TimelineReflow reads every open row on the day: plannedStartDate, plannedIsAuto (isAnchored), plannedDurationMinutes or estimatedMinutes or 30, events' duration, UserProfile wake and bedtime for the day window; SessionCoordinator reads estimatedMinutes or 60 for the session length.</p>
+</section>
+
+<section id="sec-daychange">
+  <h2>Launch and day change <span class="src">task-lifecycle-rollover.mmd</span></h2>
+  <p class="intro">iOS cannot run the app at midnight. The sweeps run at cold launch and on every return to the foreground, before the arbiter; the 6 AM background task only purges events. Everything that runs, in order, is in the second table.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: what the calendar day changing does to a row. iOS cannot run the app at midnight, so the sweeps run at launch and on every foreground; the 6 AM background task only purges events. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  T_LAUNCH["ContentView.swift<br/>.task(id: notificationToken)"]
+  T_SCENE["ContentView.swift<br/>onChange(scenePhase)"]
+  T_BG["NudgeApp.swift<br/>handleDailyRecalc"]
+  D_PURGE["CalendarService.swift<br/>purgePastEvents"]
+  D_SWEEP["PlacementRollover.swift<br/>sweep"]
+  D_MISSED["PlacementRollover.swift<br/>sweepMissedSessions"]
+  K_MISSED["nudge.missedSessions<br/>PlacementRollover.swift"]
+  H_DAY["NudgeTask.swift<br/>setPlanDay"]
+  H_CLEARTIME["NudgeTask.swift<br/>clearPlanTime"]
+  H_CLEAR["NudgeTask.swift<br/>clearPlan"]
+  S_EVENT(["isInformationalEvent · specificTime<br/>NudgeTask.swift"])
+  S_AUTO(["plannedStartDate set · plannedIsAuto true<br/>NudgeTask.swift"])
+  S_MANUAL(["plannedStartDate set · plannedIsAuto false<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_UNPLANNED(["intendedDate nil · plannedStartDate nil<br/>NudgeTask.swift"])
+  S_GONE(["row deleted<br/>NudgeTask.swift"])
+
+  T_LAUNCH --> D_PURGE
+  T_LAUNCH --> D_SWEEP
+  T_SCENE --> D_PURGE
+  T_SCENE --> D_SWEEP
+  T_BG --> D_PURGE
+  S_EVENT --> D_PURGE
+  D_PURGE --> S_GONE
+  D_SWEEP --> D_MISSED
+  D_MISSED --> K_MISSED
+  D_MISSED --> S_GONE
+  S_AUTO --> D_SWEEP
+  S_MANUAL --> D_SWEEP
+  S_DAY --> D_SWEEP
+  D_SWEEP --> H_CLEARTIME
+  D_SWEEP -- "first slip" --> H_DAY
+  D_SWEEP -- "second slip" --> H_CLEAR
+  H_CLEARTIME --> S_DAY
+  H_DAY --> S_DAY
+  H_CLEAR --> S_UNPLANNED
+
+  click T_LAUNCH href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L98" "Cold launch and every change of the notification token, after a 500 ms debounce. In order: purgePastEvents, PlacementRollover.sweep, ExamPrepSweep.run, PlanProposalSweep.runIfNeeded, LegacyPriorityNormalizer.sweep, CalendarService.backfillImportedScheduleOnce, cancelRetiredDailyNotifications, SessionCoordinator.syncIfActivityDismissed, the arbiter (.appLaunch), DistractionMonitor.apply." _blank
+  click T_SCENE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L169" "Every background-to-foreground. In order: syncIfActivityDismissed, purgePastEvents, PlacementRollover.sweep, ExamPrepSweep.run, PlanProposalSweep.runIfNeeded, outcome recording, the arbiter, then a Task: calendar refresh, DayPlanEngine.autoPlanIfNewDay, nudge-copy generation." _blank
+  click T_BG href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L162" "The 6 AM BGAppRefreshTask (earliest-begin, iOS picks the time). Re-arms itself, purgePastEvents, the arbiter (.backgroundTask), cancelRetiredDailyNotifications. It does not run the rollover, the exam sweep or the auto-plan; those wait for the next foreground." _blank
+  click D_PURGE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L76" "purgePastEvents: deletes every isInformationalEvent whose specificTime ?? dueDate is before today's start, at most 200 per call." _blank
+  click D_SWEEP href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L68" "sweep(modelContext:now:). First sweepMissedSessions. Legacy: an open plan item (sequenceIndex) with no intendedDate gets setPlanDay(today). Then every row whose plannedStartDate or intendedDate is before today: a stale time is cleared (manual included); a stale plan day on a complete row is set to nil; on an open row that countsSlips (not an event, not source prep or commitment) skipCount += 1, then setPlanDay(today) while skipCount is below skipsBeforeSkippedSection (2), else clearPlan. Generated rows keep their plan day." _blank
+  click D_MISSED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L147" "sweepMissedSessions: every open source prep row whose dueDate ?? intendedDate is before today is tombstoned (ExamPrepSweep.recordDeletionIfGenerated), counted in MissedSessionLog, and deleted. Commitment dailies are not touched here; ExamPrepSweep consumes them." _blank
+  click K_MISSED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L26" "App Group JSON day stamp → titles, pruned past 60 days. Read by StatsTabView as this week's missed sessions." _blank
+  click H_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L180" "setPlanDay(startOfToday): the one retry, and the legacy fix for a plan item with no day." _blank
+  click H_CLEARTIME href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L210" "clearPlanTime: a slot belongs to one day; it is not rolled forward. The day rule then decides whether the row stays on a day." _blank
+  click H_CLEAR href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L217" "clearPlan: released to Unscheduled with its slip count showing." _blank
+  click S_EVENT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L391" "Events whose day passed vanish the first time the app runs after it." _blank
+  click S_AUTO href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L403" "Yesterday's auto placement: its time is before today." _blank
+  click S_MANUAL href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396" "Yesterday's manual placement: cleared the same way." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "A plan day before today: re-planned for today once (skipCount 1), released on the second slip. The arrows in come from the cleared time and from the one retry." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "Unscheduled with Slipped 2 days." _blank
+  click S_GONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L159" "Deleted rows: past events, and prep rows whose day passed." _blank
+    </script>
+    <figcaption>A slot belongs to one day and is never rolled forward. A plan day gets one retry, then the row is released with its slip count showing; it is never left in no list.</figcaption>
+  </figure>
+  <h3>Cases on the unlabeled arrows</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Arrow</th><th>Case</th><th>Effect</th></tr>
+    <tr><td class="k">event → purgePastEvents</td><td>specificTime ?? dueDate before today's start</td><td>Deleted, at most 200 per call</td></tr>
+    <tr><td class="k">auto / manual → sweep</td><td>plannedStartDate before today's start, manual included</td><td>clearPlanTime; then the plan-day rule below applies to the same row</td></tr>
+    <tr><td class="k">plan day → sweep</td><td>intendedDate before today's start on an open row that counts slips (not an event, not source prep or commitment)</td><td>skipCount += 1; first slip → setPlanDay(today); second slip → clearPlan</td></tr>
+    <tr><td class="k">sweep → sweepMissedSessions → gone</td><td>An open source prep row whose dueDate ?? intendedDate is before today</td><td>Tombstoned, counted in nudge.missedSessions, deleted</td></tr>
+    <tr><td class="k">sweep → clearPlanTime → plan day</td><td>The stale-time case above; the row keeps its day only if that day is today or later, else the slip rule runs</td><td>Time cleared</td></tr>
+    <tr><td class="k">setPlanDay → plan day</td><td>The first slip, and a legacy plan item (sequenceIndex, no intendedDate) given today</td><td>intendedDate = today</td></tr>
+    <tr><td class="k">sweep, not drawn</td><td>A complete row with a plan day before today</td><td>intendedDate nil; the row leaves that day's lens</td></tr>
+    <tr><td class="k">sweep, not drawn</td><td>A generated row (source prep or commitment) with a plan day before today</td><td>Keeps its plan day; prep rows are removed by sweepMissedSessions, commitment dailies by ExamPrepSweep</td></tr>
+  </table></div>
+
+  <h3>What runs, in order</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Step</th><th>Cold launch · token change</th><th>Foreground</th><th>6 AM background</th><th>Effect on rows</th></tr>
+    <tr><td class="k">1</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L117">purgePastEvents</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L191">purgePastEvents</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L169">purgePastEvents</a></td><td>Events before today deleted</td></tr>
+    <tr><td class="k">2</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L121">PlacementRollover.sweep</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L193">PlacementRollover.sweep</a></td><td>not run</td><td>Missed prep sessions deleted and logged; stale times cleared; stale plan days re-planned once or released; legacy plan items given today</td></tr>
+    <tr><td class="k">3</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L126">ExamPrepSweep.run</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L198">ExamPrepSweep.run</a></td><td>not run</td><td>Commitment parents expanded and deleted; dailies created for the horizon; past quantity dailies consumed</td></tr>
+    <tr><td class="k">4</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L130">PlanProposalSweep.runIfNeeded</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L199">PlanProposalSweep.runIfNeeded</a></td><td>not run</td><td>App sessions deleted where the user's own plan exists; proposals stored, no rows written</td></tr>
+    <tr><td class="k">5</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L146">backfillImportedScheduleOnce</a></td><td>not run</td><td>not run</td><td>One-shot: imported tasks with no plan day get one; inert after its first run</td></tr>
+    <tr><td class="k">6</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L156">NudgeArbiter.reevaluate</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L213">NudgeArbiter.reevaluate</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L177">NudgeArbiter.reevaluate</a></td><td>Reads only; schedules nudges from the swept state</td></tr>
+    <tr><td class="k">7</td><td>not run</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L238">refreshRollingWindow</a> / <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L248">refreshICalFeedIfNeeded</a></td><td>not run</td><td>New calendar rows inserted (events, or tasks with their day and span)</td></tr>
+    <tr><td class="k">8</td><td>not run</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/ContentView.swift#L255">DayPlanEngine.autoPlanIfNewDay</a></td><td>not run</td><td>First foreground of the day: open unplaced rows placed as auto, unless an auto placement already exists today</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-generated">
+  <h2>Generated rows <span class="src">task-lifecycle-generated.mmd</span></h2>
+  <p class="intro">Rows the app writes on its own: commitment dailies from a captured commitment, and study sessions from a proposal the user said yes to. A deleted generated day leaves a tombstone so no sweep recreates it.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: rows the app generates (commitment dailies, proposed study sessions), how they are consumed, and the tombstone that stops a deleted day coming back. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  G_RUN["ExamPrepSweep.swift<br/>run"]
+  G_PROPOSE["PlanProposalSweep.swift<br/>runIfNeeded"]
+  G_ACCEPT["PlanProposalSweep.swift<br/>accept"]
+  U_DELETE["TasksTabView.swift<br/>deleteTask"]
+  G_PHASE["ExamPrepSweep.swift<br/>commitmentPhase"]
+  G_CARRY["ExamPrepSweep.swift<br/>applyQuantityCarry"]
+  G_OVERRIDE["PlanProposalSweep.swift<br/>applyUserPlanOverrides"]
+  G_COMMITROW["shape · endDate · carryUnits<br/>NudgeCommitment.swift"]
+  D_MISSED["PlacementRollover.swift<br/>sweepMissedSessions"]
+  G_TOMB["ExamPrepSweep.swift<br/>recordDeletionIfGenerated"]
+  K_TOMB["examEventId · dayStamp<br/>PrepTombstone.swift"]
+  S_UNPLANNED(["intendedDate nil · dueDate 23:59<br/>NudgeTask.swift"])
+  S_DAY(["intendedDate set · source prep<br/>NudgeTask.swift"])
+  S_GONE(["row deleted<br/>NudgeTask.swift"])
+
+  G_RUN --> G_PHASE
+  G_PHASE --> G_CARRY
+  G_PHASE -- "insert" --> G_COMMITROW
+  G_PHASE --> S_GONE
+  G_PHASE -- "daily per day" --> S_UNPLANNED
+  K_TOMB --> G_PHASE
+  G_COMMITROW --> G_CARRY
+  G_CARRY --> S_GONE
+  G_PROPOSE --> G_OVERRIDE
+  G_OVERRIDE --> S_GONE
+  K_TOMB --> G_ACCEPT
+  G_ACCEPT -- "setPlanDay" --> S_DAY
+  S_DAY -- "day passed" --> D_MISSED
+  D_MISSED --> G_TOMB
+  D_MISSED --> S_GONE
+  U_DELETE --> G_TOMB
+  U_DELETE --> S_GONE
+  G_TOMB --> K_TOMB
+
+  click G_RUN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L350" "run(modelContext:now:), called from ContentView on launch and every foreground, HomeTabView.sendMessage after a capture, TasksTabView.createSessionItem. Exams no longer expand here; only the commitment phase writes. New rows trigger NudgeCopyGenerator.noteShift." _blank
+  click G_PROPOSE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L308" "runIfNeeded, called from ContentView, HomeTabView, TasksTabView (editor saves, Add your own), CalendarTabView. Always applyUserPlanOverrides first. Then, with the message box on and under the daily call cap, asks Claude whether open anchored items are worth a plan and stores proposals; it writes no task rows itself." _blank
+  click G_ACCEPT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L527" "accept: one source prep row per session with setPlanDay(session day), no deadline, linkedEventId = parent id; skips tombstoned days and existing (day, title) pairs. Called by answerPlanProposal (message box Yes) and requestPlan (chat Yes)." _blank
+  click U_DELETE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1972" "deleteTask (swipe) and the editor's onDelete in TasksTabView and CalendarTabView: recordDeletionIfGenerated, then delete, save, widget reload, arbiter." _blank
+  click G_PHASE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L389" "commitmentPhase. Step 1: every open parent with commitmentShapeRaw whose numbers are known and whose start-day question is not outstanding today becomes a NudgeCommitment (start day from commitmentStartDate or the viability default) and the parent is deleted. Step 2: per commitment, the missing day stamps inside the horizon (7 days; split work once, rate and quantity topped up) get a daily: title = sessionTitle or the goal name, dueDate = 23:59 of the day, source commitment, linkedEventId = commitment id, estimatedMinutes = dailyMinutes, targetCount for quantity. Tombstoned days are skipped. Step 3: applyQuantityCarry." _blank
+  click G_CARRY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L659" "applyQuantityCarry: each quantity daily with a dueDate before today is consumed in date order (its shortfall becomes NudgeCommitment.carryUnits, capped) and deleted; today's daily gets carriedCount stamped." _blank
+  click G_OVERRIDE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L216" "applyUserPlanOverrides: for a parent with app-made prep sessions, if one of the user's own open tasks reads as their plan for it (title match), the sessions are deleted and the decision marked userOwned." _blank
+  click G_COMMITROW href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeCommitment.swift" "The durable parent after expansion: title, sessionTitle, shape, endDate, startDate, totalMinutes, dailyMinutes, dailyCount, carryUnits, sourceTaskId." _blank
+  click D_MISSED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L147" "sweepMissedSessions on launch and foreground: an open prep row whose day has passed is tombstoned, logged as missed, deleted." _blank
+  click G_TOMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L721" "recordDeletionIfGenerated: only for source prep or commitment rows with a linkedEventId; the day stamp is dueDate ?? intendedDate. One tombstone per (parent, day); the message-box note is shown once per parent." _blank
+  click K_TOMB href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/PrepTombstone.swift" "examEventId (parent id), examTitle, dayStamp, noteShownAt. Read by commitmentPhase and accept so a deleted day is never recreated." _blank
+  click S_UNPLANNED href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151" "A commitment daily: owed at 23:59 of its day, no plan day, so belongs(to:) puts it in Today on that day by its anchor; the planner places it only on its own day; the dueSoon builder skips it." _blank
+  click S_DAY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L121" "A study session: planned for its day, never due; the planner places it only on that day; not counted as a slip by the rollover." _blank
+  click S_GONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L477" "Deleted rows: the expanded commitment parent, consumed past quantity dailies, app sessions outranked by the user's own plan, missed prep sessions, and user deletions." _blank
+    </script>
+    <figcaption>A commitment daily is owed (dueDate 23:59); a study session is planned (intendedDate). Both sit out the slip counter and both place only on their own day.</figcaption>
+  </figure>
+  <h3>Cases on the unlabeled arrows</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Arrow</th><th>Case</th><th>Effect</th></tr>
+    <tr><td class="k">commitmentPhase → gone</td><td>An open parent with commitmentShapeRaw whose numbers are known and whose start-day question is not outstanding today</td><td>A NudgeCommitment row replaces it; the parent is deleted</td></tr>
+    <tr><td class="k">applyQuantityCarry → gone</td><td>A quantity daily with a dueDate before today</td><td>Consumed in date order into carryUnits (capped), then deleted; today's daily gets carriedCount</td></tr>
+    <tr><td class="k">applyUserPlanOverrides → gone</td><td>A parent with app-made prep sessions whose title now matches one of the user's own open tasks</td><td>The app sessions deleted; the decision marked userOwned</td></tr>
+    <tr><td class="k">sweepMissedSessions → gone</td><td>An open prep row whose day passed</td><td>Tombstoned, logged in nudge.missedSessions, deleted</td></tr>
+    <tr><td class="k">deleteTask → gone</td><td>Swipe or the editor's Delete, Tasks or Calendar tab</td><td>Deleted after the tombstone</td></tr>
+    <tr><td class="k">sweepMissedSessions / deleteTask → recordDeletionIfGenerated</td><td>Only a source prep or commitment row with a linkedEventId; day stamp from dueDate ?? intendedDate</td><td>One PrepTombstone per (parent, day)</td></tr>
+    <tr><td class="k">PrepTombstone → commitmentPhase / accept</td><td>Read before generating a day</td><td>A tombstoned day is never recreated</td></tr>
+    <tr><td class="k">NudgeCommitment → applyQuantityCarry</td><td>Quantity shape with a dailyCount</td><td>carryUnits accumulated; cap = dailyCount × commitmentCarryCapDays</td></tr>
+    <tr><td class="k">run → commitmentPhase · runIfNeeded → applyUserPlanOverrides</td><td>Every launch, foreground and capture; runIfNeeded also from editor saves and the Calendar tab</td><td>The two sweeps above</td></tr>
+  </table></div>
+  <p class="reads"><b>reads:</b> NudgeTask commitmentShapeRaw, commitmentStartDate, commitmentStartAskedAt, commitmentDailyCount, commitmentSessionTitle, estimatedMinutes, dueDate (parents); source, linkedEventId, dueDate, isComplete, completedCount (dailies); PrepTombstone examEventId and dayStamp; NudgeCommitment shape, endDate, startDate, dailyCount, carryUnits; PlanProposalStore decisions in App Group defaults; UserProfile for the start-day decision; NudgeConfig commitmentHorizonDays, commitmentCarryCapDays, planProposalCallsPerDay.</p>
+</section>
+
+<section id="sec-completion">
+  <h2>Completion and deletion <span class="src">task-lifecycle-completion.mmd</span></h2>
+  <p class="intro">Three writers set <code>isComplete</code>. Two of them keep a <code>CompletedTaskRecord</code>, which is what Stats and the outcome classifier read; the chat path does not. Deleters are in the second table.</p>
+  <figure>
+    <div class="canvas"><div class="status">Rendering…</div><div class="stage" hidden></div></div>
+    <script type="text/plain" class="mmd-src">
+%% artifact: https://claude.ai/artifact/FMdjKH28qvSS1wMijeZXLS
+%% commit ede6774 · close-up: the three writers of isComplete, the completion log they keep, and who reads it. Arrows into a box with several entries are unlabeled; the cases are in the table under the picture.
+flowchart TB
+  X_TOGGLE["TasksTabView.swift<br/>toggleCompletion"]
+  X_WIDGET["CompleteTaskIntent.swift<br/>perform"]
+  X_CHAT["HomeTabView.swift<br/>sendMessage"]
+  X_PURGEREC["TasksTabView.swift<br/>purgeOldCompletedRecords"]
+  X_SESSION["SessionCoordinator.swift<br/>completeCurrentTask"]
+  K_RECORD["completedAt · sourceTaskID<br/>CompletedTaskRecord.swift"]
+  S_OPEN(["isComplete false<br/>NudgeTask.swift"])
+  S_DONE(["isComplete true · completedAt<br/>NudgeTask.swift"])
+  X_CLASSIFY["NudgeOutcomeClassifier.swift<br/>classifyPending"]
+  X_STATS["StatsTabView.swift<br/>weekCompletedRecords"]
+
+  X_TOGGLE --> S_DONE
+  X_TOGGLE --> S_OPEN
+  X_TOGGLE --> K_RECORD
+  X_TOGGLE -- "current session task" --> X_SESSION
+  X_WIDGET --> S_DONE
+  X_WIDGET --> K_RECORD
+  X_CHAT --> S_DONE
+  X_CHAT --> S_OPEN
+  X_PURGEREC --> K_RECORD
+  K_RECORD --> X_CLASSIFY
+  K_RECORD --> X_STATS
+
+  click X_TOGGLE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1891" "toggleCompletion(for:), from the row checkbox, the timeline block's long press and the session card. Check: isComplete true, completedAt now, NudgeGoal.recordActivity, completedCount = target for count tasks, a CompletedTaskRecord unless one exists. Uncheck: isComplete false, completedAt nil, one unit stepped back, the record deleted. Then the arbiter; if the session runs on this task, completeCurrentTask." _blank
+  click X_WIDGET href "https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L29" "perform() in the widget extension on the shared store: isComplete true, completedAt now, goal activity, a CompletedTaskRecord unless one exists, clears activeSessionState for that task, removes the task's pending nudges, sets nudge.arb.widgetMutated. No uncheck path." _blank
+  click X_CHAT href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L409" "task_updates isComplete in sendMessage: isComplete and completedAt written both ways, goal activity on true. Writes no CompletedTaskRecord, so Stats and the outcome classifier never see a chat completion." _blank
+  click X_PURGEREC href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2358" "purgeOldCompletedRecords on the Tasks tab's appear: deletes CompletedTaskRecord rows from before this week's start." _blank
+  click X_SESSION href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L170" "completeCurrentTask writes no task field: it ends the session, records actual minutes in DurationModel and on the latest NudgeOutcome, then reevaluates with .taskCompleted." _blank
+  click K_RECORD href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/CompletedTaskRecord.swift#L13" "id, title, priority, completedAt, sourceTaskID. Survives deletion of the task. Inserted by toggleCompletion (check) and CompleteTaskIntent; deleted by toggleCompletion (uncheck) and purgeOldCompletedRecords (before this week)." _blank
+  click S_OPEN href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L381" "Every open state in the overview. Reached again by toggleCompletion's uncheck and by task_updates isComplete false." _blank
+  click S_DONE href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L382" "Reached by toggleCompletion's check, CompleteTaskIntent.perform and task_updates isComplete true. Read by TaskSortComparator (bucket 4, newest first), planTasks and dayTasks (sunk), the widget (recentDone within 7 days by completedAt), PlacementRollover (a past plan day is set to nil), the arbiter's idle builder (completions in the 3-hour window via CompletedTaskRecord). Excluded from every candidate fetch." _blank
+  click X_CLASSIFY href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeOutcomeClassifier.swift#L226" "A pending nudge counts as acted on when its task has a CompletedTaskRecord inside the 60-minute window after it fired." _blank
+  click X_STATS href "https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/StatsTabView.swift#L63" "todayCompletedRecords and weekCompletedRecords by completedAt; MissedSessionLog.count(since: startOfWeek) beside them." _blank
+    </script>
+    <figcaption>The record outlives the row: Stats and the classifier read CompletedTaskRecord, never isComplete. The Tasks tab purges records older than this week on appear.</figcaption>
+  </figure>
+  <h3>Cases on the unlabeled arrows</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Arrow</th><th>Case</th><th>Writes</th></tr>
+    <tr><td class="k">toggleCompletion → done</td><td>Check: the row checkbox, a timeline block's long press, the session card</td><td>isComplete true, completedAt now, goal activity, completedCount = target on count tasks</td></tr>
+    <tr><td class="k">toggleCompletion → open</td><td>Uncheck</td><td>isComplete false, completedAt nil, one unit stepped back on count tasks</td></tr>
+    <tr><td class="k">toggleCompletion → CompletedTaskRecord</td><td>Check inserts one unless a record for the task exists; uncheck deletes it</td><td>title, priority, completedAt, sourceTaskID</td></tr>
+    <tr><td class="k">perform (widget) → done · → CompletedTaskRecord</td><td>The widget's Complete button; ignored when already complete; no uncheck</td><td>isComplete true, completedAt now, a record unless one exists; activeSessionState cleared for that task; pending nudges removed; widgetMutated set</td></tr>
+    <tr><td class="k">sendMessage (task_updates) → done · → open</td><td>The chat says a task is done, or not done</td><td>isComplete, completedAt both ways; goal activity on true; no CompletedTaskRecord</td></tr>
+    <tr><td class="k">purgeOldCompletedRecords → CompletedTaskRecord</td><td>Tasks tab appear</td><td>Records with completedAt before this week's start deleted</td></tr>
+  </table></div>
+
+  <h3>Deleters</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Deleter</th><th>Trigger</th><th>Which rows</th><th>Leaves behind</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1972">TasksTabView.deleteTask</a></td><td>Swipe on a row</td><td>Any task or event</td><td>PrepTombstone for a generated row; CompletedTaskRecord if any</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L868">TaskEditorSheet onDelete</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L118">Calendar onDelete</a></td><td>Delete in the editor</td><td>The edited row</td><td>Same</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L93">CaptureWriter.apply</a></td><td>A dump item matching an overdue or slipped open row's title</td><td>The old row; a fresh one is created</td><td>No tombstone</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L96">CalendarService.purgePastEvents</a></td><td>Launch, foreground, 6 AM</td><td>Events whose specificTime ?? dueDate is before today</td><td>Nothing</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L159">PlacementRollover.sweepMissedSessions</a></td><td>Launch, foreground</td><td>Open source prep rows whose day passed</td><td>PrepTombstone, MissedSessionLog entry</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L477">ExamPrepSweep.commitmentPhase</a></td><td>Launch, foreground, after a capture</td><td>A commitment parent once expanded</td><td>A NudgeCommitment row and its dailies</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L686">ExamPrepSweep.applyQuantityCarry</a></td><td>Same run</td><td>Quantity dailies with a dueDate before today</td><td>carryUnits on the commitment, carriedCount on today's daily</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L235">PlanProposalSweep.applyUserPlanOverrides</a></td><td>Every runIfNeeded</td><td>App-made prep sessions whose parent now has a user-written study task</td><td>Decision userOwned in PlanProposalStore</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-reads">
+  <h2>Reads that decide a list, screen or process</h2>
+  <p class="intro">The membership rule lives on the model and feeds more than four readers, so it is a table. <code>lists(on:)</code> is the one function: Today when the row belongs to the day (plan day or anchor day), Unscheduled when open with no plan day and not on today, Overdue when open and past its deadline.</p>
+  <h3>Screens and lists</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Reader</th><th>Rule</th><th>Fields read</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L166">NudgeTask.lists(on:)</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L138">belongs(to:)</a></td><td>R1 a task belongs to a day when its plan day or anchor day is that day; an event belongs to its anchor day only</td><td>isInformationalEvent, intendedDate, specificTime, dueDate, isComplete, sortDeadline</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1462">Tasks tab · Today lens</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1508">Tomorrow</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1558">This week</a></td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L274">planTasks</a> (sequenceIndex rows belonging to the day, open first, in order) then <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L286">dayTasks</a> (the rest belonging to the day, by plannedStartDate, completed sunk) then <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L584">dayEvents</a></td><td>sequenceIndex, belongs(to:), plannedStartDate, isComplete, specificTime ?? dueDate</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1593">Tasks tab · empty-day fillers</a></td><td>Open single tasks with planDay ≤ today or a deadline still ahead, comparator order, six at most</td><td>linkedEventId, planDay, hasDeadline, sortDeadline</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L548">Tasks tab · Unscheduled</a></td><td>R3 <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L151">isUnscheduled</a>: open, no plan day, not on today's list</td><td>isComplete, intendedDate, belongs(to: today)</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1163">Tasks tab · Overdue</a></td><td>R2 <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L86">isOverdue</a>: open and sortDeadline before now, no stakes filter; comparator order</td><td>isComplete, specificTime, dueDate</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L373">Tasks tab · Events</a></td><td>Open events by specificTime ?? dueDate; This week and Important lenses</td><td>isInformationalEvent, isComplete, specificTime, dueDate</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L525">Tasks tab · Start Session suggestion</a></td><td>Earliest placement today whose block has not fully passed, else the first open plan task not glued to a future day</td><td>plannedStartDate, plannedDurationMinutes, estimatedMinutes, sequenceIndex, intentIsFuture</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2576">Tasks tab · row subtitle</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L2777">rowTreatment</a></td><td>Countdown from the deadline; else the intent day; else Slipped N days. Overdue red unless stakes are low</td><td>dueDate, specificTime, intendedDate, slipCount, isOverdue, stakes</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Components/TodayTimelineView.swift#L172">Timeline strip</a></td><td>Events by specificTime; tasks placed today by plannedStartDate; block length plannedDurationMinutes ?? estimatedMinutes ?? 30</td><td>specificTime, plannedStartDate, plannedDurationMinutes, isComplete</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/CalendarTabView.swift#L167">Calendar tab · dayItems</a></td><td>Open events by anchor; tasks planned for the day (time = plannedStartDate); tasks owed on the day (time = specificTime). A task planned one day and owed another shows on both</td><td>isComplete, specificTime, dueDate, planDay, anchorDay, plannedStartDate</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/NudgeWidget.swift#L468">Widget · getTimeline</a></td><td>Open non-events plus rows completed in the last 7 days, through dayLens for today; urgent = overdue or high priority; next two events today</td><td>isComplete, completedAt, isInformationalEvent, specificTime, dayLens, isOverdue, plannedStartDate (mini chart)</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/StatsTabView.swift#L49">Stats tab</a></td><td>Today's and this week's CompletedTaskRecord rows; missed sessions from MissedSessionLog</td><td>CompletedTaskRecord.completedAt; nudge.missedSessions</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Components/TasksMessageBox.swift#L548">Tasks message box</a></td><td>Overdue list for the memo; <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L309">topOpenTask</a> for the recommendation</td><td>isOverdue, sortDeadline, isComplete, intentIsFuture, TaskSortComparator</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L249">Notification · Not yet</a></td><td>topOpenTask names the task in the tapped-nudge context</td><td>isComplete, isInformationalEvent, intentIsFuture, comparator buckets</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/HomeTabView.swift#L21">Home chat context</a></td><td>Open rows are sent to the model as existing tasks for dedupe and updates</td><td>isComplete, title, dueDate, estimatedMinutes</td></tr>
+  </table></div>
+
+  <h3>Automated processes</h3>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Process</th><th>Which rows it acts on</th><th>Fields read</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L871">Arbiter · morningPrompt</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1314">idle</a></td><td>Open non-events not glued to a future day (<a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L257">intentIsFuture</a> false at the fire date); idle also skips when a CompletedTaskRecord landed in the 3 hours before</td><td>isComplete, isInformationalEvent, intendedDate, dueDate, specificTime, stakes; CompletedTaskRecord.completedAt</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1542">Arbiter · prep</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1668">dueSoon</a></td><td>Open non-events with a dueDate; dueSoon skips source prep and commitment and uses sortDeadline</td><td>dueDate, specificTime, sortDeadline, source</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L1902">Arbiter · floater</a></td><td>Open non-events with dueDate nil and intendedDate nil, not placed on the fire day</td><td>dueDate, intendedDate, plannedStartDate, sequenceIndex</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2373">Arbiter · placementLead</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L2527">placementMissed</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L399">slot gate</a></td><td>Open non-events with a plannedStartDate; manual placements are anchored to the user's time (quiet hours exempt)</td><td>plannedStartDate, plannedDurationMinutes, plannedIsAuto, estimatedMinutes, stakes, deadline</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeArbiter.swift#L662">Arbiter · eventBlock</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/BusyWindowResolver.swift#L65">BusyWindowResolver.busyWindows</a></td><td>Events by specificTime, with their resolved duration</td><td>isInformationalEvent, specificTime, estimatedMinutes, EventDurationStats</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L203">DayPlanEngine.plan</a></td><td>Candidates: open, non-event, unplaced; generated rows on their own day only; plan tasks whose day is the planning day; tasks that belong to the day; then by score, excluding rows whose plan day is another future day. Busy: every placement on the day; replan releases today's auto rows</td><td>isComplete, isInformationalEvent, plannedStartDate, plannedDurationMinutes, plannedIsAuto, sequenceIndex, scheduledDay, belongs(to:), source, dueDate, intendedDate, estimatedMinutes, timeWindow</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanEngine.swift#L561">DayPlanEngine.autoPlanIfNewDay</a></td><td>Skips the day when any auto placement already sits on today</td><td>plannedIsAuto, plannedStartDate</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DayPlanRefiner.swift#L110">DayPlanRefiner.refine</a></td><td>Top 8 open unplaced tasks, plan tasks first, no future-intent tasks; placed-today rows as busy</td><td>isComplete, plannedStartDate, sequenceIndex, intentIsFuture, specificTime ?? dueDate, plannedDurationMinutes</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/TimelineReflow.swift#L95">TimelineReflow</a></td><td>Anchored = event or manual placement; movable = auto placements on the day</td><td>isInformationalEvent, plannedStartDate, plannedIsAuto, plannedDurationMinutes, estimatedMinutes, specificTime</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlacementRollover.swift#L84">PlacementRollover.sweep</a></td><td>Rows with a plan time or plan day before today; open plan items with no day; open prep rows whose day passed</td><td>plannedStartDate, intendedDate, isComplete, countsSlips (isInformationalEvent, source), skipCount, sequenceIndex, dueDate</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L85">CalendarService.purgePastEvents</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L586">isDuplicate</a></td><td>Events before today; an existing row with the same title and due day blocks an import</td><td>isInformationalEvent, specificTime, dueDate, title</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/ExamPrepSweep.swift#L398">ExamPrepSweep.commitmentPhase</a></td><td>Open commitment parents; existing dailies by due-day stamp; past quantity dailies</td><td>commitmentShapeRaw, commitmentStartDate, commitmentStartAskedAt, dueDate, source, linkedEventId, isComplete, completedCount</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/PlanProposalSweep.swift#L270">PlanProposalSweep</a></td><td>Open anchored items that are not generated and have no linked children; a stored proposal is dropped once its parent is complete or re-dated; app sessions are removed when the user's own study task exists</td><td>isComplete, isInformationalEvent, source, linkedEventId, dueDate, specificTime, title</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L373">NudgeCopyGenerator.buildRequests</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeCopyService.swift#L140">validBody</a></td><td>Up to 80 open rows for copy; a cached line is served only while its task is open and its deadline unchanged</td><td>isComplete, isInformationalEvent, dueDate, specificTime, sortDeadline, plannedStartDate, stakes</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeOutcomeClassifier.swift#L213">NudgeOutcomeClassifier.classifyPending</a></td><td>A morning prompt counts as acted on when a task was created in its window; other kinds when the task has a CompletedTaskRecord in the window</td><td>createdAt; CompletedTaskRecord.completedAt, sourceTaskID</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/DistractionMonitor.swift#L232">DistractionMonitor.writeSnapshot</a></td><td>Today's day lens, for the Screen Time extension</td><td>dayLens, plannedStartDate, estimatedMinutes, isComplete</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L72">CaptureWriter dedupe and replace</a></td><td>An open row with a matching title on the same due day suppresses the item; an overdue or slipped one is replaced</td><td>isComplete, title, dueDate, isOverdue, slipCount</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/SessionCoordinator.swift#L253">SessionCoordinator.syncIfActivityDismissed</a> · <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/NudgeWidget/CompleteTaskIntent.swift#L42">CompleteTaskIntent</a></td><td>A published session is restored only while its task is still open; the widget ignores a second completion</td><td>isComplete</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-fields">
+  <h2>Fields</h2>
+  <p class="intro">Every lifecycle field on <code>NudgeTask</code>, who writes it and who reads it.</p>
+  <div class="tablewrap"><table>
+    <tr><th class="k">Field</th><th>Meaning</th><th>Written by</th><th>Read by</th></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L376">dueDate · dueTime · specificTime</a></td><td>The owed clock; sortDeadline = specificTime, else the end of the due day; anchorDay</td><td>init (capture with dueKind deadline, editor, imports, screenshot, commitment dailies); TaskEditorSheet.apply; HomeTabView task_updates; setEventTime</td><td>lists(on:), isOverdue, sortDeadline, TaskSortComparator, the row countdown, the calendar, the widget, prep / dueSoon / morning / idle builders, tier, planner score, copy fill, purgePastEvents, isDuplicate, recordDeletionIfGenerated, ExamPrepSweep stamps</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L420">intendedDate</a></td><td>The plan day (planDay), today or later</td><td>setPlanDay, setPlanStart, clearPlan, releaseAutoPlan; PlacementRollover sets nil on complete rows</td><td>belongs(to:), isUnscheduled, intentIsFuture, scheduledDay (planner), the row's intent label, floater builder, PlanProposalSweep.accept dedupe, sweepMissedSessions</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L396">plannedStartDate · plannedDurationMinutes · plannedIsAuto</a></td><td>The plan time and whether a planner wrote it</td><td>setPlanStart, clearPlanTime, clearPlan, releaseAutoPlan; TimelineReflow.durationChanged and TaskEditorSheet.apply write plannedDurationMinutes</td><td>Timeline strip, dayTasks order, suggestedSessionTask, DayPlanEngine busy and release, autoPlanIfNewDay guard, DayPlanRefiner busy, TimelineReflow, placementLead / placementMissed / slot gate, copy fill, the widget chart, DistractionMonitor snapshot</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L434">planDayIsAuto</a></td><td>Whether a planner wrote the plan day</td><td>setPlanDay (false), setPlanStart (auto, when the day is new), clearPlan, releaseAutoPlan</td><td>releaseAutoPlan only</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L409">sequenceIndex</a></td><td>Position in the one ordered plan</td><td><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L48">CaptureWriter.apply</a> (sets from the dump, clears the old plan); <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1116">movePlanTasks</a> renumbers</td><td>planTasks, TaskSortComparator bucket 0, DayPlanEngine and DayPlanRefiner candidate order, floater builder, PlacementRollover legacy fix, the widget</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L427">skipCount</a></td><td>Days the row sat on a plan day unfinished (slipCount)</td><td>PlacementRollover.sweep += 1; placeTask and TaskEditorSheet.apply (schedule touched) reset to 0</td><td>PlacementRollover one-retry rule, the row's Slipped label, CaptureWriter replace rule</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L381">isComplete · completedAt</a></td><td>Done, and when</td><td>toggleCompletion, CompleteTaskIntent.perform, HomeTabView task_updates</td><td>Every open-row fetch, lists(on:), TaskSortComparator, the widget's 7-day window, PlacementRollover, syncIfActivityDismissed, PlanProposalSweep.currentProposal, applyQuantityCarry</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/CompletedTaskRecord.swift#L13">CompletedTaskRecord</a></td><td>The completion log, keyed by sourceTaskID</td><td>toggleCompletion (insert, delete on uncheck), CompleteTaskIntent.perform; purgeOldCompletedRecords deletes last week's</td><td>StatsTabView, NudgeOutcomeClassifier, idle builder, DistractionMonitor snapshot (latest)</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L391">isInformationalEvent</a></td><td>Kind, decided at capture</td><td>init; setEventFlag</td><td>Every reader above; the plan helpers refuse events</td></tr>
+    <tr><td class="k"><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L494">commitmentStartDate · commitmentStartAskedAt</a></td><td>The commitment's first day and when the app asked</td><td>HomeTabView task_updates (today / tomorrow answer), commitmentStartDayFollowUp</td><td>ExamPrepSweep.commitmentPhase (expansion waits while the ask is from today)</td></tr>
+  </table></div>
+</section>
+
+<section id="sec-targets">
+  <h2>Targets searched</h2>
+  <p class="intro">From <code>Nudge.xcodeproj/project.pbxproj</code>: four native targets. Two touch the task model.</p>
+  <ul class="note">
+    <li><strong>Nudge</strong> (app): every creator, planner, sweep, edit and deletion above; all the readers except the widget's. Entitlements: app group.</li>
+    <li><strong>NudgeWidgetExtension</strong>: compiles <code>Nudge/Models</code> only (<code>membershipExceptions</code> lists NudgeTask.swift), so it reads the same <code>dayLens</code> rule and writes <code>isComplete</code>, <code>completedAt</code> and a <code>CompletedTaskRecord</code> through <code>CompleteTaskIntent</code> on the shared store. Entitlements: app group.</li>
+    <li><strong>NudgeActivityMonitor</strong>: reads only the App Group snapshot that <code>DistractionMonitor.writeSnapshot</code> derives from the day lens; it never opens the store.</li>
+    <li><strong>NudgeActivityReport</strong>: no task code.</li>
+  </ul>
+</section>
+
+<section id="sec-dead">
+  <h2>Exists but has no effect</h2>
+  <p class="intro">Nothing here sits on the main path, so none of it is drawn in the pictures above; the complete reference diagram shows these dashed.</p>
+  <ol class="dead">
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L440">NudgeTask.prepLeadDays</a> is a tombstone column: nothing reads or writes it.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L388">NudgeTask.recurrence</a> is written by <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CaptureWriter.swift#L158">CaptureWriter.apply</a> from the capture response and read by nothing; no repeat is ever generated.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Models/NudgeTask.swift#L538">NudgeTask.init(isComplete:completedAt:)</a> parameters are passed only by the DEBUG classifier harness; every live creator leaves them at their defaults.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/CalendarService.swift#L524">CalendarService.backfillImportedScheduleOnce</a> is a one-shot migration keyed on <code>nudge.calendarImport.scheduleBackfilledOnce</code>; after its first launch it returns at the guard.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeNotificationService.swift#L362">NudgeNotificationService.pickTopOpenTask</a> reads topOpenTask and is called by nothing.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/EvalHarness.swift#L239">EvalHarness</a> (DEBUG, <code>-nudge-eval</code>) writes intendedDate and skipCount and runs the rollover, the planner, CaptureWriter and ExamPrepSweep on an in-memory store; the app store is untouched. <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Services/NudgeOutcomeClassifierHarness.swift#L258">NudgeOutcomeClassifierHarness</a> (DEBUG) inserts and deletes its own rows.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Tabs/TasksTabView.swift#L1992">TasksTabView.deleteAllTasksAndEvents</a> is compiled only in DEBUG.</li>
+    <li><a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/NudgeApp.swift#L195">NudgeApp temp dumps</a> (stakes, deadline-intent audit, visibility audit) and <a href="https://github.com/deblaseroman/nudge-app/blob/ede6774/Nudge/Views/Settings/DevNotesView.swift#L41">DevNotesView</a> print or export the fields and write nothing.</li>
+  </ol>
+  <p class="note">Not dead but worth knowing: the 6 AM background task purges events and runs the arbiter, but the rollover, the commitment sweep and the morning auto-plan only run on a foreground, so a plan day that slipped overnight is still on yesterday until the app is opened. The chat's completion path writes no CompletedTaskRecord, so Stats never counts it.</p>
+</section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function isDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function themeVars() {
+    return {
+      fontFamily: cssVar('--font-body') || 'sans-serif',
+      fontSize: '13px',
+      primaryColor: cssVar('--node'),
+      primaryTextColor: cssVar('--fg'),
+      primaryBorderColor: cssVar('--node-border'),
+      secondaryColor: cssVar('--node'),
+      tertiaryColor: cssVar('--cluster'),
+      lineColor: cssVar('--edge'),
+      textColor: cssVar('--fg'),
+      nodeTextColor: cssVar('--fg'),
+      clusterBkg: cssVar('--cluster'),
+      clusterBorder: cssVar('--cluster-border'),
+      titleColor: cssVar('--fg'),
+      edgeLabelBackground: cssVar('--edge-label'),
+      nodeBorder: cssVar('--node-border'),
+      mainBkg: cssVar('--node')
+    };
+  }
+
+  var figures = Array.prototype.slice.call(document.querySelectorAll('figure'));
+
+  function hrefOf(a) { return a.getAttribute('href') || a.getAttribute('xlink:href') || ''; }
+
+  function wireLinks(stage) {
+    stage.querySelectorAll('a').forEach(function (a) {
+      var h = hrefOf(a);
+      if (h.charAt(0) === '#') {
+        a.removeAttribute('target');
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          var target = document.getElementById(h.slice(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener');
+      }
+    });
+  }
+
+  async function renderOne(fig, index) {
+    var src = fig.querySelector('.mmd-src').textContent.trim();
+    var stage = fig.querySelector('.stage');
+    var status = fig.querySelector('.status');
+    var canvas = fig.querySelector('.canvas');
+    try {
+      var out = await mermaid.render('nudge-life-' + index + '-' + Date.now(), src);
+      stage.innerHTML = out.svg;
+      if (out.bindFunctions) out.bindFunctions(stage);
+      stage.hidden = false;
+      status.hidden = true;
+      wireLinks(stage);
+    } catch (e) {
+      status.textContent = 'Mermaid could not render this figure: ' + (e && e.message ? e.message : e);
+      status.className = 'status error';
+      status.hidden = false;
+      var pre = document.createElement('pre');
+      pre.className = 'fallback';
+      pre.textContent = src;
+      canvas.appendChild(pre);
+    }
+  }
+
+  async function renderAll() {
+    if (!window.mermaid) {
+      figures.forEach(function (fig) {
+        var status = fig.querySelector('.status');
+        status.textContent = 'The Mermaid library did not load. Source shown below.';
+        status.className = 'status error';
+        var pre = document.createElement('pre');
+        pre.className = 'fallback';
+        pre.textContent = fig.querySelector('.mmd-src').textContent.trim();
+        fig.querySelector('.canvas').appendChild(pre);
+      });
+      return;
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'base',
+      themeVariables: themeVars(),
+      maxTextSize: 400000,
+      maxEdges: 2000,
+      flowchart: { htmlLabels: true, useMaxWidth: false, curve: 'basis', nodeSpacing: 24, rankSpacing: 44, padding: 8 }
+    });
+    for (var i = 0; i < figures.length; i++) {
+      await renderOne(figures[i], i);
+    }
+  }
+
+  var lastDark = isDark();
+  function onThemeChange() {
+    var now = isDark();
+    if (now !== lastDark) { lastDark = now; renderAll(); }
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', onThemeChange); else if (mq.addListener) mq.addListener(onThemeChange);
+  }
+  new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  renderAll();
+})();
+</script>
